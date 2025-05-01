@@ -1,6 +1,6 @@
 
 import numpy as np
-from src.core.vector_type_interface import VectorType
+from src.vecraft.core.vector_type_interface import VectorType
 
 class TextVector(VectorType):
     def encode(self, raw: str) -> np.ndarray:

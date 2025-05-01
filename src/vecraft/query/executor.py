@@ -1,6 +1,6 @@
 
-from src.engine.vector_db import VectorDB
-from src.query.plan_nodes import VectorScan
+from src.vecraft.engine.vector_db import VectorDB
+from src.vecraft.query.plan_nodes import VectorScan
 
 class Executor:
     def __init__(self, db: VectorDB):

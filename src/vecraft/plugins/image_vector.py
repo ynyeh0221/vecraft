@@ -1,6 +1,6 @@
 
 import numpy as np
-from src.core.vector_type_interface import VectorType
+from src.vecraft.core.vector_type_interface import VectorType
 
 class ImageVector(VectorType):
     def encode(self, raw) -> np.ndarray:

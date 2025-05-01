@@ -3,12 +3,12 @@ from typing import Any, Dict
 
 import numpy as np
 
-from src.core.index_interface import Index
-from src.core.storage_interface import StorageEngine
-from src.core.vector_type_interface import VectorType
-from src.engine.locks import RWLock
-from src.engine.transaction import Txn
-from src.metadata.catalog import JsonCatalog
+from src.vecraft.core.index_interface import Index
+from src.vecraft.core.storage_interface import StorageEngine
+from src.vecraft.core.vector_type_interface import VectorType
+from src.vecraft.engine.locks import RWLock
+from src.vecraft.engine.transaction import Txn
+from src.vecraft.metadata.catalog import JsonCatalog
 
 
 class VectorDB:

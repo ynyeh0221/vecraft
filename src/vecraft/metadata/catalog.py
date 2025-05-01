@@ -2,8 +2,8 @@
 import json
 from pathlib import Path
 from typing import List, Dict
-from src.metadata.schema import CollectionSchema, Field
-from src.core.catalog_interface import Catalog
+from src.vecraft.metadata.schema import CollectionSchema, Field
+from src.vecraft.core.catalog_interface import Catalog
 
 class JsonCatalog(Catalog):
     def __init__(self, path: str = 'catalog.json'):

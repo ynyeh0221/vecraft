@@ -1,6 +1,6 @@
 
 from contextlib import contextmanager
-from src.engine.locks import RWLock
+from src.vecraft.engine.locks import RWLock
 
 class Txn:
     def __init__(self, lock: RWLock):

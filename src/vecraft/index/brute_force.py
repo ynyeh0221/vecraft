@@ -1,7 +1,7 @@
 
 from typing import List, Tuple
 
-from src.core.index_interface import Index, Vector
+from src.vecraft.core.index_interface import Index, Vector
 
 
 class BruteForce(Index):
