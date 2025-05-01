@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -81,10 +81,34 @@ class Collection:
 
         return record_id
 
-    def search(self, query_raw: Any, k: int):
-        """Search for similar vectors."""
+    def search(self, query_raw: Any, k: int) -> List[Dict[str, Any]]:
+        """
+        Search for similar vectors and return complete records.
+
+        Args:
+            query_raw: The raw query data to search for
+            k: Number of results to return
+
+        Returns:
+            List of matching records with their data and similarity scores
+        """
+        # Encode the query vector
         qvec = self._vector_type.encode(query_raw)
-        return self._index.search(qvec, k)
+
+        # Get raw search results (id, distance pairs)
+        raw_results = self._index.search(qvec, k)
+
+        # Convert to complete records
+        results = []
+        for record_id, distance in raw_results:
+            # Get the complete record
+            record = self.get(record_id)
+            if record:
+                # Add the distance score to the record
+                record['distance'] = distance
+                results.append(record)
+
+        return results
 
     def get(self, record_id: int) -> dict:
         """Retrieve a record by ID."""
@@ -116,9 +140,19 @@ class Collection:
         vec = np.frombuffer(vector_bytes, dtype=np.float32)
         user_metadata = json.loads(metadata_bytes.decode('utf-8'))
 
+        # Decode vector back to original format if possible
+        original_data = None
+        if hasattr(self._vector_type, 'decode'):
+            try:
+                original_data = self._vector_type.decode(vec)
+            except Exception as e:
+                # If decoding fails, just use the raw vector
+                pass
+
         return {
             'id': id_,
             'vector': vec,
+            'original_data': original_data,
             'user_metadata': user_metadata
         }
 
