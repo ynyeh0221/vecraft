@@ -5,52 +5,53 @@ from typing import Any, Dict, List
 import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.core.vector_type_interface import VectorType
 from src.vecraft.metadata.schema import CollectionSchema
 
 
 class Collection:
-    def __init__(self, name: str, schema: CollectionSchema, storage: StorageEngine, index_factory,
-                 vector_type: VectorType):
+    def __init__(self, name: str, schema: CollectionSchema, storage: StorageEngine, index_factory):
         self.name = name
         self.schema = schema
         self._storage = storage
         self._index = index_factory(kind="brute_force", dim=schema.field.dim)
-        self._vector_type = vector_type
         self._config_file = Path(f"{name}_config.json")
         self._config = self._load_config()
 
         # Optionally rebuild index from storage if needed
         self._rebuild_index()
 
-    def insert(self, raw: Any, metadata: Dict[str, Any], record_id: int = None) -> int:
+    def insert(self, original_data: Any, vector: np.ndarray, metadata: Dict[str, Any], record_id: int = None) -> int:
         """
         Insert or update a record in the collection.
 
         Args:
-            raw: The raw vector data to encode
+            original_data: The original data to store
+            vector: The pre-encoded vector representing the data
             metadata: User-provided metadata to associate with this vector
             record_id: Optional record ID for updates, generated if not provided
 
         Returns:
             The record ID
         """
-        # Encode vector
-        vec = self._vector_type.encode(raw)
+        # Validate vector dimensions
+        if len(vector) != self.schema.field.dim:
+            raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}")
 
         # Generate or use record ID
         if record_id is None:
             record_id = self.get_next_id()
 
         # Serialize data
-        vector_bytes = vec.tobytes()
+        original_data_bytes = json.dumps(original_data).encode('utf-8')
+        vector_bytes = vector.tobytes()
         metadata_bytes = json.dumps(metadata).encode('utf-8')
 
         # Create header
-        header = np.array([record_id, len(vector_bytes), len(metadata_bytes)], dtype=np.int32).tobytes()
+        header = np.array([record_id, len(original_data_bytes), len(vector_bytes), len(metadata_bytes)],
+                          dtype=np.int32).tobytes()
 
         # Combine into record
-        record_bytes = header + vector_bytes + metadata_bytes
+        record_bytes = header + original_data_bytes + vector_bytes + metadata_bytes
         record_size = len(record_bytes)
 
         # Check if this is an update
@@ -77,26 +78,28 @@ class Collection:
             self.add_record_location(record_id, offset, record_size)
 
         # Update index
-        self._index.add(vec, id_=record_id)
+        self._index.add(vector, id_=record_id)
 
         return record_id
 
-    def search(self, query_raw: Any, k: int) -> List[Dict[str, Any]]:
+    def search(self, query_vector: np.ndarray, k: int) -> List[Dict[str, Any]]:
         """
         Search for similar vectors and return complete records.
 
         Args:
-            query_raw: The raw query data to search for
+            query_vector: The pre-encoded query vector
             k: Number of results to return
 
         Returns:
             List of matching records with their data and similarity scores
         """
-        # Encode the query vector
-        qvec = self._vector_type.encode(query_raw)
+        # Validate vector dimensions
+        if len(query_vector) != self.schema.field.dim:
+            raise ValueError(
+                f"Query vector dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}")
 
         # Get raw search results (id, distance pairs)
-        raw_results = self._index.search(qvec, k)
+        raw_results = self._index.search(query_vector, k)
 
         # Convert to complete records
         results = []
@@ -120,39 +123,37 @@ class Collection:
         record_data = self._storage.read(record_location['offset'], record_location['size'])
 
         # Parse header
-        header_size = 3 * 4  # 3 int32 values
+        header_size = 4 * 4  # 4 int32 values
         header = np.frombuffer(record_data[:header_size], dtype=np.int32)
 
         id_ = header[0]
-        vector_size = header[1]
-        metadata_size = header[2]
+        original_data_size = header[1]
+        vector_size = header[2]
+        metadata_size = header[3]
 
-        # Extract vector and metadata
-        vector_start = header_size
-        vector_end = vector_start + vector_size
-        vector_bytes = record_data[vector_start:vector_end]
+        # Extract components
+        current_pos = header_size
 
-        metadata_start = vector_end
-        metadata_end = metadata_start + metadata_size
-        metadata_bytes = record_data[metadata_start:metadata_end]
+        # Extract original data
+        original_data_bytes = record_data[current_pos:current_pos + original_data_size]
+        current_pos += original_data_size
+
+        # Extract vector
+        vector_bytes = record_data[current_pos:current_pos + vector_size]
+        current_pos += vector_size
+
+        # Extract metadata
+        metadata_bytes = record_data[current_pos:current_pos + metadata_size]
 
         # Decode
+        original_data = json.loads(original_data_bytes.decode('utf-8'))
         vec = np.frombuffer(vector_bytes, dtype=np.float32)
         user_metadata = json.loads(metadata_bytes.decode('utf-8'))
 
-        # Decode vector back to original format if possible
-        original_data = None
-        if hasattr(self._vector_type, 'decode'):
-            try:
-                original_data = self._vector_type.decode(vec)
-            except Exception as e:
-                # If decoding fails, just use the raw vector
-                pass
-
         return {
             'id': id_,
-            'vector': vec,
             'original_data': original_data,
+            'vector': vec,
             'user_metadata': user_metadata
         }
 
@@ -207,13 +208,17 @@ class Collection:
             record_data = self._storage.read(record_location['offset'], record_location['size'])
 
             # Parse header
-            header_size = 3 * 4  # 3 int32 values
+            header_size = 4 * 4  # 4 int32 values
             header = np.frombuffer(record_data[:header_size], dtype=np.int32)
 
-            vector_size = header[1]
+            original_data_size = header[1]
+            vector_size = header[2]
+
+            # Calculate vector position
+            vector_start = header_size + original_data_size
 
             # Extract vector
-            vector_bytes = record_data[header_size:header_size + vector_size]
+            vector_bytes = record_data[vector_start:vector_start + vector_size]
             vec = np.frombuffer(vector_bytes, dtype=np.float32)
 
             # Add to index

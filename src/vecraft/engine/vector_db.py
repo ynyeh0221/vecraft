@@ -1,7 +1,8 @@
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.core.vector_type_interface import VectorType
 from src.vecraft.engine.locks import RWLock
 from src.vecraft.engine.transaction import Txn
 from src.vecraft.metadata.catalog import JsonCatalog
@@ -12,12 +13,10 @@ class VectorDB:
     def __init__(self,
                  storage: StorageEngine,
                  catalog: JsonCatalog,
-                 index_factory,
-                 vector_types: Dict[str, VectorType]):
+                 index_factory):
         self._storage = storage
         self._catalog = catalog
         self._index_factory = index_factory
-        self._vector_types = vector_types
         self._lock = RWLock()
         self._txn = Txn(self._lock)
         self._collections: Dict[str, Collection] = {}
@@ -34,29 +33,50 @@ class VectorDB:
         """Get or create a Collection object."""
         if collection not in self._collections:
             schema = self._catalog.get_schema(collection)
-            vector_type = self._vector_types[schema.field.vector_type]
 
             self._collections[collection] = Collection(
                 name=collection,
                 schema=schema,
                 storage=self._storage,
-                index_factory=self._index_factory,
-                vector_type=vector_type
+                index_factory=self._index_factory
             )
 
         return self._collections[collection]
 
-    def insert(self, collection: str, raw: Any, metadata: dict, record_id: int = None) -> int:
-        """Insert or update a record in the collection."""
+    def insert(self, collection: str, original_data: Any, vector: np.ndarray, metadata: dict,
+               record_id: int = None) -> int:
+        """
+        Insert or update a record in the collection.
+
+        Args:
+            collection: Name of the collection
+            original_data: The original data to store
+            vector: The pre-encoded vector
+            metadata: User-provided metadata
+            record_id: Optional record ID
+
+        Returns:
+            The record ID
+        """
         col = self._get_collection(collection)
         with self._txn.write():
-            return col.insert(raw, metadata, record_id)
+            return col.insert(original_data, vector, metadata, record_id)
 
-    def search(self, collection: str, query_raw: Any, k: int):
-        """Search for similar vectors."""
+    def search(self, collection: str, query_vector: np.ndarray, k: int) -> List[Dict[str, Any]]:
+        """
+        Search for similar vectors.
+
+        Args:
+            collection: Name of the collection
+            query_vector: The pre-encoded query vector
+            k: Number of results to return
+
+        Returns:
+            List of matching records with similarity scores
+        """
         col = self._get_collection(collection)
         with self._txn.read():
-            return col.search(query_raw, k)
+            return col.search(query_vector, k)
 
     def get(self, collection: str, record_id: int) -> dict:
         """Retrieve a record by ID."""
