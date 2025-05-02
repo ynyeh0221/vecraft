@@ -1,0 +1,112 @@
+from dataclasses import dataclass
+from bisect import bisect_left, bisect_right, insort
+from collections import defaultdict
+from typing import Any, Dict, Set, Optional
+
+
+@dataclass
+class MetadataItem:
+    """
+    A wrapper for record ID and its associated metadata.
+    """
+    record_id: str
+    metadata: Dict[str, Any]
+
+class MetadataIndex:
+    """
+    A metadata index supporting equality and range queries.
+
+    - Equality queries via inverted index: field -> value -> set(record_id).
+    - Range queries via sorted lists: field -> list of (value, record_id).
+    """
+    def __init__(self):
+        self._eq_index: Dict[str, Dict[Any, Set[str]]] = defaultdict(lambda: defaultdict(set))
+        self._range_index: Dict[str, list] = defaultdict(list)
+
+    def add(self, item: MetadataItem) -> None:
+        """
+        Index a record's metadata.
+        """
+        rid = item.record_id
+        for field, value in item.metadata.items():
+            if isinstance(value, (list, set, tuple)):
+                for v in value:
+                    self._eq_index[field][v].add(rid)
+                    try:
+                        insort(self._range_index[field], (v, rid))
+                    except TypeError:
+                        pass
+            else:
+                self._eq_index[field][value].add(rid)
+                try:
+                    insort(self._range_index[field], (value, rid))
+                except TypeError:
+                    pass
+
+    def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
+        """
+        Update a record's metadata by removing old and adding new.
+        """
+        self.delete(old_item)
+        self.add(new_item)
+
+    def delete(self, item: MetadataItem) -> None:
+        """
+        Remove a record's metadata from the index.
+        """
+        rid = item.record_id
+        for field, value in item.metadata.items():
+            if isinstance(value, (list, set, tuple)):
+                for v in value:
+                    self._eq_index[field][v].discard(rid)
+                    self._remove_from_range(field, v, rid)
+            else:
+                self._eq_index[field][value].discard(rid)
+                self._remove_from_range(field, value, rid)
+
+    def _remove_from_range(self, field: str, value: Any, rid: str) -> None:
+        lst = self._range_index[field]
+        lo = bisect_left(lst, (value, rid))
+        hi = bisect_right(lst, (value, rid))
+        for i in range(lo, hi):
+            if lst[i][1] == rid:
+                lst.pop(i)
+                break
+
+    def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
+        """
+        Return IDs matching filter conditions. Supports:
+        - equality: field: value
+        - $in: field: {"$in": [v1, v2]}
+        - range: field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
+
+        Returns None if unable to use index effectively.
+        """
+        result_ids = None
+        for field, cond in where.items():
+            ids = set()
+            if not isinstance(cond, dict):
+                ids = set(self._eq_index[field].get(cond, []))
+            else:
+                # handle $in
+                if "$in" in cond:
+                    for v in cond["$in"]:
+                        ids |= self._eq_index[field].get(v, set())
+                # handle range
+                low = cond.get("$gte") if "$gte" in cond else cond.get("$gt")
+                high = cond.get("$lte") if "$lte" in cond else cond.get("$lt")
+                lst = self._range_index[field]
+                start = bisect_left(lst, (low, "")) if low is not None else 0
+                end = bisect_right(lst, (high, chr(255))) if high is not None else len(lst)
+                for val, rid in lst[start:end]:
+                    if "$gt" in cond and val <= cond["$gt"]:
+                        continue
+                    if "$lt" in cond and val >= cond["$lt"]:
+                        continue
+                    ids.add(rid)
+            if not ids:
+                return set()
+            result_ids = ids if result_ids is None else (result_ids & ids)
+            if not result_ids:
+                return set()
+        return result_ids

@@ -1,11 +1,19 @@
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Any, Set
 import numpy as np
 
-from src.vecraft.core.index_item import IndexItem
-
+# Define Vector type
 Vector = np.ndarray
+
+@dataclass
+class IndexItem:
+    """Vector with associated ID, document content, and metadata."""
+    record_id: str
+    vector: Vector
+    document: Optional[str] = None  # Original document content
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class Index(ABC):

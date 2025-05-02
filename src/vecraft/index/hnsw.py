@@ -3,7 +3,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
-from src.vecraft.core.index_item import IndexItem
+from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.index.id_mapper import IdMapper  # Import the new IdMapper class
 
 
@@ -207,7 +207,7 @@ class HNSW:
             data[i] = vector
 
             # Get internal ID for this record using IdMapper
-            record_id = item.id
+            record_id = item.record_id
             internal_id = self._id_mapper.add_mapping(record_id)
             ids[i] = internal_id
 
@@ -232,7 +232,7 @@ class HNSW:
             item: IndexItem containing record_id and vector
         """
         vec = item.vector
-        record_id = item.id
+        record_id = item.record_id
 
         # Prepare the vector - this handles dimension inference if needed
         if self._dim is None:
@@ -310,7 +310,7 @@ class HNSW:
         ids = []
 
         for item in items:
-            record_id = item.id
+            record_id = item.record_id
             vec = item.vector
 
             # Prepare the vector

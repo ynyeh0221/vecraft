@@ -4,27 +4,44 @@ from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
-from src.vecraft.core.index_item import IndexItem
+from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
+from src.vecraft.index.metadata_index import MetadataIndex, MetadataItem
 from src.vecraft.metadata.schema import CollectionSchema
 
 
 class Collection:
-    def __init__(self, name: str, schema: CollectionSchema, storage: StorageEngine, index_factory):
+    def __init__(self,
+                 name: str,
+                 schema: CollectionSchema,
+                 storage: StorageEngine,
+                 index_factory):
         self.name = name
         self.schema = schema
         self._storage = storage
         self._index = index_factory(kind="brute_force", dim=schema.field.dim)
+        self._metadata_index = MetadataIndex()
         self._config_file = Path(f"{name}_config.json")
         self._config = self._load_config()
 
-        # Optionally rebuild index from storage if needed
+        # Rebuild from storage
         self._rebuild_index()
+        # Populate metadata index
+        for rec_id_str, loc in self.get_all_record_locations().items():
+            rec = self.get(rec_id_str)
+            if rec and 'user_metadata' in rec:
+                self._metadata_index.add(rec_id_str, rec['user_metadata'])
 
-    def insert(self, original_data: Any, vector: np.ndarray, metadata: Dict[str, Any], record_id: str = None) -> str:
+    def insert(
+        self,
+        original_data: Any,
+        vector: np.ndarray,
+        metadata: Dict[str, Any],
+        record_id: str = None
+    ) -> str:
         """
-        Insert or update a record in the collection.
+        Insert or update a record in the collection, and update both vectors and metadata indices.
 
         Args:
             original_data: The original data to store
@@ -37,7 +54,9 @@ class Collection:
         """
         # Validate vector dimensions
         if len(vector) != self.schema.field.dim:
-            raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}")
+            raise ValueError(
+                f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}"
+            )
 
         # Generate or use record ID
         if record_id is None:
@@ -48,28 +67,29 @@ class Collection:
         vector_bytes = vector.tobytes()
         metadata_bytes = json.dumps(metadata).encode('utf-8')
 
-        # Create header
-        header = np.array([record_id, len(original_data_bytes), len(vector_bytes), len(metadata_bytes)],
-                          dtype=np.int32).tobytes()
+        # Create header: [id, len(original), len(vector), len(metadata)]
+        header = np.array([
+            int(record_id),
+            len(original_data_bytes),
+            len(vector_bytes),
+            len(metadata_bytes)
+        ], dtype=np.int32).tobytes()
 
-        # Combine into record
+        # Combine into single record
         record_bytes = header + original_data_bytes + vector_bytes + metadata_bytes
         record_size = len(record_bytes)
 
-        # Check if this is an update
-        record_location = self.get_record_location(record_id)
-
-        if record_location:
-            # This is an update
-            if record_size <= record_location['size']:
+        # Check for existing record
+        location = self.get_record_location(record_id)
+        if location:
+            # Update existing
+            if record_size <= location['size']:
                 # Overwrite in place
-                self._storage.write(record_bytes, record_location['offset'])
-                self.update_record_location(record_id, record_location['offset'], record_size)
+                self._storage.write(record_bytes, location['offset'])
+                self.update_record_location(record_id, location['offset'], record_size)
             else:
-                # Mark old space as deleted
+                # Mark old as deleted, append at end
                 self.mark_location_deleted(record_id)
-
-                # Write at end
                 offset = self.get_next_offset()
                 self._storage.write(record_bytes, offset)
                 self.update_record_location(record_id, offset, record_size)
@@ -79,75 +99,62 @@ class Collection:
             self._storage.write(record_bytes, offset)
             self.add_record_location(record_id, offset, record_size)
 
-        # Update index
-        self._index.add(IndexItem(id=record_id, vector=vector))
+        # Update in-memory indices
+        # 1) Vector index
+        self._index.add(IndexItem(record_id=record_id, vector=vector))
+        # 2) Metadata index
+        self._metadata_index.add(MetadataItem(record_id=record_id, metadata=metadata))
 
         return record_id
 
-    def search(self, query_vector: np.ndarray, k: int,
-               where: Dict[str, Any] = None,
-               where_document: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query_vector: np.ndarray,
+        k: int,
+        where: Dict[str, Any] = None,
+        where_document: Dict[str, Any] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Search for similar vectors with filtering on metadata and/or document content.
-
-        Args:
-            query_vector: The pre-encoded query vector
-            k: Number of results to return
-            where: Optional dictionary specifying metadata filter conditions
-            where_document: Optional dictionary specifying document content filter conditions
-
-        Returns:
-            List of matching records with their data and similarity scores
+        Search for similar vectors with optional metadata and document filters.
         """
-        # Validate vector dimensions
+        # 1) Validate query vector dimension
         if len(query_vector) != self.schema.field.dim:
             raise ValueError(
-                f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}")
+                f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}"
+            )
 
-        # Pre-filter phase
-        allowed_ids = None
+        allowed_ids: Optional[Set[str]] = None
 
-        # If we have metadata filter
-        """
+        # 2) Metadata filtering
         if where:
-            # Try to get matching IDs using metadata index
-            metadata_matching_ids = self._metadata_index.get_matching_ids(where)
+            metadata_ids = self._metadata_index.get_matching_ids(where)
+            # If metadata_ids is not None, enforce filtering
+            if metadata_ids is not None:
+                allowed_ids = metadata_ids
+                if not allowed_ids:
+                    return []
 
-            # If we couldn't use the metadata index effectively, filter manually
-            if metadata_matching_ids is None:
-                metadata_matching_ids = self._filter_by_metadata(where)
-
-            # Initialize allowed_ids with metadata matches
-            allowed_ids = metadata_matching_ids
-        """
-
-        # If we have document content filter
-        if where_document and (allowed_ids is None or allowed_ids):
-            # Get IDs that match document filter
-            document_matching_ids = self._filter_by_document(where_document, allowed_ids)
-
-            # Update allowed_ids
+        # 3) Document content filtering
+        if where_document:
+            doc_ids = self._filter_by_document(where_document, allowed_ids)
             if allowed_ids is None:
-                allowed_ids = document_matching_ids
+                allowed_ids = doc_ids
             else:
-                # Intersection of metadata and document filters
-                allowed_ids = allowed_ids.intersection(document_matching_ids)
+                allowed_ids &= doc_ids
+            if not allowed_ids:
+                return []
 
-        # If no matches after filtering, return empty results
-        if allowed_ids is not None and not allowed_ids:
-            return []
-
-        # Perform search with pre-filtering
+        # 4) Vector similarity search
         raw_results = self._index.search(query_vector, k, allowed_ids=allowed_ids)
 
-        # Format and return results
-        results = []
-        for record_id, distance in raw_results:
-            record = self.get(record_id)
-            if record:
-                record['distance'] = distance
-                results.append(record)
-
+        # 5) Fetch and format records
+        results: List[Dict[str, Any]] = []
+        for rec_id, dist in raw_results:
+            rec = self.get(rec_id)
+            if not rec:
+                continue
+            rec['distance'] = dist
+            results.append(rec)
         return results
 
     def _filter_by_document(self, filter_condition: Dict[str, Any],
@@ -305,7 +312,13 @@ class Collection:
             vec = np.frombuffer(vector_bytes, dtype=np.float32)
 
             # Add to index
-            self._index.add(vec, id_=int(record_id))
+            self._index.add(IndexItem(record_id=str(record_id), vector=vec))
+
+    def _rebuild_metadata_index(self):
+        for rec_id_str, loc in self.get_all_record_locations().items():
+            rec = self.get(rec_id_str)
+            if rec and 'user_metadata' in rec:
+                self._metadata_index.add(MetadataItem(record_id=rec_id_str, metadata=rec['user_metadata']))
 
     def get_next_id(self) -> str:
         """Get the next available ID for this collection."""
