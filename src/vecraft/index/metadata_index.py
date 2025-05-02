@@ -78,38 +78,51 @@ class MetadataIndex:
         """
         Return IDs matching filter conditions. Supports:
         - equality: field: value
-        - $in: field: {"$in": [v1, v2]}
-        - range: field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
+        - $in:    field: {"$in": [v1, v2]}
+        - range:  field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
 
         Returns None if unable to use index effectively.
         """
         result_ids = None
+
         for field, cond in where.items():
             ids = set()
+
+            # simple equality
             if not isinstance(cond, dict):
                 ids = set(self._eq_index[field].get(cond, []))
+
             else:
                 # handle $in
                 if "$in" in cond:
                     for v in cond["$in"]:
                         ids |= self._eq_index[field].get(v, set())
-                # handle range
-                low = cond.get("$gte") if "$gte" in cond else cond.get("$gt")
-                high = cond.get("$lte") if "$lte" in cond else cond.get("$lt")
-                lst = self._range_index[field]
-                start = bisect_left(lst, (low, "")) if low is not None else 0
-                end = bisect_right(lst, (high, chr(255))) if high is not None else len(lst)
-                for val, rid in lst[start:end]:
-                    if "$gt" in cond and val <= cond["$gt"]:
-                        continue
-                    if "$lt" in cond and val >= cond["$lt"]:
-                        continue
-                    ids.add(rid)
+
+                # only perform a range scan if there's a range operator present
+                if any(k in cond for k in ("$gte", "$gt", "$lte", "$lt")):
+                    low = cond.get("$gte") if "$gte" in cond else cond.get("$gt")
+                    high = cond.get("$lte") if "$lte" in cond else cond.get("$lt")
+
+                    lst = self._range_index[field]
+                    start = bisect_left(lst, (low, "")) if low is not None else 0
+                    end = bisect_right(lst, (high, chr(255))) if high is not None else len(lst)
+
+                    for val, rid in lst[start:end]:
+                        if "$gt" in cond and val <= cond["$gt"]:
+                            continue
+                        if "$lt" in cond and val >= cond["$lt"]:
+                            continue
+                        ids.add(rid)
+
+            # if no matches at all, shortcut to empty set
             if not ids:
                 return set()
+
+            # intersect with previous fields’ results
             result_ids = ids if result_ids is None else (result_ids & ids)
             if not result_ids:
                 return set()
+
         return result_ids
 
     def serialize(self) -> bytes:
