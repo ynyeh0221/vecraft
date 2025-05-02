@@ -1,6 +1,7 @@
 import json
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Callable
 
 import numpy as np
 
@@ -9,14 +10,17 @@ from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
 from src.vecraft.index.metadata_index import MetadataIndex, MetadataItem
 from src.vecraft.metadata.schema import CollectionSchema
+from src.vecraft.wal.wal_manager import WALManager
 
 
 class Collection:
-    def __init__(self,
-                 name: str,
-                 schema: CollectionSchema,
-                 storage: StorageEngine,
-                 index_factory):
+    def __init__(
+        self,
+        name: str,
+        schema: CollectionSchema,
+        storage: StorageEngine,
+        index_factory: Callable
+    ):
         self.name = name
         self.schema = schema
         self._storage = storage
@@ -24,14 +28,70 @@ class Collection:
         self._metadata_index = MetadataIndex()
         self._config_file = Path(f"{name}_config.json")
         self._config = self._load_config()
+        self._wal = WALManager(Path(f"{name}.wal"))
 
-        # Rebuild from storage
+        # Recover any incomplete operations, then clear WAL
+        self._wal.replay(self._replay_entry)
+
+        # Build indices from storage
         self._rebuild_index()
-        # Populate metadata index
-        for rec_id_str, loc in self.get_all_record_locations().items():
-            rec = self.get(rec_id_str)
-            if rec and 'user_metadata' in rec:
-                self._metadata_index.add(rec_id_str, rec['user_metadata'])
+        self._rebuild_metadata_index()
+
+    def _replay_entry(self, entry: dict) -> None:
+        typ = entry.get("type")
+        if typ == "insert":
+            self._apply_insert(entry)
+        elif typ == "delete":
+            self._apply_delete(entry["record_id"])
+
+    def _apply_insert(self, entry: dict) -> None:
+        # Unpack entry
+        rid = entry["record_id"]
+        orig = entry["original_data"]
+        vec = np.array(entry["vector"], dtype=np.float32)
+        meta = entry["metadata"]
+        # Serialize components
+        orig_bytes = json.dumps(orig).encode('utf-8')
+        vec_bytes = vec.tobytes()
+        meta_bytes = json.dumps(meta).encode('utf-8')
+        header = np.array([int(rid), len(orig_bytes), len(vec_bytes), len(meta_bytes)], dtype=np.int32).tobytes()
+        record = header + orig_bytes + vec_bytes + meta_bytes
+        size = len(record)
+
+        # Storage write
+        loc = self.get_record_location(rid)
+        if loc:
+            if size <= loc['size']:
+                self._storage.write(record, loc['offset'])
+                self.update_record_location(rid, loc['offset'], size)
+            else:
+                self.mark_location_deleted(rid)
+                offset = self.get_next_offset()
+                self._storage.write(record, offset)
+                self.update_record_location(rid, offset, size)
+        else:
+            offset = self.get_next_offset()
+            self._storage.write(record, offset)
+            self.add_record_location(rid, offset, size)
+
+        # Update indices
+        self._index.add(IndexItem(record_id=rid, vector=vec))
+        self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
+
+    def _apply_delete(self, record_id: str) -> None:
+        loc = self.get_record_location(record_id)
+        if not loc:
+            return
+
+        # Mark deleted
+        self.mark_location_deleted(record_id)
+        self.delete_record_location(record_id)
+
+        # Update indices
+        self._index.delete(id_=record_id)
+
+        # metadata index delete requires old metadata; assume empty deletes mapping
+        self._metadata_index.delete(MetadataItem(record_id=record_id, metadata={}))
 
     def insert(
         self,
@@ -40,72 +100,33 @@ class Collection:
         metadata: Dict[str, Any],
         record_id: str = None
     ) -> str:
-        """
-        Insert or update a record in the collection, and update both vectors and metadata indices.
-
-        Args:
-            original_data: The original data to store
-            vector: The pre-encoded vector representing the data
-            metadata: User-provided metadata to associate with this vector
-            record_id: Optional record ID for updates, generated if not provided
-
-        Returns:
-            The record ID
-        """
-        # Validate vector dimensions
+        # Validate dimensions
         if len(vector) != self.schema.field.dim:
-            raise ValueError(
-                f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}"
-            )
-
-        # Generate or use record ID
+            raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}")
+        # Generate ID
         if record_id is None:
             record_id = self.get_next_id()
-
-        # Serialize data
-        original_data_bytes = json.dumps(original_data).encode('utf-8')
-        vector_bytes = vector.tobytes()
-        metadata_bytes = json.dumps(metadata).encode('utf-8')
-
-        # Create header: [id, len(original), len(vector), len(metadata)]
-        header = np.array([
-            int(record_id),
-            len(original_data_bytes),
-            len(vector_bytes),
-            len(metadata_bytes)
-        ], dtype=np.int32).tobytes()
-
-        # Combine into single record
-        record_bytes = header + original_data_bytes + vector_bytes + metadata_bytes
-        record_size = len(record_bytes)
-
-        # Check for existing record
-        location = self.get_record_location(record_id)
-        if location:
-            # Update existing
-            if record_size <= location['size']:
-                # Overwrite in place
-                self._storage.write(record_bytes, location['offset'])
-                self.update_record_location(record_id, location['offset'], record_size)
-            else:
-                # Mark old as deleted, append at end
-                self.mark_location_deleted(record_id)
-                offset = self.get_next_offset()
-                self._storage.write(record_bytes, offset)
-                self.update_record_location(record_id, offset, record_size)
-        else:
-            # New insert
-            offset = self.get_next_offset()
-            self._storage.write(record_bytes, offset)
-            self.add_record_location(record_id, offset, record_size)
-
-        # Update in-memory indices
-        # 1) Vector index
-        self._index.add(IndexItem(record_id=record_id, vector=vector))
-        # 2) Metadata index
-        self._metadata_index.add(MetadataItem(record_id=record_id, metadata=metadata))
-
+        # Prepare WAL entry
+        entry = {
+            "type": "insert",
+            "record_id": record_id,
+            "original_data": original_data,
+            "vector": vector.tolist(),
+            "metadata": metadata
+        }
+        # Write-ahead log
+        self._wal.append(entry)
+        # Apply insert
+        self._apply_insert(entry)
         return record_id
+
+    def delete(self, record_id: str) -> bool:
+        # Prepare WAL
+        entry = {"type": "delete", "record_id": record_id}
+        self._wal.append(entry)
+        # Apply delete
+        self._apply_delete(record_id)
+        return True
 
     def search(
         self,
@@ -246,23 +267,6 @@ class Collection:
             'vector': vec,
             'user_metadata': user_metadata
         }
-
-    def delete(self, record_id: str) -> bool:
-        """Delete a record by ID."""
-        record_location = self.get_record_location(record_id)
-        if not record_location:
-            return False
-
-        # Mark space as deleted
-        self.mark_location_deleted(record_id)
-
-        # Remove from metadata
-        self.delete_record_location(record_id)
-
-        # Remove from index
-        self._index.delete(id_=record_id)
-
-        return True
 
     def flush(self):
         """Ensure all data and configuration are persisted."""
