@@ -1,3 +1,4 @@
+import pickle
 from dataclasses import dataclass
 from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
@@ -110,3 +111,27 @@ class MetadataIndex:
             if not result_ids:
                 return set()
         return result_ids
+
+    def serialize(self) -> bytes:
+        """
+        Serialize the metadata index to bytes for snapshotting.
+        """
+        state = {
+            'eq_index': {field: dict(vals) for field, vals in self._eq_index.items()},
+            'range_index': {field: list(lst) for field, lst in self._range_index.items()}
+        }
+        return pickle.dumps(state)
+
+    def deserialize(self, data: bytes) -> None:
+        """
+        Restore the metadata index from serialized bytes.
+        """
+        state = pickle.loads(data)
+        self._eq_index = defaultdict(lambda: defaultdict(set), {
+            field: defaultdict(set, {val: set(rids) for val, rids in vals.items()})
+            for field, vals in state['eq_index'].items()
+        })
+        self._range_index = defaultdict(list, {
+            field: list(lst)
+            for field, lst in state['range_index'].items()
+        })

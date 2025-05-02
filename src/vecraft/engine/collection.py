@@ -1,5 +1,5 @@
 import json
-import os
+import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
 
@@ -28,14 +28,40 @@ class Collection:
         self._metadata_index = MetadataIndex()
         self._config_file = Path(f"{name}_config.json")
         self._config = self._load_config()
+
+        # WAL and snapshots
         self._wal = WALManager(Path(f"{name}.wal"))
+        self._vec_snap = Path(f"{name}.idxsnap")
+        self._meta_snap = Path(f"{name}.metasnap")
 
-        # Recover any incomplete operations, then clear WAL
+        # Load snapshots if existed, else full rebuild
+        if not self._load_snapshots():
+            self._rebuild_index()
+            self._rebuild_metadata_index()
+
+        # Apply WAL entries since snapshot
         self._wal.replay(self._replay_entry)
+        # Clear WAL after replay
+        self._wal.clear()
 
-        # Build indices from storage
-        self._rebuild_index()
-        self._rebuild_metadata_index()
+    def _load_snapshots(self) -> bool:
+        if self._vec_snap.exists() and self._meta_snap.exists():
+            # load vector index
+            vec_data = pickle.loads(self._vec_snap.read_bytes())
+            self._index.deserialize(vec_data)
+            # load metadata index
+            meta_data = self._meta_snap.read_bytes()
+            self._metadata_index.deserialize(meta_data)
+            return True
+        return False
+
+    def _save_snapshots(self) -> None:
+        # serialize and save vector index
+        vec_bytes = self._index.serialize()
+        self._vec_snap.write_bytes(vec_bytes)
+        # serialize and save metadata index
+        meta_bytes = self._metadata_index.serialize()
+        self._meta_snap.write_bytes(meta_bytes)
 
     def _replay_entry(self, entry: dict) -> None:
         typ = entry.get("type")
@@ -228,7 +254,7 @@ class Collection:
         """Retrieve a record by ID."""
         record_location = self.get_record_location(record_id)
         if not record_location:
-            return None
+            return {}
 
         # Read record data
         record_data = self._storage.read(record_location['offset'], record_location['size'])
@@ -272,6 +298,7 @@ class Collection:
         """Ensure all data and configuration are persisted."""
         self._save_config()
         self._storage.flush()
+        self._save_snapshots()
 
     def _load_config(self) -> dict:
         """Load collection configuration from disk."""
