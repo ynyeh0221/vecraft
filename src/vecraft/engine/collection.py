@@ -7,6 +7,8 @@ import numpy as np
 
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
+from src.vecraft.engine.locks import RWLock
+from src.vecraft.engine.transaction import Txn
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
 from src.vecraft.index.metadata_index import MetadataIndex, MetadataItem
 from src.vecraft.metadata.schema import CollectionSchema
@@ -26,6 +28,11 @@ class Collection:
         self._storage = storage
         self._index = index_factory(kind="brute_force", dim=schema.field.dim)
         self._metadata_index = MetadataIndex()
+
+        # per-collection lock and txn
+        self._lock = RWLock()
+        self._txn = Txn(self._lock)
+
         self._config_file = Path(f"{name}_config.json")
         self._config = self._load_config()
 
@@ -514,3 +521,11 @@ class Collection:
     def get_all_record_locations(self) -> dict:
         """Get all record storage locations."""
         return self._config.get('records', {})
+
+    def read_transaction(self):
+        """Publicly expose a read‐lock context."""
+        return self._txn.read()
+
+    def write_transaction(self):
+        """Publicly expose a write‐lock context."""
+        return self._txn.write()

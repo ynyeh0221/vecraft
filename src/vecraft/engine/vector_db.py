@@ -3,10 +3,8 @@ from typing import Dict, Any, List
 import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.engine.locks import RWLock
-from src.vecraft.engine.transaction import Txn
-from src.vecraft.metadata.catalog import JsonCatalog
 from src.vecraft.engine.collection import Collection
+from src.vecraft.metadata.catalog import JsonCatalog
 
 
 class VectorDB:
@@ -17,17 +15,7 @@ class VectorDB:
         self._storage = storage
         self._catalog = catalog
         self._index_factory = index_factory
-        self._lock = RWLock()
-        self._txn = Txn(self._lock)
         self._collections: Dict[str, Collection] = {}
-
-        # Initialize collections from catalog
-        self._load_collections()
-
-    def _load_collections(self):
-        """Load all collections from catalog."""
-        for col_name in self._catalog.list_collections():
-            self._get_collection(col_name)
 
     def _get_collection(self, collection: str) -> Collection:
         """Get or create a Collection object."""
@@ -59,7 +47,8 @@ class VectorDB:
             The record ID
         """
         col = self._get_collection(collection)
-        with self._txn.write():
+        # use the per-collection txn:
+        with col.write_transaction():
             return col.insert(original_data, vector, metadata, record_id)
 
     def search(self, collection: str, query_vector: np.ndarray, k: int,
@@ -79,19 +68,19 @@ class VectorDB:
             List of matching records with similarity scores
         """
         col = self._get_collection(collection)
-        with self._txn.read():
+        with col.read_transaction():
             return col.search(query_vector, k, where, where_document)
 
     def get(self, collection: str, record_id: str) -> dict:
         """Retrieve a record by ID."""
         col = self._get_collection(collection)
-        with self._txn.read():
+        with col.read_transaction():
             return col.get(record_id)
 
     def delete(self, collection: str, record_id: str) -> bool:
         """Delete a record by ID."""
         col = self._get_collection(collection)
-        with self._txn.write():
+        with col.write_transaction():
             return col.delete(record_id)
 
     def flush(self):
