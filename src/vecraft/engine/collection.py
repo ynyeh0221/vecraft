@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set, Callable
 
 import numpy as np
 
+from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.locks import RWLock
@@ -529,3 +530,50 @@ class Collection:
     def write_transaction(self):
         """Publicly expose a write‐lock context."""
         return self._txn.write()
+
+    def generate_tsne_plot(
+            self,
+            record_ids: Optional[List[str]] = None,
+            perplexity: int = 30,
+            random_state: int = 42,
+            outfile: str = "tsne.png"
+    ) -> str:
+        """
+        Generate a t-SNE scatter plot for the given record IDs (or all records if None).
+
+        Args:
+            record_ids: Optional list of record IDs to visualize.
+            perplexity: t-SNE perplexity parameter.
+            random_state: Random seed for reproducibility.
+            outfile: Path to save the generated PNG image.
+
+        Returns:
+            Path to the saved t-SNE plot image.
+        """
+        # Determine which IDs to plot
+        if record_ids is None:
+            record_ids = list(self.get_all_record_locations().keys())
+
+        vectors = []
+        labels = []
+        for rid in record_ids:
+            rec = self.get(rid)
+            if not rec:
+                continue
+            vectors.append(rec['vector'])
+            labels.append(rid)
+
+        if not vectors:
+            raise ValueError("No vectors available for t-SNE visualization.")
+
+        # Stack into a 2D array
+        data = np.vstack(vectors)
+
+        # Call the helper to generate and save the plot
+        return generate_tsne(
+            vectors=data,
+            labels=labels,
+            outfile=outfile,
+            perplexity=perplexity,
+            random_state=random_state
+        )
