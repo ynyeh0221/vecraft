@@ -1,9 +1,10 @@
 from enum import Enum
-from typing import List, Tuple, Union, Optional, Any
+from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
 from src.vecraft.core.index_item import IndexItem
+from src.vecraft.index.id_mapper import IdMapper  # Import the new IdMapper class
 
 
 class DistanceMetric(str, Enum):
@@ -16,6 +17,9 @@ class DistanceMetric(str, Enum):
 class HNSW:
     """
     Enhanced HNSW index supporting different vector types, dimensions, and string record IDs.
+    This implementation uses a separate IdMapper component to handle the conversion
+    between user-provided string record IDs and internal integer IDs required by the
+    underlying HNSW algorithm.
     """
 
     def __init__(
@@ -49,14 +53,14 @@ class HNSW:
         self._auto_resize_dim = auto_resize_dim
         self._pad_value = pad_value
 
+        # Initialize the ID mapper component to handle conversion between
+        # user-provided string record IDs and internal integer IDs
+        self._id_mapper = IdMapper()
+
         # These will be initialized when first vector is added
         self._index = None
         self._max_elements = 1000
         self._current_elements = 0
-        self._str_id_to_internal = {}  # Map string IDs to internal indices
-        self._internal_to_str_id = {}  # Map internal indices to string IDs
-        self._deleted_indices = set()  # Track deleted internal indices for reuse
-        self._next_internal_id = 0
 
         # Initialize index if dimension is provided
         if self._dim is not None:
@@ -202,13 +206,10 @@ class HNSW:
             # Add to data array
             data[i] = vector
 
-            # Assign internal ID
-            internal_id = i
+            # Get internal ID for this record using IdMapper
+            record_id = item.id
+            internal_id = self._id_mapper.add_mapping(record_id)
             ids[i] = internal_id
-
-            # Map record ID to internal ID
-            self._str_id_to_internal[item.id] = internal_id
-            self._internal_to_str_id[internal_id] = item.id
 
         # Resize if necessary
         if len(items) > self._max_elements:
@@ -222,9 +223,14 @@ class HNSW:
         # Add all vectors at once
         self._index.add_items(data, ids)
         self._current_elements = len(items)
-        self._next_internal_id = self._current_elements
 
     def add(self, item: IndexItem) -> None:
+        """
+        Add a single IndexItem to the index.
+
+        Args:
+            item: IndexItem containing record_id and vector
+        """
         vec = item.vector
         record_id = item.id
 
@@ -246,10 +252,10 @@ class HNSW:
         # Now process the vector
         np_vec = self._prepare_vector(vec)
 
-        # Check if ID already exists
-        if record_id in self._str_id_to_internal:
-            # Update existing vector
-            internal_id = self._str_id_to_internal[record_id]
+        # Check if ID already exists using IdMapper
+        if self._id_mapper.has_record_id(record_id):
+            # Update existing vector - reuse its internal_id
+            internal_id = self._id_mapper.get_internal_id(record_id)
             self._index.mark_deleted(internal_id)  # Delete old vector
             self._index.add_items(np.array([np_vec]), np.array([internal_id], dtype=np.int32))
             return
@@ -257,19 +263,11 @@ class HNSW:
         # Resize if necessary
         self._maybe_resize()
 
-        # Use a deleted ID if available, or get a new one
-        if self._deleted_indices:
-            internal_id = self._deleted_indices.pop()
-        else:
-            internal_id = self._next_internal_id
-            self._next_internal_id += 1
+        # Add new mapping and get internal_id using IdMapper
+        internal_id = self._id_mapper.add_mapping(record_id)
 
         # Add the vector
         self._index.add_items(np.array([np_vec]), np.array([internal_id], dtype=np.int32))
-
-        # Update mappings
-        self._str_id_to_internal[record_id] = internal_id
-        self._internal_to_str_id[internal_id] = record_id
         self._current_elements += 1
 
     def add_batch(self, items: List[IndexItem]) -> None:
@@ -315,25 +313,18 @@ class HNSW:
             record_id = item.id
             vec = item.vector
 
-            if record_id in self._str_id_to_internal:
-                # Update existing vector - mark as deleted first
-                internal_id = self._str_id_to_internal[record_id]
-                self._index.mark_deleted(internal_id)
-            else:
-                # Assign a new internal ID
-                if self._deleted_indices:
-                    internal_id = self._deleted_indices.pop()
-                else:
-                    internal_id = self._next_internal_id
-                    self._next_internal_id += 1
-
-                # Update mappings
-                self._str_id_to_internal[record_id] = internal_id
-                self._internal_to_str_id[internal_id] = record_id
-                self._current_elements += 1
-
             # Prepare the vector
             np_vec = self._prepare_vector(vec)
+
+            # Get or create internal ID using IdMapper
+            if self._id_mapper.has_record_id(record_id):
+                # Update existing vector
+                internal_id = self._id_mapper.get_internal_id(record_id)
+                self._index.mark_deleted(internal_id)
+            else:
+                # Add new mapping
+                internal_id = self._id_mapper.add_mapping(record_id)
+                self._current_elements += 1
 
             data.append(np_vec)
             ids.append(internal_id)
@@ -348,25 +339,27 @@ class HNSW:
         Args:
             record_id: String ID of the vector to remove
         """
-        if record_id not in self._str_id_to_internal:
-            return
+        # Get internal ID using IdMapper
+        internal_id = self._id_mapper.get_internal_id(record_id)
+        if internal_id is None:
+            return  # Record not found
 
-        internal_id = self._str_id_to_internal[record_id]
+        # Mark as deleted in the index
         self._index.mark_deleted(internal_id)
 
-        # Update mappings
-        del self._str_id_to_internal[record_id]
-        del self._internal_to_str_id[internal_id]
-        self._deleted_indices.add(internal_id)
+        # Remove the mapping using IdMapper
+        self._id_mapper.delete_mapping(record_id)
         self._current_elements -= 1
 
-    def search(self, query: Any, k: int) -> List[Tuple[str, float]]:
+    def search(self, query: Any, k: int,
+               allowed_ids: Optional[Set[str]] = None) -> List[Tuple[str, float]]:
         """
-        Search for similar vectors.
+        Search for similar vectors with optional pre-filtering.
 
         Args:
             query: Query vector in any supported format
             k: Number of results to return
+            allowed_ids: Optional set of record IDs to consider (pre-filtering)
 
         Returns:
             List of (record_id, distance) tuples for the k nearest neighbors,
@@ -375,30 +368,97 @@ class HNSW:
         if self._current_elements == 0 or self._index is None:
             return []
 
-        # Make sure k doesn't exceed the number of elements
-        k = min(k, self._current_elements)
+        # If no allowed_ids specified, perform standard search
+        if allowed_ids is None:
+            # Make sure k doesn't exceed the number of elements
+            k = min(k, self._current_elements)
 
-        # Prepare the query vector
+            # Prepare the query vector
+            np_query = self._prepare_vector(query)
+
+            # Perform the search
+            labels, distances = self._index.knn_query(np_query.reshape(1, -1), k=k)
+
+            # Convert internal IDs to string record IDs using IdMapper
+            results = []
+            for i in range(len(labels[0])):
+                internal_id = labels[0][i]
+                # Convert internal ID to record ID
+                record_id = self._id_mapper.get_record_id(internal_id)
+                if record_id:  # Make sure record exists (not deleted)
+                    distance = float(distances[0][i])
+
+                    # For inner product or cosine, smaller values are worse (convert to similarity)
+                    if self._metric in ["ip", "cosine"]:
+                        distance = 1.0 - distance
+
+                    results.append((record_id, distance))
+
+            return results
+
+        # Pre-filtering approach
+        # Check if allowed_ids is empty
+        if not allowed_ids:
+            return []
+
+        # Convert allowed_ids to internal IDs using IdMapper
+        allowed_internal_ids = self._id_mapper.convert_to_internal_ids(allowed_ids)
+
+        if not allowed_internal_ids:
+            return []  # No valid IDs to search among
+
+        # Prepare query vector
         np_query = self._prepare_vector(query)
 
-        # Perform the search
-        labels, distances = self._index.knn_query(np_query.reshape(1, -1), k=k)
+        # Perform filtered search
+        return self._filtered_hnsw_search(np_query, allowed_internal_ids, k)
 
-        # Convert internal IDs to string record IDs and adjust distances for different metrics
+    def _filtered_hnsw_search(self, query_vector: np.ndarray,
+                              allowed_internal_ids: Set[int],
+                              k: int) -> List[Tuple[str, float]]:
+        """
+        Use HNSW search but boost k and filter results afterward.
+        More efficient for less selective filters.
+        """
+        # Boost k to ensure we get enough valid results after filtering
+        allowed_count = len(allowed_internal_ids)
+        boosted_k = min(max(k * 3, 100), self._current_elements)
+
+        # Perform the search with the boosted k
+        labels, distances = self._index.knn_query(query_vector.reshape(1, -1), k=boosted_k)
+
+        # Filter and convert results
         results = []
         for i in range(len(labels[0])):
             internal_id = labels[0][i]
-            if internal_id in self._internal_to_str_id:  # Check if not deleted
-                record_id = self._internal_to_str_id[internal_id]
-                distance = float(distances[0][i])
 
-                # For inner product or cosine, smaller values are worse (convert to similarity)
-                if self._metric in ["ip", "cosine"]:
-                    distance = 1.0 - distance
+            # Check if this ID is in the allowed set
+            if internal_id in allowed_internal_ids:
+                # Convert internal ID to record ID using IdMapper
+                record_id = self._id_mapper.get_record_id(internal_id)
+                if record_id:  # Double check record exists
+                    distance = float(distances[0][i])
 
-                results.append((record_id, distance))
+                    # For inner product or cosine, convert to similarity
+                    if self._metric in ["ip", "cosine"]:
+                        distance = 1.0 - distance
+
+                    results.append((record_id, distance))
+
+                    # Break early if we have enough results
+                    if len(results) >= k:
+                        break
 
         return results
+
+    def get_ids(self) -> Set[str]:
+        """
+        Get all record IDs in the index as a set.
+
+        Returns:
+            Set of all record IDs in the index
+        """
+        return set(self._id_mapper.get_all_record_ids())
 
     def get_all_ids(self) -> List[str]:
         """
@@ -407,7 +467,7 @@ class HNSW:
         Returns:
             List of all record IDs in the index
         """
-        return list(self._str_id_to_internal.keys())
+        return self._id_mapper.get_all_record_ids()
 
     def serialize(self) -> bytes:
         """
@@ -429,6 +489,8 @@ class HNSW:
                 'normalize_vectors': self._normalize_vectors,
                 'auto_resize_dim': self._auto_resize_dim,
                 'pad_value': self._pad_value,
+                # Include IdMapper state
+                'id_mapper': self._id_mapper,
             })
 
         # Save the index to a buffer
@@ -444,15 +506,13 @@ class HNSW:
             'metric': self._metric,
             'max_elements': self._max_elements,
             'current_elements': self._current_elements,
-            'str_id_to_internal': self._str_id_to_internal,
-            'internal_to_str_id': self._internal_to_str_id,
-            'deleted_indices': self._deleted_indices,
-            'next_internal_id': self._next_internal_id,
             'ef_construction': self._ef_construction,
             'M': self._M,
             'normalize_vectors': self._normalize_vectors,
             'auto_resize_dim': self._auto_resize_dim,
             'pad_value': self._pad_value,
+            # Include IdMapper state
+            'id_mapper': self._id_mapper,
         }
 
         return pickle.dumps(state)
@@ -480,6 +540,9 @@ class HNSW:
         self._auto_resize_dim = state.get('auto_resize_dim', False)
         self._pad_value = state.get('pad_value', 0.0)
 
+        # Restore IdMapper state
+        self._id_mapper = state.get('id_mapper', IdMapper())
+
         if not state.get('initialized', True):
             # Index was not initialized yet
             return
@@ -493,57 +556,6 @@ class HNSW:
         # Set parameters
         self._max_elements = state['max_elements']
         self._current_elements = state['current_elements']
-        self._str_id_to_internal = state['str_id_to_internal']
-        self._internal_to_str_id = state['internal_to_str_id']
-        self._deleted_indices = state['deleted_indices']
-        self._next_internal_id = state['next_internal_id']
 
         # Set search parameters
         self._index.set_ef(max(self._ef_construction, 50))
-
-
-# Example usage with string record IDs
-def example_usage():
-    # Create index with auto dimension detection
-    index = HNSW(auto_resize_dim=True)
-
-    # Add vectors with string IDs
-    index.add(IndexItem(id="doc1", vector=np.array([0.1, 0.2, 0.3]))) # This will set the dimension to 3
-    index.add(IndexItem(id="doc2", vector=np.array([0.4, 0.5])))  # Will be padded to [0.4, 0.5, 0.0]
-    index.add(IndexItem(id="doc3", vector=np.array([0.7, 0.8, 0.9, 1.0])))  # Will be truncated to [0.7, 0.8, 0.9]
-
-    # Search with a vector of different dimension
-    results = index.search([0.2, 0.3], k=2)  # Will be padded to [0.2, 0.3, 0.0]
-    print(f"Search results: {results}")
-
-    # Delete a vector
-    index.delete("doc2")
-
-    # Search again
-    results = index.search([0.2, 0.3], k=2)
-    print(f"Search results after deletion: {results}")
-
-    # Using batch operations
-    batch_vectors = [
-        IndexItem(id="doc4", vector=np.array([0.5, 0.5, 0.5])),
-        IndexItem(id="doc5", vector=np.array([0.9, 0.9, 0.9])),
-        IndexItem(id="doc6", vector=np.array([0.1, 0.1, 0.1]))
-    ]
-    index.add_batch(batch_vectors)
-
-    # Get all IDs
-    all_ids = index.get_all_ids()
-    print(f"All record IDs: {all_ids}")
-
-    # Using different distance metrics
-    cosine_index = HNSW(metric=DistanceMetric.COSINE, normalize_vectors=True)
-    cosine_index.add(IndexItem(id="vec1", vector=np.array([0, 1, 0])))
-    cosine_index.add(IndexItem(id="vec2", vector=np.array([0, 1, 0])))
-    cosine_index.add(IndexItem(id="vec3", vector=np.array([1, 1, 0])))
-
-    results = cosine_index.search([1, 1, 0], k=3)
-    print(f"Cosine similarity results: {results}")
-
-
-if __name__ == "__main__":
-    example_usage()

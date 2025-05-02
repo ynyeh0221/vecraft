@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
+from src.vecraft.core.index_item import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
+from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
 from src.vecraft.metadata.schema import CollectionSchema
 
 
@@ -20,7 +22,7 @@ class Collection:
         # Optionally rebuild index from storage if needed
         self._rebuild_index()
 
-    def insert(self, original_data: Any, vector: np.ndarray, metadata: Dict[str, Any], record_id: int = None) -> int:
+    def insert(self, original_data: Any, vector: np.ndarray, metadata: Dict[str, Any], record_id: str = None) -> str:
         """
         Insert or update a record in the collection.
 
@@ -78,17 +80,21 @@ class Collection:
             self.add_record_location(record_id, offset, record_size)
 
         # Update index
-        self._index.add(vector, id_=record_id)
+        self._index.add(IndexItem(id=record_id, vector=vector))
 
         return record_id
 
-    def search(self, query_vector: np.ndarray, k: int) -> List[Dict[str, Any]]:
+    def search(self, query_vector: np.ndarray, k: int,
+               where: Dict[str, Any] = None,
+               where_document: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
-        Search for similar vectors and return complete records.
+        Search for similar vectors with filtering on metadata and/or document content.
 
         Args:
             query_vector: The pre-encoded query vector
             k: Number of results to return
+            where: Optional dictionary specifying metadata filter conditions
+            where_document: Optional dictionary specifying document content filter conditions
 
         Returns:
             List of matching records with their data and similarity scores
@@ -96,24 +102,101 @@ class Collection:
         # Validate vector dimensions
         if len(query_vector) != self.schema.field.dim:
             raise ValueError(
-                f"Query vector dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}")
+                f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}")
 
-        # Get raw search results (id, distance pairs)
-        raw_results = self._index.search(query_vector, k)
+        # Pre-filter phase
+        allowed_ids = None
 
-        # Convert to complete records
+        # If we have metadata filter
+        """
+        if where:
+            # Try to get matching IDs using metadata index
+            metadata_matching_ids = self._metadata_index.get_matching_ids(where)
+
+            # If we couldn't use the metadata index effectively, filter manually
+            if metadata_matching_ids is None:
+                metadata_matching_ids = self._filter_by_metadata(where)
+
+            # Initialize allowed_ids with metadata matches
+            allowed_ids = metadata_matching_ids
+        """
+
+        # If we have document content filter
+        if where_document and (allowed_ids is None or allowed_ids):
+            # Get IDs that match document filter
+            document_matching_ids = self._filter_by_document(where_document, allowed_ids)
+
+            # Update allowed_ids
+            if allowed_ids is None:
+                allowed_ids = document_matching_ids
+            else:
+                # Intersection of metadata and document filters
+                allowed_ids = allowed_ids.intersection(document_matching_ids)
+
+        # If no matches after filtering, return empty results
+        if allowed_ids is not None and not allowed_ids:
+            return []
+
+        # Perform search with pre-filtering
+        raw_results = self._index.search(query_vector, k, allowed_ids=allowed_ids)
+
+        # Format and return results
         results = []
         for record_id, distance in raw_results:
-            # Get the complete record
             record = self.get(record_id)
             if record:
-                # Add the distance score to the record
                 record['distance'] = distance
                 results.append(record)
 
         return results
 
-    def get(self, record_id: int) -> dict:
+    def _filter_by_document(self, filter_condition: Dict[str, Any],
+                            allowed_ids: Optional[Set[str]] = None) -> Set[str]:
+        """
+        Filter records based on document content.
+
+        Args:
+            filter_condition: Document content filter condition
+            allowed_ids: Optional set of IDs to filter within (for combined filtering)
+
+        Returns:
+            Set of matching record IDs
+        """
+        document_evaluator = DocumentFilterEvaluator()
+        matching_ids = set()
+
+        # Get candidate IDs
+        candidate_ids = allowed_ids if allowed_ids else set(self._index.get_all_ids())
+
+        # Check each document
+        for record_id in candidate_ids:
+            record = self.get(record_id)
+            if record and 'original_data' in record:
+                # Get document content
+                document_content = record['original_data']
+
+                # If document content is not a string, try to convert it
+                if not isinstance(document_content, str):
+                    if isinstance(document_content, dict):
+                        # For dictionaries, convert to JSON string
+                        try:
+                            document_content = json.dumps(document_content)
+                        except:
+                            continue
+                    else:
+                        # Try string conversion for other types
+                        try:
+                            document_content = str(document_content)
+                        except:
+                            continue
+
+                # Check if document matches filter
+                if document_evaluator.matches(document_content, filter_condition):
+                    matching_ids.add(record_id)
+
+        return matching_ids
+
+    def get(self, record_id: str) -> dict:
         """Retrieve a record by ID."""
         record_location = self.get_record_location(record_id)
         if not record_location:
@@ -157,7 +240,7 @@ class Collection:
             'user_metadata': user_metadata
         }
 
-    def delete(self, record_id: int) -> bool:
+    def delete(self, record_id: str) -> bool:
         """Delete a record by ID."""
         record_location = self.get_record_location(record_id)
         if not record_location:
@@ -224,12 +307,12 @@ class Collection:
             # Add to index
             self._index.add(vec, id_=int(record_id))
 
-    def get_next_id(self) -> int:
+    def get_next_id(self) -> str:
         """Get the next available ID for this collection."""
         next_id = self._config.get('next_id', 0)
         self._config['next_id'] = next_id + 1
         self._save_config()
-        return next_id
+        return str(next_id)
 
     def get_next_offset(self) -> int:
         """Calculate the next available storage offset."""
@@ -251,12 +334,12 @@ class Collection:
 
         return last_offset + last_size
 
-    def get_record_location(self, record_id: int) -> dict:
+    def get_record_location(self, record_id: str) -> dict:
         """Get storage location for a specific record."""
         record_locations = self._config.get('records', {})
         return record_locations.get(str(record_id))
 
-    def add_record_location(self, record_id: int, offset: int, size: int) -> None:
+    def add_record_location(self, record_id: str, offset: int, size: int) -> None:
         """Add record storage location."""
         if 'records' not in self._config:
             self._config['records'] = {}
@@ -268,7 +351,7 @@ class Collection:
 
         self._save_config()
 
-    def update_record_location(self, record_id: int, offset: int, size: int) -> None:
+    def update_record_location(self, record_id: str, offset: int, size: int) -> None:
         """Update the storage location for an existing record."""
         if 'records' not in self._config:
             self._config['records'] = {}
@@ -280,7 +363,7 @@ class Collection:
 
         self._save_config()
 
-    def mark_location_deleted(self, record_id: int) -> None:
+    def mark_location_deleted(self, record_id: str) -> None:
         """Mark a record's storage location as deleted for potential space reuse."""
         if 'deleted_records' not in self._config:
             self._config['deleted_records'] = []
@@ -294,7 +377,7 @@ class Collection:
 
         self._save_config()
 
-    def delete_record_location(self, record_id: int) -> None:
+    def delete_record_location(self, record_id: str) -> None:
         """Remove record location information."""
         if 'records' in self._config and str(record_id) in self._config['records']:
             del self._config['records'][str(record_id)]

@@ -44,7 +44,7 @@ class VectorDB:
         return self._collections[collection]
 
     def insert(self, collection: str, original_data: Any, vector: np.ndarray, metadata: dict,
-               record_id: int = None) -> int:
+               record_id: int = None) -> str:
         """
         Insert or update a record in the collection.
 
@@ -62,29 +62,33 @@ class VectorDB:
         with self._txn.write():
             return col.insert(original_data, vector, metadata, record_id)
 
-    def search(self, collection: str, query_vector: np.ndarray, k: int) -> List[Dict[str, Any]]:
+    def search(self, collection: str, query_vector: np.ndarray, k: int,
+               where: Dict[str, Any] = None,
+               where_document: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
-        Search for similar vectors.
+        Search for similar vectors with filtering.
 
         Args:
             collection: Name of the collection
             query_vector: The pre-encoded query vector
             k: Number of results to return
+            where: Optional dictionary specifying metadata filter conditions
+            where_document: Optional dictionary specifying document content filter conditions
 
         Returns:
             List of matching records with similarity scores
         """
         col = self._get_collection(collection)
         with self._txn.read():
-            return col.search(query_vector, k)
+            return col.search(query_vector, k, where, where_document)
 
-    def get(self, collection: str, record_id: int) -> dict:
+    def get(self, collection: str, record_id: str) -> dict:
         """Retrieve a record by ID."""
         col = self._get_collection(collection)
         with self._txn.read():
             return col.get(record_id)
 
-    def delete(self, collection: str, record_id: int) -> bool:
+    def delete(self, collection: str, record_id: str) -> bool:
         """Delete a record by ID."""
         col = self._get_collection(collection)
         with self._txn.write():
