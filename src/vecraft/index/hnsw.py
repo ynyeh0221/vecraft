@@ -108,6 +108,10 @@ class HNSW:
         if np_vec.ndim > 1:
             np_vec = np_vec.flatten()
 
+        # guard against empty vectors
+        if np_vec.size == 0:
+            raise ValueError("Cannot index an empty vector; vector length must be > 0.")
+
         # Handle dimension inference
         if self._dim is None:
             self._dim = len(np_vec)
@@ -451,15 +455,6 @@ class HNSW:
 
         return results
 
-    def get_ids(self) -> Set[str]:
-        """
-        Get all record IDs in the index as a set.
-
-        Returns:
-            Set of all record IDs in the index
-        """
-        return set(self._id_mapper.get_all_record_ids())
-
     def get_all_ids(self) -> List[str]:
         """
         Get all record IDs in the index.
@@ -471,14 +466,26 @@ class HNSW:
 
     def serialize(self) -> bytes:
         """
-        Serialize the index to bytes.
+        Serialize the index to a byte representation.
+
+        Due to hnswlib API limitations, the save_index method only accepts file paths
+        rather than memory objects. Therefore, we need to create temporary files to save
+        the index, then read the file contents as byte data.
+        This process includes:
+        1. Creating a temporary directory and file
+        2. Saving the index to the temporary file
+        3. Reading the file contents as byte data
+        4. Packaging the index data and other parameters into a state object
+        5. Serializing the state object with pickle
 
         Returns:
-            Binary representation of the index
+            bytes: Binary representation of the index
         """
         import pickle
-        import io
+        import tempfile
+        import os
 
+        # Handle the case when index is not initialized
         if self._index is None:
             return pickle.dumps({
                 'initialized': False,
@@ -489,43 +496,62 @@ class HNSW:
                 'normalize_vectors': self._normalize_vectors,
                 'auto_resize_dim': self._auto_resize_dim,
                 'pad_value': self._pad_value,
-                # Include IdMapper state
                 'id_mapper': self._id_mapper,
             })
 
-        # Save the index to a buffer
-        index_buffer = io.BytesIO()
-        self._index.save_index(index_buffer)
-        index_buffer.seek(0)
+        # Create temporary directory and file to save the index
+        # Must use the filesystem as an intermediary because hnswlib's save_index method
+        # only accepts file paths
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_file = os.path.join(temp_dir, "index.bin")
 
-        # Package everything together
-        state = {
-            'initialized': True,
-            'index_data': index_buffer.read(),
-            'dim': self._dim,
-            'metric': self._metric,
-            'max_elements': self._max_elements,
-            'current_elements': self._current_elements,
-            'ef_construction': self._ef_construction,
-            'M': self._M,
-            'normalize_vectors': self._normalize_vectors,
-            'auto_resize_dim': self._auto_resize_dim,
-            'pad_value': self._pad_value,
-            # Include IdMapper state
-            'id_mapper': self._id_mapper,
-        }
+            # Save the index to the temporary file
+            self._index.save_index(index_file)
 
-        return pickle.dumps(state)
+            # Read the file contents as byte data
+            with open(index_file, 'rb') as f:
+                index_data = f.read()
+
+            # Package the index data and other parameters into a state object
+            state = {
+                'initialized': True,
+                'index_data': index_data,
+                'dim': self._dim,
+                'metric': self._metric,
+                'max_elements': self._max_elements,
+                'current_elements': self._current_elements,
+                'ef_construction': self._ef_construction,
+                'M': self._M,
+                'normalize_vectors': self._normalize_vectors,
+                'auto_resize_dim': self._auto_resize_dim,
+                'pad_value': self._pad_value,
+                'id_mapper': self._id_mapper,
+            }
+
+            # Temporary directory and file will be automatically deleted when exiting the with block
+            return pickle.dumps(state)
 
     def deserialize(self, data: bytes) -> None:
         """
-        Deserialize the index from bytes.
+        Deserialize the index from a byte representation.
+
+        Due to hnswlib API limitations, the load_index method only accepts file paths
+        rather than memory objects. Therefore, we need to create temporary files,
+        write the index data to the temporary file, and then load the index from the file.
+        This process includes:
+        1. Parsing the serialized state object
+        2. Setting basic parameters
+        3. Creating a temporary directory and file
+        4. Writing the index data to the temporary file
+        5. Initializing the index and loading from the temporary file
+        6. Setting index parameters
 
         Args:
-            data: Binary representation of the index
+            data (bytes): Binary representation of the index
         """
         import pickle
-        import io
+        import tempfile
+        import os
         import hnswlib
 
         # Load state
@@ -543,19 +569,29 @@ class HNSW:
         # Restore IdMapper state
         self._id_mapper = state.get('id_mapper', IdMapper())
 
+        # Handle the case when index was not initialized
         if not state.get('initialized', True):
-            # Index was not initialized yet
             return
 
-        # Recreate the index
-        self._index = hnswlib.Index(space=self._metric, dim=self._dim)
-        index_buffer = io.BytesIO(state['index_data'])
-        index_buffer.seek(0)
-        self._index.load_index(index_buffer)
+        # Create temporary directory and file to load the index
+        # Must use the filesystem as an intermediary because hnswlib's load_index method
+        # only accepts file paths
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_file = os.path.join(temp_dir, "index.bin")
 
-        # Set parameters
-        self._max_elements = state['max_elements']
-        self._current_elements = state['current_elements']
+            # Write the index data to the temporary file
+            with open(index_file, 'wb') as f:
+                f.write(state['index_data'])
 
-        # Set search parameters
-        self._index.set_ef(max(self._ef_construction, 50))
+            # Initialize the index
+            self._index = hnswlib.Index(space=self._metric, dim=self._dim)
+            self._index.load_index(index_file)
+
+            # Set parameters
+            self._max_elements = state['max_elements']
+            self._current_elements = state['current_elements']
+
+            # Set search parameters
+            self._index.set_ef(max(self._ef_construction, 50))
+
+            # Temporary directory and file will be automatically deleted when exiting the with block
