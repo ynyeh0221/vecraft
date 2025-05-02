@@ -71,53 +71,137 @@ class Collection:
             self._apply_delete(entry["record_id"])
 
     def _apply_insert(self, entry: dict) -> None:
-        # Unpack entry
         rid = entry["record_id"]
         orig = entry["original_data"]
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
-        # Serialize components
+
+        # Serialize into one bytes blob
         orig_bytes = json.dumps(orig).encode('utf-8')
         vec_bytes = vec.tobytes()
         meta_bytes = json.dumps(meta).encode('utf-8')
-        header = np.array([int(rid), len(orig_bytes), len(vec_bytes), len(meta_bytes)], dtype=np.int32).tobytes()
-        record = header + orig_bytes + vec_bytes + meta_bytes
-        size = len(record)
+        header = np.array([
+            int(rid),
+            len(orig_bytes),
+            len(vec_bytes),
+            len(meta_bytes)
+        ], dtype=np.int32).tobytes()
+        record_bytes = header + orig_bytes + vec_bytes + meta_bytes
+        size = len(record_bytes)
 
-        # Storage write
-        loc = self.get_record_location(rid)
-        if loc:
-            if size <= loc['size']:
-                self._storage.write(record, loc['offset'])
-                self.update_record_location(rid, loc['offset'], size)
-            else:
+        # 1) Stash old location so we can restore on rollback
+        old_loc = self.get_record_location(rid)
+
+        wrote_storage = False
+        updated_config = False
+        added_vec_index = False
+        added_meta_index = False
+
+        try:
+            # 2) Always append at EOF
+            new_offset = self.get_next_offset()
+            self._storage.write(record_bytes, new_offset)
+            wrote_storage = True
+
+            # 3) Update config: mark old as deleted, remove its pointer, then add the new one
+            if old_loc:
                 self.mark_location_deleted(rid)
-                offset = self.get_next_offset()
-                self._storage.write(record, offset)
-                self.update_record_location(rid, offset, size)
-        else:
-            offset = self.get_next_offset()
-            self._storage.write(record, offset)
-            self.add_record_location(rid, offset, size)
+                self.delete_record_location(rid)
 
-        # Update indices
-        self._index.add(IndexItem(record_id=rid, vector=vec))
-        self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
+            self.add_record_location(rid, new_offset, size)
+            updated_config = True
+
+            # 4) Update in-memory indexes
+            self._index.add(IndexItem(record_id=rid, vector=vec))
+            added_vec_index = True
+
+            self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
+            added_meta_index = True
+
+        except Exception:
+            # Rollback in reverse order:
+
+            if added_meta_index:
+                self._metadata_index.delete(MetadataItem(record_id=rid, metadata=meta))
+
+            if added_vec_index:
+                self._index.delete(id_=rid)
+
+            if updated_config:
+                # remove the new pointer
+                self.delete_record_location(rid)
+                # undelete & restore the old pointer if it existed
+                if old_loc:
+                    self._config['deleted_records'].remove({
+                        'offset': old_loc['offset'],
+                        'size': old_loc['size']
+                    })
+                    self.add_record_location(rid, old_loc['offset'], old_loc['size'])
+
+            if wrote_storage:
+                # mark the newly-appended block deleted
+                self.mark_location_deleted(rid)
+
+            raise
 
     def _apply_delete(self, record_id: str) -> None:
-        loc = self.get_record_location(record_id)
-        if not loc:
+        # 1) Retrieve and cache the old location and data
+        old_loc = self.get_record_location(record_id)
+        if not old_loc:
             return
 
-        # Mark deleted
-        self.mark_location_deleted(record_id)
-        self.delete_record_location(record_id)
+        # Load the existing record so we can restore indexes if needed
+        rec = self.get(record_id)
+        old_vec = rec.get('vector')
+        old_meta = rec.get('metadata', {})
 
-        # Update indices
-        self._index.delete(id_=record_id)
+        # Flags to track which steps have completed
+        marked_deleted = False
+        removed_location = False
+        removed_vec_index = False
+        removed_meta_index = False
 
-        # metadata index delete requires old metadata; assume empty deletes mapping
-        self._metadata_index.delete(MetadataItem(record_id=record_id, metadata={}))
+        try:
+            # 2) Mark the storage location as deleted
+            self.mark_location_deleted(record_id)
+            marked_deleted = True
+
+            # 3) Remove the record pointer from config
+            self.delete_record_location(record_id)
+            removed_location = True
+
+            # 4) Remove from the vector index
+            self._index.delete(id_=record_id)
+            removed_vec_index = True
+
+            # 5) Remove from the metadata index
+            self._metadata_index.delete(MetadataItem(record_id=record_id, metadata=old_meta))
+            removed_meta_index = True
+
+        except Exception:
+            # Roll back in reverse order of execution
+
+            if removed_meta_index:
+                # 5) Restore metadata index
+                self._metadata_index.add(MetadataItem(record_id=record_id, metadata=old_meta))
+
+            if removed_vec_index:
+                # 4) Restore vector index
+                self._index.add(IndexItem(record_id=record_id, vector=old_vec))
+
+            if removed_location:
+                # 3) Restore the config pointer
+                self.add_record_location(record_id, old_loc['offset'], old_loc['size'])
+
+            if marked_deleted:
+                # 2) Remove the tombstone so the old block is live again
+                tombstone = {'offset': old_loc['offset'], 'size': old_loc['size']}
+                deleted_records = self._config.get('deleted_records', [])
+                if tombstone in deleted_records:
+                    deleted_records.remove(tombstone)
+
+            # Propagate the error so the caller knows to delete failed
+            raise
 
     def insert(
         self,
