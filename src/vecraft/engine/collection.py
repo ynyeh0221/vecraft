@@ -285,13 +285,13 @@ class Collection:
         # Decode
         original_data = json.loads(original_data_bytes.decode('utf-8'))
         vec = np.frombuffer(vector_bytes, dtype=np.float32)
-        user_metadata = json.loads(metadata_bytes.decode('utf-8'))
+        metadata = json.loads(metadata_bytes.decode('utf-8'))
 
         return {
             'id': id_,
             'original_data': original_data,
             'vector': vec,
-            'user_metadata': user_metadata
+            'metadata': metadata
         }
 
     def flush(self):
@@ -348,8 +348,8 @@ class Collection:
     def _rebuild_metadata_index(self):
         for rec_id_str, loc in self.get_all_record_locations().items():
             rec = self.get(rec_id_str)
-            if rec and 'user_metadata' in rec:
-                self._metadata_index.add(MetadataItem(record_id=rec_id_str, metadata=rec['user_metadata']))
+            if rec and 'metadata' in rec:
+                self._metadata_index.add(MetadataItem(record_id=rec_id_str, metadata=rec['metadata']))
 
     def get_next_id(self) -> str:
         """Get the next available ID for this collection."""
