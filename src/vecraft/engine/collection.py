@@ -8,11 +8,11 @@ import numpy as np
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.index.record_location_index.location_index_interface import RecordLocationIndex
+from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
 from src.vecraft.engine.locks import RWLock
 from src.vecraft.engine.transaction import Txn
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
-from src.vecraft.index.record_metadata_index.metadata_index import MetadataIndex, MetadataItem
+from src.vecraft.index.record_metadata.metadata_index import MetadataIndex, MetadataItem
 from src.vecraft.metadata.schema import CollectionSchema
 from src.vecraft.wal.wal_manager import WALManager
 
@@ -32,11 +32,11 @@ class Collection:
         self._index = index_factory(kind="hnsw", dim=schema.field.dim)
         self._metadata_index = MetadataIndex()
 
-        # per-record_location_index lock and txn
+        # per-record_location lock and txn
         self._lock = RWLock()
         self._txn = Txn(self._lock)
 
-        # external record location record_vector_index
+        # external record location record_vector
         self._location_index = location_index
 
         # WAL and snapshots

@@ -1,12 +1,12 @@
 import unittest
 
-from src.vecraft.index.record_metadata_index.metadata_index import MetadataItem, MetadataIndex
+from src.vecraft.index.record_metadata.metadata_index import MetadataItem, MetadataIndex
 
 
 class TestMetadataIndex(unittest.TestCase):
 
     def setUp(self):
-        """Set up a fresh record_vector_index before each test."""
+        """Set up a fresh record_vector before each test."""
         self.index = MetadataIndex()
 
         # Create some sample metadata items
@@ -14,7 +14,7 @@ class TestMetadataIndex(unittest.TestCase):
             record_id="doc1",
             metadata={
                 "type": "article",
-                "tags": ["python", "record_vector_index", "data"],
+                "tags": ["python", "record_vector", "data"],
                 "year": 2023,
                 "score": 4.5
             }
@@ -34,7 +34,7 @@ class TestMetadataIndex(unittest.TestCase):
             record_id="doc3",
             metadata={
                 "type": "article",
-                "tags": ["record_vector_index", "database"],
+                "tags": ["record_vector", "database"],
                 "year": 2022,
                 "score": 3.9
             }
@@ -42,7 +42,7 @@ class TestMetadataIndex(unittest.TestCase):
 
     def test_add_and_equality_query(self):
         """Test adding items and querying with equality conditions."""
-        # Add items to the record_vector_index
+        # Add items to the record_vector
         self.index.add(self.item1)
         self.index.add(self.item2)
         self.index.add(self.item3)
@@ -56,7 +56,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.assertEqual({"doc1", "doc2"}, result)
 
         # Test multiple conditions
-        result = self.index.get_matching_ids({"type": "article", "tags": "record_vector_index"})
+        result = self.index.get_matching_ids({"type": "article", "tags": "record_vector"})
         self.assertEqual({"doc1", "doc3"}, result)
 
         # Test non-existent value
@@ -124,7 +124,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.assertEqual({"doc1", "doc3"}, result)
 
     def test_update(self):
-        """Test updating items in the record_vector_index."""
+        """Test updating items in the record_vector."""
         self.index.add(self.item1)
         self.index.add(self.item2)
 
@@ -142,7 +142,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.index.update(self.item1, updated_item)
 
         # Verify old values are removed
-        result = self.index.get_matching_ids({"tags": "record_vector_index"})
+        result = self.index.get_matching_ids({"tags": "record_vector"})
         self.assertEqual(set(), result)
 
         # Verify new values are added
@@ -156,7 +156,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.assertEqual({"doc1"}, result)
 
     def test_delete(self):
-        """Test deleting items from the record_vector_index."""
+        """Test deleting items from the record_vector."""
         self.index.add(self.item1)
         self.index.add(self.item2)
         self.index.add(self.item3)
@@ -164,16 +164,16 @@ class TestMetadataIndex(unittest.TestCase):
         # Delete an item
         self.index.delete(self.item2)
 
-        # Verify it's removed from equality record_vector_index
+        # Verify it's removed from equality record_vector
         result = self.index.get_matching_ids({"type": "book"})
         self.assertEqual(set(), result)
 
-        # Verify it's removed from range record_vector_index
+        # Verify it's removed from range record_vector
         result = self.index.get_matching_ids({"year": {"$gte": 2020, "$lte": 2022}})
         self.assertEqual({"doc3"}, result)
 
         # Verify other items remain
-        result = self.index.get_matching_ids({"tags": "record_vector_index"})
+        result = self.index.get_matching_ids({"tags": "record_vector"})
         self.assertEqual({"doc1", "doc3"}, result)
 
     def test_serialization(self):
@@ -182,10 +182,10 @@ class TestMetadataIndex(unittest.TestCase):
         self.index.add(self.item2)
         self.index.add(self.item3)
 
-        # Serialize the record_vector_index
+        # Serialize the record_vector
         serialized = self.index.serialize()
 
-        # Create a new record_vector_index and deserialize
+        # Create a new record_vector and deserialize
         new_index = MetadataIndex()
         new_index.deserialize(serialized)
 
@@ -219,7 +219,7 @@ class TestMetadataIndex(unittest.TestCase):
 
     def test_edge_cases(self):
         """Test edge cases and potential error conditions."""
-        # Empty record_vector_index
+        # Empty record_vector
         result = self.index.get_matching_ids({"type": "article"})
         self.assertEqual(set(), result)
 
@@ -227,7 +227,7 @@ class TestMetadataIndex(unittest.TestCase):
         empty_item = MetadataItem("empty", {})
         self.index.add(empty_item)
 
-        # Non-comparable values for range record_vector_index
+        # Non-comparable values for range record_vector
         complex_item = MetadataItem(
             record_id="complex",
             metadata={

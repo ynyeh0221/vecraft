@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.index.record_location_index.btree_based_location_index import SQLiteRecordLocationIndex
+from src.vecraft.index.record_location.btree_based_location_index import SQLiteRecordLocationIndex
 
 
 class TestSQLiteRecordLocationIndex(unittest.TestCase):
@@ -15,7 +15,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         self.temp_path = Path(self.temp_file.name)
         self.temp_file.close()
 
-        # Initialize the record_vector_index with the temporary database
+        # Initialize the record_vector with the temporary database
         self.index = SQLiteRecordLocationIndex(self.temp_path)
 
     def tearDown(self):

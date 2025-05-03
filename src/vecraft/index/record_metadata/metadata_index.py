@@ -15,9 +15,9 @@ class MetadataItem:
 
 class MetadataIndex:
     """
-    A metadata record_vector_index supporting equality and range queries.
+    A metadata record_vector supporting equality and range queries.
 
-    - Equality queries via inverted record_vector_index: field -> value -> set(record_id).
+    - Equality queries via inverted record_vector: field -> value -> set(record_id).
     - Range queries via sorted lists: field -> list of (value, record_id).
     """
     def __init__(self):
@@ -53,7 +53,7 @@ class MetadataIndex:
 
     def delete(self, item: MetadataItem) -> None:
         """
-        Remove a record's metadata from the record_vector_index.
+        Remove a record's metadata from the record_vector.
         """
         rid = item.record_id
         for field, value in item.metadata.items():
@@ -81,7 +81,7 @@ class MetadataIndex:
         - $in:    field: {"$in": [v1, v2]}
         - range:  field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
 
-        Returns None if unable to use record_vector_index effectively.
+        Returns None if unable to use record_vector effectively.
         """
         result_ids = None
 
@@ -127,7 +127,7 @@ class MetadataIndex:
 
     def serialize(self) -> bytes:
         """
-        Serialize the metadata record_vector_index to bytes for snapshotting.
+        Serialize the metadata record_vector to bytes for snapshotting.
         """
         state = {
             'eq_index': {field: dict(vals) for field, vals in self._eq_index.items()},
@@ -137,7 +137,7 @@ class MetadataIndex:
 
     def deserialize(self, data: bytes) -> None:
         """
-        Restore the metadata record_vector_index from serialized bytes.
+        Restore the metadata record_vector from serialized bytes.
         """
         state = pickle.loads(data)
         self._eq_index = defaultdict(lambda: defaultdict(set), {

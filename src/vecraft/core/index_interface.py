@@ -17,26 +17,26 @@ class IndexItem:
 
 
 class Index(ABC):
-    """Abstract vector record_vector_index with support for pre-filtering."""
+    """Abstract vector record_vector with support for pre-filtering."""
 
     @abstractmethod
     def build(self, items: List[IndexItem]) -> None:
-        """Build the record_vector_index from a list of IndexItems."""
+        """Build the record_vector from a list of IndexItems."""
         pass
 
     @abstractmethod
     def add(self, item: IndexItem) -> None:
-        """Add a single IndexItem to the record_vector_index."""
+        """Add a single IndexItem to the record_vector."""
         pass
 
     @abstractmethod
     def delete(self, record_id: str) -> None:
-        """Delete a single IndexItem from the record_vector_index."""
+        """Delete a single IndexItem from the record_vector."""
         pass
 
     @abstractmethod
     def get_ids(self) -> Set[str]:
-        """Get all record IDs in the record_vector_index."""
+        """Get all record IDs in the record_vector."""
         pass
 
     @abstractmethod

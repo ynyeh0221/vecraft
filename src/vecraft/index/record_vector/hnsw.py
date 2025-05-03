@@ -4,7 +4,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 import numpy as np
 
 from src.vecraft.core.index_interface import IndexItem
-from src.vecraft.index.id_mapper import IdMapper  # Import the new IdMapper class
+from src.vecraft.index.record_vector.id_mapper import IdMapper  # Import the new IdMapper class
 
 
 class DistanceMetric(str, Enum):
@@ -16,7 +16,7 @@ class DistanceMetric(str, Enum):
 
 class HNSW:
     """
-    Enhanced HNSW record_vector_index supporting different vector types, dimensions, and string record IDs.
+    Enhanced HNSW record_vector supporting different vector types, dimensions, and string record IDs.
     This implementation uses a separate IdMapper component to handle the conversion
     between user-provided string record IDs and internal integer IDs required by the
     underlying HNSW algorithm.
@@ -33,7 +33,7 @@ class HNSW:
             pad_value: float = 0.0,
     ):
         """
-        Initialize enhanced HNSW record_vector_index with flexible dimension handling.
+        Initialize enhanced HNSW record_vector with flexible dimension handling.
 
         Args:
             dim: Dimensionality of vectors. If None, will be inferred from first added vector.
@@ -41,7 +41,7 @@ class HNSW:
             M: Maximum number of connections per element (default 16)
             ef_construction: Size of the dynamic candidate list during construction (default 200)
             normalize_vectors: Whether to normalize vectors (useful for cosine similarity)
-            auto_resize_dim: If True, automatically resize vectors to match the record_vector_index dimension
+            auto_resize_dim: If True, automatically resize vectors to match the record_vector dimension
                              by padding shorter vectors or truncating longer ones
             pad_value: Value to use for padding when auto_resize_dim is True
         """
@@ -62,12 +62,12 @@ class HNSW:
         self._max_elements = 1000
         self._current_elements = 0
 
-        # Initialize record_vector_index if dimension is provided
+        # Initialize record_vector if dimension is provided
         if self._dim is not None:
             self._initialize_index()
 
     def _initialize_index(self):
-        """Initialize the HNSW record_vector_index with the specified parameters."""
+        """Initialize the HNSW record_vector with the specified parameters."""
         try:
             import hnswlib
             self._index = hnswlib.Index(space=self._metric, dim=self._dim)
@@ -81,7 +81,7 @@ class HNSW:
             raise ImportError("hnswlib package is required. Install with: pip install hnswlib")
 
     def _maybe_resize(self):
-        """Resize the record_vector_index if needed to accommodate more elements."""
+        """Resize the record_vector if needed to accommodate more elements."""
         if self._current_elements >= self._max_elements - 10:
             new_size = self._max_elements * 2
             self._index.resize_index(new_size)
@@ -110,7 +110,7 @@ class HNSW:
 
         # guard against empty vectors
         if np_vec.size == 0:
-            raise ValueError("Cannot record_vector_index an empty vector; vector length must be > 0.")
+            raise ValueError("Cannot record_vector an empty vector; vector length must be > 0.")
 
         # Handle dimension inference
         if self._dim is None:
@@ -144,7 +144,7 @@ class HNSW:
 
     def build(self, items: List[IndexItem]) -> None:
         """
-        Build the record_vector_index from a list of IndexItems.
+        Build the record_vector from a list of IndexItems.
 
         Args:
             items: List of IndexItems containing record IDs and vectors
@@ -230,7 +230,7 @@ class HNSW:
 
     def add(self, item: IndexItem) -> None:
         """
-        Add a single IndexItem to the record_vector_index.
+        Add a single IndexItem to the record_vector.
 
         Args:
             item: IndexItem containing record_id and vector
@@ -276,7 +276,7 @@ class HNSW:
 
     def add_batch(self, items: List[IndexItem]) -> None:
         """
-        Add multiple IndexItems to the record_vector_index at once.
+        Add multiple IndexItems to the record_vector at once.
 
         Args:
             items: List of IndexItems containing record IDs and vectors
@@ -338,7 +338,7 @@ class HNSW:
 
     def delete(self, record_id: str) -> None:
         """
-        Remove a vector from the record_vector_index.
+        Remove a vector from the record_vector.
 
         Args:
             record_id: String ID of the vector to remove
@@ -348,7 +348,7 @@ class HNSW:
         if internal_id is None:
             return  # Record not found
 
-        # Mark as deleted in the record_vector_index
+        # Mark as deleted in the record_vector
         self._index.mark_deleted(internal_id)
 
         # Remove the mapping using IdMapper
@@ -457,35 +457,35 @@ class HNSW:
 
     def get_all_ids(self) -> List[str]:
         """
-        Get all record IDs in the record_vector_index.
+        Get all record IDs in the record_vector.
 
         Returns:
-            List of all record IDs in the record_vector_index
+            List of all record IDs in the record_vector
         """
         return self._id_mapper.get_all_record_ids()
 
     def serialize(self) -> bytes:
         """
-        Serialize the record_vector_index to a byte representation.
+        Serialize the record_vector to a byte representation.
 
         Due to hnswlib API limitations, the save_index method only accepts file paths
         rather than memory objects. Therefore, we need to create temporary files to save
-        the record_vector_index, then read the file contents as byte data.
+        the record_vector, then read the file contents as byte data.
         This process includes:
         1. Creating a temporary directory and file
-        2. Saving the record_vector_index to the temporary file
+        2. Saving the record_vector to the temporary file
         3. Reading the file contents as byte data
-        4. Packaging the record_vector_index data and other parameters into a state object
+        4. Packaging the record_vector data and other parameters into a state object
         5. Serializing the state object with pickle
 
         Returns:
-            bytes: Binary representation of the record_vector_index
+            bytes: Binary representation of the record_vector
         """
         import pickle
         import tempfile
         import os
 
-        # Handle the case when record_vector_index is not initialized
+        # Handle the case when record_vector is not initialized
         if self._index is None:
             return pickle.dumps({
                 'initialized': False,
@@ -499,20 +499,20 @@ class HNSW:
                 'id_mapper': self._id_mapper,
             })
 
-        # Create temporary directory and file to save the record_vector_index
+        # Create temporary directory and file to save the record_vector
         # Must use the filesystem as an intermediary because hnswlib's save_index method
         # only accepts file paths
         with tempfile.TemporaryDirectory() as temp_dir:
-            index_file = os.path.join(temp_dir, "record_vector_index.bin")
+            index_file = os.path.join(temp_dir, "record_vector.bin")
 
-            # Save the record_vector_index to the temporary file
+            # Save the record_vector to the temporary file
             self._index.save_index(index_file)
 
             # Read the file contents as byte data
             with open(index_file, 'rb') as f:
                 index_data = f.read()
 
-            # Package the record_vector_index data and other parameters into a state object
+            # Package the record_vector data and other parameters into a state object
             state = {
                 'initialized': True,
                 'index_data': index_data,
@@ -533,21 +533,21 @@ class HNSW:
 
     def deserialize(self, data: bytes) -> None:
         """
-        Deserialize the record_vector_index from a byte representation.
+        Deserialize the record_vector from a byte representation.
 
         Due to hnswlib API limitations, the load_index method only accepts file paths
         rather than memory objects. Therefore, we need to create temporary files,
-        write the record_vector_index data to the temporary file, and then load the record_vector_index from the file.
+        write the record_vector data to the temporary file, and then load the record_vector from the file.
         This process includes:
         1. Parsing the serialized state object
         2. Setting basic parameters
         3. Creating a temporary directory and file
-        4. Writing the record_vector_index data to the temporary file
-        5. Initializing the record_vector_index and loading from the temporary file
-        6. Setting record_vector_index parameters
+        4. Writing the record_vector data to the temporary file
+        5. Initializing the record_vector and loading from the temporary file
+        6. Setting record_vector parameters
 
         Args:
-            data (bytes): Binary representation of the record_vector_index
+            data (bytes): Binary representation of the record_vector
         """
         import pickle
         import tempfile
@@ -569,21 +569,21 @@ class HNSW:
         # Restore IdMapper state
         self._id_mapper = state.get('id_mapper', IdMapper())
 
-        # Handle the case when record_vector_index was not initialized
+        # Handle the case when record_vector was not initialized
         if not state.get('initialized', True):
             return
 
-        # Create temporary directory and file to load the record_vector_index
+        # Create temporary directory and file to load the record_vector
         # Must use the filesystem as an intermediary because hnswlib's load_index method
         # only accepts file paths
         with tempfile.TemporaryDirectory() as temp_dir:
-            index_file = os.path.join(temp_dir, "record_vector_index.bin")
+            index_file = os.path.join(temp_dir, "record_vector.bin")
 
-            # Write the record_vector_index data to the temporary file
+            # Write the record_vector data to the temporary file
             with open(index_file, 'wb') as f:
                 f.write(state['index_data'])
 
-            # Initialize the record_vector_index
+            # Initialize the record_vector
             self._index = hnswlib.Index(space=self._metric, dim=self._dim)
             self._index.load_index(index_file)
 

@@ -4,7 +4,7 @@ from typing import Dict, Optional, List
 
 class RecordLocationIndex(ABC):
     """
-    Abstract interface for record_location_index configuration storage.
+    Abstract interface for record_location configuration storage.
     """
 
     @abstractmethod

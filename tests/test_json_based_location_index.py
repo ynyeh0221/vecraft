@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.index.record_location_index.json_based_location_index import JsonRecordLocationIndex
+from src.vecraft.index.record_location.json_based_location_index import JsonRecordLocationIndex
 
 
 class TestJsonRecordLocationIndex(unittest.TestCase):
@@ -14,7 +14,7 @@ class TestJsonRecordLocationIndex(unittest.TestCase):
         self.temp_path = Path(self.temp_file.name)
         self.temp_file.close()
 
-        # Initialize the record_vector_index with the temporary file
+        # Initialize the record_vector with the temporary file
         self.index = JsonRecordLocationIndex(self.temp_path)
 
     def tearDown(self):
