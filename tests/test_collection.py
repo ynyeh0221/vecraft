@@ -2,12 +2,12 @@ import os
 import pickle
 import threading
 import unittest
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional, Set, Any
 from unittest.mock import patch
 
 import numpy as np
 
-from src.vecraft.core.index_interface import IndexItem
+from src.vecraft.core.index_interface import IndexItem, Index, Vector
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.collection import Collection
 from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
@@ -28,21 +28,27 @@ class DummyStorage(StorageEngine):
     def flush(self):
         pass
 
-class DummyIndex:
+class DummyIndex(Index):
     def __init__(self, kind, dim):
         self.dim = dim
         self.items = {}
     def add(self, item: IndexItem):
         self.items[item.record_id] = item.vector
-    def delete(self, id_):
-        self.items.pop(id_, None)
-    def search(self, vector, k, allowed_ids=None):
+    def delete(self, record_id: str):
+        self.items.pop(record_id, None)
+    def search(self, query: Vector, k: int, allowed_ids: Optional[Set[str]] = None,
+               where: Optional[Dict[str, Any]] = None, where_document: Optional[Dict[str, Any]] = None) -> List[
+        Tuple[str, float]]:
         ids = list(self.items.keys())
         if allowed_ids is not None:
             ids = [i for i in ids if i in allowed_ids]
         return [(rid, 0.0) for rid in ids[:k]]
     def get_all_ids(self):
         return list(self.items.keys())
+    def get_ids(self) -> Set[str]:
+        pass
+    def build(self, items: List[IndexItem]) -> None:
+        pass
     def serialize(self):
         return pickle.dumps(self.items)
     def deserialize(self, data):
@@ -101,10 +107,10 @@ class TestCollection(unittest.TestCase):
         meta = {"m": "x"}
         rid = self.col.insert(original, vec, meta)
         rec = self.col.get(rid)
-        self.assertEqual(rec['id'], int(rid))
-        self.assertEqual(rec['original_data'], original)
-        np.testing.assert_array_almost_equal(rec['vector'], vec)
-        self.assertEqual(rec['metadata'], meta)
+        self.assertEqual(int(rid), rec['id'])
+        self.assertEqual(original, rec['original_data'])
+        np.testing.assert_array_almost_equal(vec, rec['vector'])
+        self.assertEqual(meta, rec['metadata'])
 
     def test_delete(self):
         vec = np.array([0.1, 0.2, 0.3], dtype=np.float32)
@@ -114,8 +120,8 @@ class TestCollection(unittest.TestCase):
         # delete
         res = self.col.delete(rid)
         self.assertTrue(res)
-        rec = self.col.get(rid)
-        self.assertEqual(rec, {})
+        res = self.col.get(rid)
+        self.assertEqual({}, res)
 
     def test_search(self):
         v1 = np.array([1,1,1], dtype=np.float32)
@@ -128,8 +134,8 @@ class TestCollection(unittest.TestCase):
         self.assertSetEqual(ids, {r1, r2})
         # search with metadata filter
         results2 = self.col.search(np.array([1,1,1], dtype=np.float32), k=2, where={"tag": "a"})
-        self.assertEqual(len(results2), 1)
-        self.assertEqual(str(results2[0]['id']), r1)
+        self.assertEqual(1, len(results2))
+        self.assertEqual(r1, str(results2[0]['id']))
 
     def test_concurrent_inserts(self):
         def insert_item(val):
@@ -141,7 +147,7 @@ class TestCollection(unittest.TestCase):
         for t in threads:
             t.join()
         results = self.col.search(np.array([0,0,0], dtype=np.float32), k=5)
-        self.assertEqual(len(results), 5)
+        self.assertEqual(5, len(results))
 
     def test_concurrent_insert_and_search(self):
         # fixed number of inserts to avoid hang
@@ -159,7 +165,7 @@ class TestCollection(unittest.TestCase):
         t.join()
         # ensure all inserted
         final = self.col.search(np.array([0,0,0], dtype=np.float32), k=insert_count)
-        self.assertEqual(len(final), insert_count)
+        self.assertEqual(insert_count, len(final))
 
     def test_concurrent_deletes(self):
         ids = [self.col.insert({"x": i}, np.array([i,i,i], dtype=np.float32), {}) for i in range(5)]
@@ -171,7 +177,7 @@ class TestCollection(unittest.TestCase):
         for t in threads:
             t.join()
         for rid in ids:
-            self.assertEqual(self.col.get(rid), {})
+            self.assertEqual({}, self.col.get(rid))
 
     def test_filter_by_document_no_match(self):
         # Insert JSON data and apply a document filter that matches nothing
@@ -179,7 +185,7 @@ class TestCollection(unittest.TestCase):
         rid = self.col.insert({"text": "hello"}, v, {})
         # use a filter that looks for a field not present
         filtered = self.col.search(v, k=1, where_document={"nonexistent": "value"})
-        self.assertEqual(filtered, [])
+        self.assertEqual([], filtered)
 
     def test_rebuild_index(self):
         # Insert then clear index and rebuild
@@ -191,7 +197,7 @@ class TestCollection(unittest.TestCase):
         self.col._rebuild_index()
         # search finds the record
         results = self.col.search(vec, k=1)
-        self.assertEqual(str(results[0]['id']), rid)
+        self.assertEqual(rid, str(results[0]['id']))
 
     def test_flush_and_load_snapshots(self):
         vec = np.array([4,4,4], dtype=np.float32)
@@ -207,7 +213,7 @@ class TestCollection(unittest.TestCase):
             location_index=self.loc_index
         )
         rec2 = col2.get(rid)
-        self.assertEqual(rec2['original_data'], {"b":2})
+        self.assertEqual({"b":2}, rec2['original_data'])
 
     def test_save_and_load_snapshots_api(self):
         # direct save and load
@@ -223,7 +229,7 @@ class TestCollection(unittest.TestCase):
         self.assertTrue(loaded)
         # ensure data available
         rec = self.col.get(rid)
-        self.assertEqual(rec['original_data'], {"c": 3})
+        self.assertEqual({"c": 3}, rec['original_data'])
 
     @patch('src.vecraft.engine.collection.generate_tsne')
     def test_generate_tsne_plot(self, mock_tsne):
@@ -234,7 +240,7 @@ class TestCollection(unittest.TestCase):
         mock_tsne.return_value = 'out.png'
         out = self.col.generate_tsne_plot(record_ids=[r1, r2], perplexity=1, outfile='myplot.png')
         mock_tsne.assert_called_once()
-        self.assertEqual(out, 'out.png')
+        self.assertEqual('out.png', out)
 
 if __name__ == '__main__':
     unittest.main()

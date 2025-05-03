@@ -79,57 +79,76 @@ class Collection:
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
 
-        orig_bytes = json.dumps(orig).encode('utf-8')
-        vec_bytes = vec.tobytes()
-        meta_bytes = json.dumps(meta).encode('utf-8')
+        # 1) Serialize components
+        orig_b = json.dumps(orig).encode('utf-8')
+        vec_b = vec.tobytes()
+        meta_b = json.dumps(meta).encode('utf-8')
         header = np.array([
             int(rid),
-            len(orig_bytes),
-            len(vec_bytes),
-            len(meta_bytes)
+            len(orig_b),
+            len(vec_b),
+            len(meta_b)
         ], dtype=np.int32).tobytes()
-        record_bytes = header + orig_bytes + vec_bytes + meta_bytes
-        size = len(record_bytes)
+        rec_bytes = header + orig_b + vec_b + meta_b
+        size = len(rec_bytes)
 
+        # 2) Capture existing state for full restore
         old_loc = self._location_index.get_record_location(rid)
-        wrote_storage = updated_config = added_vec_index = added_meta_index = False
+        if old_loc:
+            old = self.get(rid)
+            old_vec = old.get("vector")
+            old_meta = old.get("metadata", {})
+        else:
+            old_vec = old_meta = None
+
+        wrote_storage = updated_loc = updated_meta = updated_vec = False
 
         try:
-            # 1) Storage
-            records = self._location_index.get_all_record_locations()
-            if records:
-                new_offset = max(loc['offset'] + loc['size'] for loc in records.values())
-            else:
-                new_offset = 0
-            self._storage.write(record_bytes, new_offset)
+            # A) storage
+            all_locs = self._location_index.get_all_record_locations()
+            new_offset = max((l["offset"] + l["size"] for l in all_locs.values()), default=0)
+            self._storage.write(rec_bytes, new_offset)
             wrote_storage = True
 
-            # 2) MetadataIndex
-            self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
-            added_meta_index = True
-
-            # 3) VectorIndex
-            self._index.add(IndexItem(record_id=rid, vector=vec))
-            added_vec_index = True
-
-            # 4) LocationIndex (mark-deleted, delete, add)
+            # B) location index
             if old_loc:
                 self._location_index.mark_deleted(rid)
                 self._location_index.delete_record(rid)
             self._location_index.add_record(rid, new_offset, size)
-            updated_config = True
+            updated_loc = True
+
+            # C) metadata
+            self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
+            updated_meta = True
+
+            # D) vector
+            self._index.add(IndexItem(record_id=rid, vector=vec))
+            updated_vec = True
 
         except Exception:
-            if updated_config:
-                self._location_index.delete_record(rid)
-                if old_loc:
-                    self._location_index.add_record(rid, old_loc['offset'], old_loc['size'])
-            if added_vec_index:
-                self._index.delete(id_=rid)
-            if added_meta_index:
+
+            # 1) Rollback vector
+            if updated_vec:
+                self._index.delete(record_id=rid)
+                # restore old vector if it existed
+                if old_vec is not None:
+                    self._index.add(IndexItem(record_id=rid, vector=old_vec))
+
+            # 3) Rollback metadata
+            if updated_meta:
                 self._metadata_index.delete(MetadataItem(record_id=rid, metadata=meta))
-            if wrote_storage:
+                # restore old metadata if it existed
+                if old_meta is not None:
+                    self._metadata_index.add(MetadataItem(record_id=rid, metadata=old_meta))
+
+            # 5) Rollback location
+            if updated_loc:
                 self._location_index.mark_deleted(rid)
+                self._location_index.delete_record(rid)
+                if old_loc is not None:
+                    self._location_index.add_record(rid, old_loc["offset"], old_loc["size"])
+
+            # 6) rethrow
             raise
 
     def _apply_delete(self, record_id: str) -> None:
@@ -144,26 +163,26 @@ class Collection:
         removed_location = removed_vec_index = removed_meta_index = False
 
         try:
-            # 1) MetadataIndex
-            self._metadata_index.delete(MetadataItem(record_id=record_id, metadata=old_meta))
-            removed_meta_index = True
-
-            # 2) VectorIndex
-            self._index.delete(id_=record_id)
-            removed_vec_index = True
-
-            # 3) LocationIndex
+            # 1) LocationIndex
             self._location_index.mark_deleted(record_id)
             removed_location = True
             self._location_index.delete_record(record_id)
 
+            # 2) MetadataIndex
+            self._metadata_index.delete(MetadataItem(record_id=record_id, metadata=old_meta))
+            removed_meta_index = True
+
+            # 3) VectorIndex
+            self._index.delete(record_id=record_id)
+            removed_vec_index = True
+
         except Exception:
-            if removed_location:
-                self._location_index.add_record(record_id, old_loc['offset'], old_loc['size'])
             if removed_vec_index:
                 self._index.add(IndexItem(record_id=record_id, vector=old_vec))
             if removed_meta_index:
                 self._metadata_index.add(MetadataItem(record_id=record_id, metadata=old_meta))
+            if removed_location:
+                self._location_index.add_record(record_id, old_loc['offset'], old_loc['size'])
             raise
 
     @write_locked_attr('_rwlock')

@@ -1,0 +1,2 @@
+{"type": "insert", "record_id": "1", "original_data": {"x": 1}, "vector": [1.0, 1.0, 1.0], "metadata": {"tag": "a"}}
+{"type": "insert", "record_id": "2", "original_data": {"y": 2}, "vector": [2.0, 2.0, 2.0], "metadata": {"tag": "b"}}

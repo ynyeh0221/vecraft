@@ -62,6 +62,11 @@ class JsonRecordLocationIndex(RecordLocationIndex):
             'offset': offset,
             'size': size
         }
+        # drop any tombstones that refer to this same chunk
+        self._config['deleted_records'] = [
+            t for t in self._config['deleted_records']
+            if not (t['offset'] == offset and t['size'] == size)
+        ]
         self._save()
 
     def delete_record(self, record_id: str) -> None:
