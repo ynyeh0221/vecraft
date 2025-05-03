@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.engine.collection.btree_based_location_index import SQLiteRecordLocationIndex
+from src.vecraft.engine.location_index.btree_based_location_index import SQLiteRecordLocationIndex
 
 
 class TestSQLiteRecordLocationIndex(unittest.TestCase):

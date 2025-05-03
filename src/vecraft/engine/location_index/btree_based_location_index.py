@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from src.vecraft.engine.collection.location_index_interface import RecordLocationIndex
+from src.vecraft.engine.location_index.location_index_interface import RecordLocationIndex
 
 
 class SQLiteRecordLocationIndex(RecordLocationIndex):

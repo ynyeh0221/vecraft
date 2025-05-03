@@ -8,7 +8,7 @@ import numpy as np
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.engine.collection.location_index_interface import RecordLocationIndex
+from src.vecraft.engine.location_index.location_index_interface import RecordLocationIndex
 from src.vecraft.engine.locks import RWLock
 from src.vecraft.engine.transaction import Txn
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
@@ -32,7 +32,7 @@ class Collection:
         self._index = index_factory(kind="hnsw", dim=schema.field.dim)
         self._metadata_index = MetadataIndex()
 
-        # per-collection lock and txn
+        # per-location_index lock and txn
         self._lock = RWLock()
         self._txn = Txn(self._lock)
 

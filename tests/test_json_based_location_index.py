@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.engine.collection.json_based_location_index import JsonRecordLocationIndex
+from src.vecraft.engine.location_index.json_based_location_index import JsonRecordLocationIndex
 
 
 class TestJsonRecordLocationIndex(unittest.TestCase):
