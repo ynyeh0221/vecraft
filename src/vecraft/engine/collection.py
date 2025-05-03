@@ -8,6 +8,7 @@ import numpy as np
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
+from src.vecraft.engine.location_index_interface import RecordLocationIndex
 from src.vecraft.engine.locks import RWLock
 from src.vecraft.engine.transaction import Txn
 from src.vecraft.index.document_filter_evaluator import DocumentFilterEvaluator
@@ -22,20 +23,21 @@ class Collection:
         name: str,
         schema: CollectionSchema,
         storage: StorageEngine,
-        index_factory: Callable
+        index_factory: Callable,
+        location_index: RecordLocationIndex
     ):
         self.name = name
         self.schema = schema
         self._storage = storage
-        self._index = index_factory(kind="brute_force", dim=schema.field.dim)
+        self._index = index_factory(kind="hnsw", dim=schema.field.dim)
         self._metadata_index = MetadataIndex()
 
         # per-collection lock and txn
         self._lock = RWLock()
         self._txn = Txn(self._lock)
 
-        self._config_file = Path(f"{name}_config.json")
-        self._config = self._load_config()
+        # external record location index
+        self._location_index = location_index
 
         # WAL and snapshots
         self._wal = WALManager(Path(f"{name}.wal"))
@@ -49,27 +51,20 @@ class Collection:
 
         # Apply WAL entries since snapshot
         self._wal.replay(self._replay_entry)
-        # Clear WAL after replay
         self._wal.clear()
 
     def _load_snapshots(self) -> bool:
         if self._vec_snap.exists() and self._meta_snap.exists():
-            # load vector index
             vec_data = pickle.loads(self._vec_snap.read_bytes())
             self._index.deserialize(vec_data)
-            # load metadata index
             meta_data = self._meta_snap.read_bytes()
             self._metadata_index.deserialize(meta_data)
             return True
         return False
 
     def _save_snapshots(self) -> None:
-        # serialize and save vector index
-        vec_bytes = self._index.serialize()
-        self._vec_snap.write_bytes(vec_bytes)
-        # serialize and save metadata index
-        meta_bytes = self._metadata_index.serialize()
-        self._meta_snap.write_bytes(meta_bytes)
+        self._vec_snap.write_bytes(self._index.serialize())
+        self._meta_snap.write_bytes(self._metadata_index.serialize())
 
     def _replay_entry(self, entry: dict) -> None:
         typ = entry.get("type")
@@ -84,7 +79,6 @@ class Collection:
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
 
-        # Serialize into one bytes blob
         orig_bytes = json.dumps(orig).encode('utf-8')
         vec_bytes = vec.tobytes()
         meta_bytes = json.dumps(meta).encode('utf-8')
@@ -97,118 +91,82 @@ class Collection:
         record_bytes = header + orig_bytes + vec_bytes + meta_bytes
         size = len(record_bytes)
 
-        # 1) Stash old location so we can restore on rollback
-        old_loc = self.get_record_location(rid)
-
-        wrote_storage = False
-        updated_config = False
-        added_vec_index = False
-        added_meta_index = False
+        # stash old location
+        old_loc = self._location_index.get_record_location(rid)
+        wrote_storage = updated_config = added_vec_index = added_meta_index = False
 
         try:
-            # 2) Always append at EOF
-            new_offset = self.get_next_offset()
+            # append to storage
+            records = self._location_index.get_all_record_locations()
+            if records:
+                new_offset = max(loc['offset'] + loc['size'] for loc in records.values())
+            else:
+                new_offset = 0
             self._storage.write(record_bytes, new_offset)
             wrote_storage = True
 
-            # 3) Update config: mark old as deleted, remove its pointer, then add the new one
+            # update config: tombstone old, add new
             if old_loc:
-                self.mark_location_deleted(rid)
-                self.delete_record_location(rid)
+                self._location_index.mark_deleted(rid)
+                self._location_index.delete_record(rid)
 
-            self.add_record_location(rid, new_offset, size)
+            self._location_index.add_record(rid, new_offset, size)
             updated_config = True
 
-            # 4) Update in-memory indexes
+            # update indexes
             self._index.add(IndexItem(record_id=rid, vector=vec))
             added_vec_index = True
-
             self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
             added_meta_index = True
 
         except Exception:
-            # Rollback in reverse order:
-
+            # rollback
             if added_meta_index:
                 self._metadata_index.delete(MetadataItem(record_id=rid, metadata=meta))
-
             if added_vec_index:
                 self._index.delete(id_=rid)
-
             if updated_config:
-                # remove the new pointer
-                self.delete_record_location(rid)
-                # undelete & restore the old pointer if it existed
+                self._location_index.delete_record(rid)
                 if old_loc:
-                    self._config['deleted_records'].remove({
-                        'offset': old_loc['offset'],
-                        'size': old_loc['size']
-                    })
-                    self.add_record_location(rid, old_loc['offset'], old_loc['size'])
-
+                    self._location_index.add_record(rid, old_loc['offset'], old_loc['size'])
             if wrote_storage:
-                # mark the newly-appended block deleted
-                self.mark_location_deleted(rid)
-
+                self._location_index.mark_deleted(rid)
             raise
 
     def _apply_delete(self, record_id: str) -> None:
-        # 1) Retrieve and cache the old location and data
-        old_loc = self.get_record_location(record_id)
+        old_loc = self._location_index.get_record_location(record_id)
         if not old_loc:
             return
 
-        # Load the existing record so we can restore indexes if needed
         rec = self.get(record_id)
         old_vec = rec.get('vector')
         old_meta = rec.get('metadata', {})
 
-        # Flags to track which steps have completed
-        marked_deleted = False
-        removed_location = False
-        removed_vec_index = False
-        removed_meta_index = False
+        removed_location = removed_vec_index = removed_meta_index = False
 
         try:
-            # 2) Mark the storage location as deleted
-            self.mark_location_deleted(record_id)
-            marked_deleted = True
-
-            # 3) Remove the record pointer from config
-            self.delete_record_location(record_id)
+            # mark tombstone
+            self._location_index.mark_deleted(record_id)
             removed_location = True
 
-            # 4) Remove from the vector index
+            # delete pointer
+            self._location_index.delete_record(record_id)
+
+            # remove from in-memory indexes
             self._index.delete(id_=record_id)
             removed_vec_index = True
-
-            # 5) Remove from the metadata index
             self._metadata_index.delete(MetadataItem(record_id=record_id, metadata=old_meta))
             removed_meta_index = True
 
         except Exception:
-            # Roll back in reverse order of execution
-
+            # rollback
             if removed_meta_index:
-                # 5) Restore metadata index
                 self._metadata_index.add(MetadataItem(record_id=record_id, metadata=old_meta))
-
             if removed_vec_index:
-                # 4) Restore vector index
                 self._index.add(IndexItem(record_id=record_id, vector=old_vec))
-
             if removed_location:
-                # 3) Restore the config pointer
-                self.add_record_location(record_id, old_loc['offset'], old_loc['size'])
-
-            if marked_deleted:
-                # 2) Remove the tombstone so the old block is live again
-                tombstone = {'offset': old_loc['offset'], 'size': old_loc['size']}
-                deleted_records = self._config.get('deleted_records', [])
-                if tombstone in deleted_records:
-                    deleted_records.remove(tombstone)
-
-            # Propagate the error so the caller knows to delete failed
+                # restore record pointer (tombstone remains)
+                self._location_index.add_record(record_id, old_loc['offset'], old_loc['size'])
             raise
 
     def insert(
@@ -218,13 +176,10 @@ class Collection:
         metadata: Dict[str, Any],
         record_id: str = None
     ) -> str:
-        # Validate dimensions
         if len(vector) != self.schema.field.dim:
             raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}")
-        # Generate ID
         if record_id is None:
-            record_id = self.get_next_id()
-        # Prepare WAL entry
+            record_id = self._location_index.get_next_id()
         entry = {
             "type": "insert",
             "record_id": record_id,
@@ -232,17 +187,13 @@ class Collection:
             "vector": vector.tolist(),
             "metadata": metadata
         }
-        # Write-ahead log
         self._wal.append(entry)
-        # Apply insert
         self._apply_insert(entry)
         return record_id
 
     def delete(self, record_id: str) -> bool:
-        # Prepare WAL
         entry = {"type": "delete", "record_id": record_id}
         self._wal.append(entry)
-        # Apply delete
         self._apply_delete(record_id)
         return True
 
@@ -253,40 +204,26 @@ class Collection:
         where: Dict[str, Any] = None,
         where_document: Dict[str, Any] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Search for similar vectors with optional metadata and document filters.
-        """
-        # 1) Validate query vector dimension
         if len(query_vector) != self.schema.field.dim:
             raise ValueError(
                 f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}"
             )
-
         allowed_ids: Optional[Set[str]] = None
 
-        # 2) Metadata filtering
         if where:
             metadata_ids = self._metadata_index.get_matching_ids(where)
-            # If metadata_ids is not None, enforce filtering
             if metadata_ids is not None:
                 allowed_ids = metadata_ids
                 if not allowed_ids:
                     return []
 
-        # 3) Document content filtering
         if where_document:
             doc_ids = self._filter_by_document(where_document, allowed_ids)
-            if allowed_ids is None:
-                allowed_ids = doc_ids
-            else:
-                allowed_ids &= doc_ids
+            allowed_ids = allowed_ids & doc_ids if allowed_ids is not None else doc_ids
             if not allowed_ids:
                 return []
 
-        # 4) Vector similarity search
         raw_results = self._index.search(query_vector, k, allowed_ids=allowed_ids)
-
-        # 5) Fetch and format records
         results: List[Dict[str, Any]] = []
         for rec_id, dist in raw_results:
             rec = self.get(rec_id)
@@ -296,232 +233,63 @@ class Collection:
             results.append(rec)
         return results
 
-    def _filter_by_document(self, filter_condition: Dict[str, Any],
-                            allowed_ids: Optional[Set[str]] = None) -> Set[str]:
-        """
-        Filter records based on document content.
-
-        Args:
-            filter_condition: Document content filter condition
-            allowed_ids: Optional set of IDs to filter within (for combined filtering)
-
-        Returns:
-            Set of matching record IDs
-        """
-        document_evaluator = DocumentFilterEvaluator()
-        matching_ids = set()
-
-        # Get candidate IDs
-        candidate_ids = allowed_ids if allowed_ids else set(self._index.get_all_ids())
-
-        # Check each document
-        for record_id in candidate_ids:
-            record = self.get(record_id)
-            if record and 'original_data' in record:
-                # Get document content
-                document_content = record['original_data']
-
-                # If document content is not a string, try to convert it
-                if not isinstance(document_content, str):
-                    if isinstance(document_content, dict):
-                        # For dictionaries, convert to JSON string
-                        try:
-                            document_content = json.dumps(document_content)
-                        except:
-                            continue
-                    else:
-                        # Try string conversion for other types
-                        try:
-                            document_content = str(document_content)
-                        except:
-                            continue
-
-                # Check if document matches filter
-                if document_evaluator.matches(document_content, filter_condition):
-                    matching_ids.add(record_id)
-
-        return matching_ids
-
     def get(self, record_id: str) -> dict:
-        """Retrieve a record by ID."""
-        record_location = self.get_record_location(record_id)
-        if not record_location:
+        loc = self._location_index.get_record_location(record_id)
+        if not loc:
             return {}
-
-        # Read record data
-        record_data = self._storage.read(record_location['offset'], record_location['size'])
-
-        # Parse header
-        header_size = 4 * 4  # 4 int32 values
-        header = np.frombuffer(record_data[:header_size], dtype=np.int32)
-
-        id_ = header[0]
-        original_data_size = header[1]
-        vector_size = header[2]
-        metadata_size = header[3]
-
-        # Extract components
-        current_pos = header_size
-
-        # Extract original data
-        original_data_bytes = record_data[current_pos:current_pos + original_data_size]
-        current_pos += original_data_size
-
-        # Extract vector
-        vector_bytes = record_data[current_pos:current_pos + vector_size]
-        current_pos += vector_size
-
-        # Extract metadata
-        metadata_bytes = record_data[current_pos:current_pos + metadata_size]
-
-        # Decode
-        original_data = json.loads(original_data_bytes.decode('utf-8'))
-        vec = np.frombuffer(vector_bytes, dtype=np.float32)
-        metadata = json.loads(metadata_bytes.decode('utf-8'))
-
+        data = self._storage.read(loc['offset'], loc['size'])
+        header_size = 4 * 4
+        header = np.frombuffer(data[:header_size], dtype=np.int32)
+        original_data_size, vector_size, metadata_size = header[1], header[2], header[3]
+        pos = header_size
+        orig_bytes = data[pos:pos+original_data_size]; pos += original_data_size
+        vec_bytes = data[pos:pos+vector_size]; pos += vector_size
+        meta_bytes = data[pos:pos+metadata_size]
         return {
-            'id': id_,
-            'original_data': original_data,
-            'vector': vec,
-            'metadata': metadata
+            'id': int(header[0]),
+            'original_data': json.loads(orig_bytes.decode('utf-8')),
+            'vector': np.frombuffer(vec_bytes, dtype=np.float32),
+            'metadata': json.loads(meta_bytes.decode('utf-8'))
         }
 
     def flush(self):
-        """Ensure all data and configuration are persisted."""
-        self._save_config()
         self._storage.flush()
         self._save_snapshots()
 
-    def _load_config(self) -> dict:
-        """Load collection configuration from disk."""
-        if self._config_file.exists():
-            return json.loads(self._config_file.read_text())
-        else:
-            # Initialize with default values
-            config = {
-                'next_id': 0,
-                'records': {},
-                'deleted_records': []
-            }
-            self._save_config(config)
-            return config
-
-    def _save_config(self, config=None):
-        """Save collection configuration to disk."""
-        if config is None:
-            config = self._config
-        self._config_file.write_text(json.dumps(config, indent=2))
-
     def _rebuild_index(self):
-        """Rebuild the index from stored records."""
-        records = self.get_all_record_locations()
-
-        for record_id, record_location in records.items():
-            # Read record data
-            record_data = self._storage.read(record_location['offset'], record_location['size'])
-
-            # Parse header
-            header_size = 4 * 4  # 4 int32 values
-            header = np.frombuffer(record_data[:header_size], dtype=np.int32)
-
-            original_data_size = header[1]
-            vector_size = header[2]
-
-            # Calculate vector position
-            vector_start = header_size + original_data_size
-
-            # Extract vector
-            vector_bytes = record_data[vector_start:vector_start + vector_size]
-            vec = np.frombuffer(vector_bytes, dtype=np.float32)
-
-            # Add to index
-            self._index.add(IndexItem(record_id=str(record_id), vector=vec))
+        for rid, loc in self._location_index.get_all_record_locations().items():
+            data = self._storage.read(loc['offset'], loc['size'])
+            header = np.frombuffer(data[:16], dtype=np.int32)
+            orig_size, vec_size = header[1], header[2]
+            vec_start = 16 + orig_size
+            vec = np.frombuffer(data[vec_start:vec_start+vec_size], dtype=np.float32)
+            self._index.add(IndexItem(record_id=str(rid), vector=vec))
 
     def _rebuild_metadata_index(self):
-        for rec_id_str, loc in self.get_all_record_locations().items():
-            rec = self.get(rec_id_str)
+        for rid in self._location_index.get_all_record_locations().keys():
+            rec = self.get(rid)
             if rec and 'metadata' in rec:
-                self._metadata_index.add(MetadataItem(record_id=rec_id_str, metadata=rec['metadata']))
+                self._metadata_index.add(MetadataItem(record_id=rid, metadata=rec['metadata']))
 
-    def get_next_id(self) -> str:
-        """Get the next available ID for this collection."""
-        next_id = self._config.get('next_id', 0)
-        self._config['next_id'] = next_id + 1
-        self._save_config()
-        return str(next_id)
-
-    def get_next_offset(self) -> int:
-        """Calculate the next available storage offset."""
-        record_locations = self._config.get('records', {})
-
-        if not record_locations:
-            return 0
-
-        # Find the end of the last record
-        last_offset = 0
-        last_size = 0
-
-        for location_info in record_locations.values():
-            record_offset = location_info['offset']
-            record_size = location_info['size']
-            if record_offset + record_size > last_offset + last_size:
-                last_offset = record_offset
-                last_size = record_size
-
-        return last_offset + last_size
-
-    def get_record_location(self, record_id: str) -> dict:
-        """Get storage location for a specific record."""
-        record_locations = self._config.get('records', {})
-        return record_locations.get(str(record_id))
-
-    def add_record_location(self, record_id: str, offset: int, size: int) -> None:
-        """Add record storage location."""
-        if 'records' not in self._config:
-            self._config['records'] = {}
-
-        self._config['records'][str(record_id)] = {
-            'offset': offset,
-            'size': size
-        }
-
-        self._save_config()
-
-    def update_record_location(self, record_id: str, offset: int, size: int) -> None:
-        """Update the storage location for an existing record."""
-        if 'records' not in self._config:
-            self._config['records'] = {}
-
-        self._config['records'][str(record_id)] = {
-            'offset': offset,
-            'size': size
-        }
-
-        self._save_config()
-
-    def mark_location_deleted(self, record_id: str) -> None:
-        """Mark a record's storage location as deleted for potential space reuse."""
-        if 'deleted_records' not in self._config:
-            self._config['deleted_records'] = []
-
-        record_location = self.get_record_location(record_id)
-        if record_location:
-            self._config['deleted_records'].append({
-                'offset': record_location['offset'],
-                'size': record_location['size']
-            })
-
-        self._save_config()
-
-    def delete_record_location(self, record_id: str) -> None:
-        """Remove record location information."""
-        if 'records' in self._config and str(record_id) in self._config['records']:
-            del self._config['records'][str(record_id)]
-            self._save_config()
-
-    def get_all_record_locations(self) -> dict:
-        """Get all record storage locations."""
-        return self._config.get('records', {})
+    def _filter_by_document(self,
+                            filter_condition: Dict[str, Any],
+                            allowed_ids: Optional[Set[str]] = None) -> Set[str]:
+        evaluator = DocumentFilterEvaluator()
+        matching = set()
+        candidates = allowed_ids if allowed_ids else set(self._index.get_all_ids())
+        for rid in candidates:
+            rec = self.get(rid)
+            content = rec.get('original_data')
+            if content is None:
+                continue
+            if not isinstance(content, str):
+                try:
+                    content = json.dumps(content)
+                except:
+                    content = str(content)
+            if evaluator.matches(content, filter_condition):
+                matching.add(rid)
+        return matching
 
     def read_transaction(self):
         """Publicly expose a read‐lock context."""
@@ -552,7 +320,7 @@ class Collection:
         """
         # Determine which IDs to plot
         if record_ids is None:
-            record_ids = list(self.get_all_record_locations().keys())
+            record_ids = list(self._location_index.get_all_record_locations().keys())
 
         vectors = []
         labels = []
