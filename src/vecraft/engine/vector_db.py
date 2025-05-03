@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.engine.collection import Collection
+from src.vecraft.engine.collection.collection import Collection
 from src.vecraft.metadata.catalog import JsonCatalog
 
 
