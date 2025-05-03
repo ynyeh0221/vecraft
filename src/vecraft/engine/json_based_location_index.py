@@ -16,9 +16,19 @@ class JsonRecordLocationIndex(RecordLocationIndex):
 
     def _load(self) -> None:
         if self._path.exists():
-            self._config = json.loads(self._path.read_text())
+            content = self._path.read_text()
+            if content.strip():  # Check if file has non-whitespace content
+                self._config = json.loads(content)
+            else:
+                # File exists but is empty, initialize default config
+                self._config = {
+                    'next_id': 0,
+                    'records': {},
+                    'deleted_records': []
+                }
+                self._save()
         else:
-            # initialize default config
+            # File doesn't exist, initialize default config
             self._config = {
                 'next_id': 0,
                 'records': {},
