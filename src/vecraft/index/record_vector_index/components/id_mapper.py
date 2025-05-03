@@ -4,7 +4,7 @@ from typing import Optional, Set, Dict, Any, List, Tuple
 class IdMapper:
     """
     Manages the mapping between user-provided string record IDs and
-    internal integer IDs required by vector_index implementations.
+    internal integer IDs required by record_vector_index implementations.
 
     This component encapsulates the dual-ID system logic, providing a clean
     separation of concerns from the actual vector indexing implementation.

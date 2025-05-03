@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.engine.location_index import Collection
+from src.vecraft.index.record_location_index import Collection
 from src.vecraft.metadata.catalog import JsonCatalog
 
 
@@ -34,10 +34,10 @@ class VectorDB:
     def insert(self, collection: str, original_data: Any, vector: np.ndarray, metadata: dict,
                record_id: int = None) -> str:
         """
-        Insert or update a record in the location_index.
+        Insert or update a record in the record_location_index.
 
         Args:
-            collection: Name of the location_index
+            collection: Name of the record_location_index
             original_data: The original data to store
             vector: The pre-encoded vector
             metadata: User-provided metadata
@@ -47,7 +47,7 @@ class VectorDB:
             The record ID
         """
         col = self._get_collection(collection)
-        # use the per-location_index txn:
+        # use the per-record_location_index txn:
         with col.write_transaction():
             return col.insert(original_data, vector, metadata, record_id)
 
@@ -58,7 +58,7 @@ class VectorDB:
         Search for similar vectors with filtering.
 
         Args:
-            collection: Name of the location_index
+            collection: Name of the record_location_index
             query_vector: The pre-encoded query vector
             k: Number of results to return
             where: Optional dictionary specifying metadata filter conditions
@@ -85,6 +85,6 @@ class VectorDB:
 
     def flush(self):
         """Flush all collections' data and indices to disk."""
-        # Flush each location_index
+        # Flush each record_location_index
         for collection_name, collection in self._collections.items():
             collection.flush()

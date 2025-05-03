@@ -46,12 +46,12 @@ class TestHNSW(unittest.TestCase):
         self.assertTrue(hnsw3._auto_resize_dim)
         self.assertTrue(hnsw3._normalize_vectors)
 
-        # Verify vector_index initialization
+        # Verify record_vector_index initialization
         self.assertIsNotNone(hnsw1._index)
         self.assertIsNotNone(hnsw3._index)
 
     def test_add_single(self):
-        """Test adding a single item to the vector_index."""
+        """Test adding a single item to the record_vector_index."""
         hnsw = HNSW(dim=3)
         hnsw.add(self.items[0])
 
@@ -62,7 +62,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(hnsw._current_elements, 1)
 
     def test_add_batch(self):
-        """Test adding a batch of items to the vector_index."""
+        """Test adding a batch of items to the record_vector_index."""
         hnsw = HNSW(dim=3)
         hnsw.add_batch(self.items)
 
@@ -107,7 +107,7 @@ class TestHNSW(unittest.TestCase):
             self.assertIn(record_id, allowed_ids)
 
     def test_delete(self):
-        """Test deleting an item from the vector_index."""
+        """Test deleting an item from the record_vector_index."""
         hnsw = HNSW(dim=3)
         hnsw.add_batch(self.items)
 
@@ -197,7 +197,7 @@ class TestHNSW(unittest.TestCase):
         self.assertAlmostEqual(results[0][1], 0.0, places=5)
 
     def test_serialization_deserialization(self):
-        """Test serialization and deserialization of the vector_index."""
+        """Test serialization and deserialization of the record_vector_index."""
         # Initialize HNSW
         hnsw = HNSW(dim=3, metric="cosine", M=16, ef_construction=100)
 
@@ -233,7 +233,7 @@ class TestHNSW(unittest.TestCase):
         """Test the build method with a list of items."""
         hnsw = HNSW(dim=3)
 
-        # Build the vector_index with items
+        # Build the record_vector_index with items
         hnsw.build(self.items)
 
         # Check that current_elements was set correctly
@@ -258,7 +258,7 @@ class TestHNSW(unittest.TestCase):
         # Test empty build
         hnsw.build([])  # Should not raise an error
 
-        # Test search with empty vector_index
+        # Test search with empty record_vector_index
         results = hnsw.search(query=[1.0, 1.0, 1.0], k=3)
         self.assertEqual(results, [])
 
@@ -268,7 +268,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(results, [])
 
     def test_update_existing_vector(self):
-        """Test updating an existing vector in the vector_index."""
+        """Test updating an existing vector in the record_vector_index."""
         hnsw = HNSW(dim=3)
 
         # Add an item
@@ -295,7 +295,7 @@ class TestHNSW(unittest.TestCase):
         self.assertLess(results3[0][1], results2[0][1])
 
     def test_resize_index(self):
-        """Test vector_index resizing when adding many items."""
+        """Test record_vector_index resizing when adding many items."""
         # Initialize HNSW with a small max_elements
         hnsw = HNSW(dim=3)
         hnsw._max_elements = 5
@@ -320,7 +320,7 @@ class TestHNSW(unittest.TestCase):
             self.assertEqual(results[0][0], f"rec{i}")
 
     def test_different_metrics(self):
-        """Test the vector_index with different distance metrics."""
+        """Test the record_vector_index with different distance metrics."""
         # Test with EUCLIDEAN distance
         hnsw_l2 = HNSW(dim=3, metric=DistanceMetric.EUCLIDEAN)
         hnsw_l2.add_batch(self.items)
@@ -392,7 +392,7 @@ class TestHNSW(unittest.TestCase):
         # Initialize HNSW
         hnsw = HNSW(dim=3)
 
-        # Build the vector_index
+        # Build the record_vector_index
         hnsw.build(items)
 
         # Search for nearest neighbors to point [2.1, 2.1, 0.0]
@@ -484,7 +484,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(results[0][0], "zero_vec")
 
     def test_resize_multiple_times(self):
-        """Test resizing the vector_index multiple times."""
+        """Test resizing the record_vector_index multiple times."""
         # Initialize with a very small max_elements
         hnsw = HNSW(dim=3)
         hnsw._max_elements = 2
@@ -644,7 +644,7 @@ class TestHNSW(unittest.TestCase):
         ]
         hnsw.add_batch(items)
 
-        # Serialize the vector_index using the built-in method
+        # Serialize the record_vector_index using the built-in method
         serialized_data = hnsw.serialize()
 
         # Create new instance with default parameters
@@ -673,7 +673,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(results[0][0], "ip_vec_1")
 
     def test_get_all_ids_empty(self):
-        """Test get_ids and get_all_ids with an empty vector_index."""
+        """Test get_ids and get_all_ids with an empty record_vector_index."""
         hnsw = HNSW(dim=3)
 
         all_ids = hnsw.get_all_ids()
@@ -698,11 +698,11 @@ class TestHNSW(unittest.TestCase):
 
 
     def test_serialize_uninitialized_index(self):
-        """Test serializing an vector_index that hasn't been initialized yet."""
-        # Create HNSW instance but don't add any items or initialize vector_index
+        """Test serializing an record_vector_index that hasn't been initialized yet."""
+        # Create HNSW instance but don't add any items or initialize record_vector_index
         hnsw = HNSW(dim=3)
 
-        # Force vector_index to be None to simulate uninitialized state
+        # Force record_vector_index to be None to simulate uninitialized state
         hnsw._index = None
 
         # Serialize
@@ -723,17 +723,17 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(new_hnsw._metric, "l2")  # Default is Euclidean
 
     def test_deserialize_existing_index(self):
-        """Test deserializing over an existing, already initialized vector_index."""
-        # Create and populate first vector_index
+        """Test deserializing over an existing, already initialized record_vector_index."""
+        # Create and populate first record_vector_index
         hnsw1 = HNSW(dim=3)
         hnsw1.add_batch(self.items[:2])  # Add first two items
 
-        # Verify the first vector_index has expected data
+        # Verify the first record_vector_index has expected data
         results1 = hnsw1.search(query=np.array([1.0, 2.0, 3.0], dtype=np.float32), k=1)
         self.assertEqual(results1[0][0], self.record_ids[0])
         self.assertEqual(len(hnsw1.get_all_ids()), 2)
 
-        # Create and populate second vector_index with different items
+        # Create and populate second record_vector_index with different items
         hnsw2 = HNSW(dim=3)
 
         # Create different items
@@ -743,15 +743,15 @@ class TestHNSW(unittest.TestCase):
         ]
         hnsw2.add_batch(diff_items)
 
-        # Verify the second vector_index has expected data
+        # Verify the second record_vector_index has expected data
         results2 = hnsw2.search(query=np.array([10.0, 11.0, 12.0], dtype=np.float32), k=1)
         self.assertEqual(results2[0][0], "diff1")
         self.assertEqual(len(hnsw2.get_all_ids()), 2)
 
-        # Serialize the second vector_index
+        # Serialize the second record_vector_index
         serialized_data = hnsw2.serialize()
 
-        # Now deserialize the second vector_index data into the first vector_index object
+        # Now deserialize the second record_vector_index data into the first record_vector_index object
         hnsw1.deserialize(serialized_data)
 
         # Verify that hnsw1 now has the data from hnsw2
@@ -777,14 +777,14 @@ class TestHNSW(unittest.TestCase):
             self.assertNotEqual(results[0][0], self.record_ids[0])
 
     def test_serialize_empty_index(self):
-        """Test serializing and deserializing an empty vector_index (with no items)."""
-        # Create vector_index but don't add any items
+        """Test serializing and deserializing an empty record_vector_index (with no items)."""
+        # Create record_vector_index but don't add any items
         hnsw = HNSW(dim=3)
 
-        # Serialize the empty vector_index using the built-in method
+        # Serialize the empty record_vector_index using the built-in method
         serialized_data = hnsw.serialize()
 
-        # Create new vector_index
+        # Create new record_vector_index
         new_hnsw = HNSW()
 
         # Deserialize using the built-in method
@@ -807,14 +807,14 @@ class TestHNSW(unittest.TestCase):
     def test_deserialize_with_missing_optional_params(self):
         """Test deserializing state with missing optional parameters."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Create vector_index
+            # Create record_vector_index
             hnsw = HNSW(dim=3)
 
             # Add some items
             hnsw.add_batch(self.items)
 
             # Save to file
-            index_file = os.path.join(temp_dir, "vector_index.bin")
+            index_file = os.path.join(temp_dir, "record_vector_index.bin")
             hnsw._index.save_index(index_file)
 
             # Create minimal state without optional parameters
@@ -830,7 +830,7 @@ class TestHNSW(unittest.TestCase):
                 'id_mapper': hnsw._id_mapper,
             }
 
-            # Create new vector_index
+            # Create new record_vector_index
             new_hnsw = HNSW(dim=3, metric=hnsw._metric)
 
             # Instead of manually loading, use the deserialize method with a mocked state
@@ -858,13 +858,13 @@ class TestHNSW(unittest.TestCase):
 
     def test_deserialize_without_id_mapper(self):
         """Test deserializing state without id_mapper (should create a new one)."""
-        # Create vector_index
+        # Create record_vector_index
         hnsw = HNSW(dim=3)
 
         # Add some items
         hnsw.add_batch(self.items)
 
-        # Serialize the vector_index
+        # Serialize the record_vector_index
         serialized_data = hnsw.serialize()
 
         # Deserialize to get the complete state
@@ -877,7 +877,7 @@ class TestHNSW(unittest.TestCase):
         # Re-serialize the modified state
         modified_serialized = pickle.dumps(state_without_mapper)
 
-        # Create new vector_index
+        # Create new record_vector_index
         new_hnsw = HNSW(dim=3)
 
         # Deserialize the modified state (without id_mapper)
@@ -889,7 +889,7 @@ class TestHNSW(unittest.TestCase):
         # Verify it's empty (doesn't have the original mappings)
         self.assertEqual(len(new_hnsw._id_mapper.get_all_record_ids()), 0)
 
-        # The vector_index should contain data, but search won't return results
+        # The record_vector_index should contain data, but search won't return results
         # because there's no mapping between internal IDs and record IDs
         results = new_hnsw.search(query=np.array([1.0, 2.0, 3.0], dtype=np.float32), k=4)
         self.assertEqual(len(results), 0)  # No results due to missing id_mapper
@@ -904,7 +904,7 @@ class TestHNSW(unittest.TestCase):
 
         for metric in metrics_to_test:
             with tempfile.TemporaryDirectory():
-                # Create vector_index with this metric
+                # Create record_vector_index with this metric
                 hnsw = HNSW(dim=3, metric=metric)
 
                 # Add some items
@@ -913,7 +913,7 @@ class TestHNSW(unittest.TestCase):
                 # Serialize using the class's method
                 serialized = hnsw.serialize()
 
-                # Create new vector_index with same metric
+                # Create new record_vector_index with same metric
                 new_hnsw = HNSW(dim=3, metric=metric)
 
                 # Deserialize
@@ -931,7 +931,7 @@ class TestHNSW(unittest.TestCase):
 
     def test_serialize_deserialize_large_index(self):
         """Test serialization and deserialization with a larger number of vectors."""
-        # Create vector_index
+        # Create record_vector_index
         hnsw = HNSW(dim=10)
 
         # Create a larger number of items
@@ -943,13 +943,13 @@ class TestHNSW(unittest.TestCase):
         # Add items
         hnsw.add_batch(many_items)
 
-        # Verify the vector_index is populated correctly
+        # Verify the record_vector_index is populated correctly
         self.assertEqual(hnsw._current_elements, 100)
 
         # Serialize using the built-in method
         serialized_data = hnsw.serialize()
 
-        # Create new vector_index
+        # Create new record_vector_index
         new_hnsw = HNSW(dim=10)
 
         # Deserialize using the built-in method
