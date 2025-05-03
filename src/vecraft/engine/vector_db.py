@@ -47,9 +47,7 @@ class VectorDB:
             The record ID
         """
         col = self._get_collection(collection)
-        # use the per-record_location txn:
-        with col.write_transaction():
-            return col.insert(original_data, vector, metadata, record_id)
+        return col.insert(original_data, vector, metadata, record_id)
 
     def search(self, collection: str, query_vector: np.ndarray, k: int,
                where: Dict[str, Any] = None,
@@ -68,20 +66,17 @@ class VectorDB:
             List of matching records with similarity scores
         """
         col = self._get_collection(collection)
-        with col.read_transaction():
-            return col.search(query_vector, k, where, where_document)
+        return col.search(query_vector, k, where, where_document)
 
     def get(self, collection: str, record_id: str) -> dict:
         """Retrieve a record by ID."""
         col = self._get_collection(collection)
-        with col.read_transaction():
-            return col.get(record_id)
+        return col.get(record_id)
 
     def delete(self, collection: str, record_id: str) -> bool:
         """Delete a record by ID."""
         col = self._get_collection(collection)
-        with col.write_transaction():
-            return col.delete(record_id)
+        return col.delete(record_id)
 
     def flush(self):
         """Flush all collections' data and indices to disk."""
