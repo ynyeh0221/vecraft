@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
 
 import numpy as np
-from pyarrow.jvm import record_batch
-from torch.autograd.profiler import record_function
 
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
