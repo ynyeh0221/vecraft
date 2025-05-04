@@ -8,7 +8,7 @@ import numpy as np
 from src.vecraft.engine.collection import Collection
 from src.vecraft.index.record_location.json_based_location_index import JsonRecordLocationIndex
 from src.vecraft.index.record_vector.hnsw import HNSW
-from tests.test_collection import DummyStorage, DummySchema
+from tests.unit.test_collection import DummyStorage, DummySchema
 
 
 class TestCollectionRollbackWithRealIndex(unittest.TestCase):
