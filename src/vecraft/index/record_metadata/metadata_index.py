@@ -85,8 +85,6 @@ class MetadataIndex:
         """
         result_ids = None
 
-        print(f"get_matching_ids: {where}, self.eq_index: {self._eq_index}")
-
         for field, cond in where.items():
             ids = set()
 

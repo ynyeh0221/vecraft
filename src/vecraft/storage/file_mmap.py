@@ -57,8 +57,6 @@ class MMapStorage(StorageEngine):
         Write at the specified offset, not just at EOF.
         Returns the actual offset where data was written.
         """
-        print(f"MMapStorage.write called with offset={offset}, data length={len(data)}")
-
         # Ensure file is large enough
         required_size = offset + len(data)
         current_size = self._file.seek(0, os.SEEK_END)
@@ -72,12 +70,9 @@ class MMapStorage(StorageEngine):
         return offset  # Return the offset that was passed in
 
     def read(self, offset: int, size: int) -> bytes:
-        print(f"MMapStorage.read called with offset={offset}, size={size}")
         if offset < 0 or offset + size > len(self._mmap):
             raise ValueError(f"Read range {offset}:{offset + size} exceeds file size {len(self._mmap)}")
         result = self._mmap[offset:offset + size]
-        print(f"MMapStorage.read returning data of length: {len(result)}")
-
         return result
 
     def flush(self) -> None:

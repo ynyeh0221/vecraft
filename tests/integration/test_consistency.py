@@ -1,3 +1,4 @@
+import glob
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -38,6 +39,15 @@ def temp_paths(tmp_path):
     catalog_path = str(test_dir / "catalog.json")
     location_path = str(test_dir / "location.json")
     yield storage_path, catalog_path, location_path
+
+    # Clean up test_dir and any WAL files
+    wal_files = glob.glob("*.wal")
+    for wal_file in wal_files:
+        try:
+            Path(wal_file).unlink()
+        except (OSError, PermissionError) as e:
+            print(f"Warning: Could not delete WAL file {wal_file}: {e}")
+
     shutil.rmtree(test_dir)
 
 
@@ -52,7 +62,7 @@ def test_insert_search_and_fetch_consistency(temp_paths):
         catalog.create_collection(collection, dim=32, vector_type="float32")
 
     rng = np.random.default_rng(0)
-    records = [{"text": f"record_{i}", "tags": [str(i % 2)]} for i in range(2)]
+    records = [{"text": f"record_{i}", "tags": [str(i % 2)]} for i in range(20)]
     vectors = [rng.random(32).astype(np.float32) for _ in records]
 
     # Prepare tasks as flat triples (idx, data, vec)
@@ -70,7 +80,7 @@ def test_insert_search_and_fetch_consistency(temp_paths):
         results = executor.execute(
             planner.plan_search(collection=collection,
                                 query_vector=rng.random(32).astype(np.float32),
-                                k=5,
+                                k=20,
                                 where={"tags": data["tags"]})
         )
         assert any(res["id"] == rec_id for res in results)

@@ -2,6 +2,7 @@ from typing import Dict, Any, List
 
 import numpy as np
 
+from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.collection import Collection
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr
@@ -78,7 +79,10 @@ class VectorDB:
     def get(self, collection: str, record_id: str) -> dict:
         """Retrieve a record by ID."""
         col = self._get_collection(collection)
-        return col.get(record_id)
+        result = col.get(record_id)
+        if not result:
+            raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
+        return result
 
     def delete(self, collection: str, record_id: str) -> bool:
         """Delete a record by ID."""

@@ -54,5 +54,4 @@ class SearchNode(PlanNode):
 
     def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         db = context['vector_db']
-        print(f"self.where: {self.where}")
         return db.search(self.collection, self.query_vector, self.k, where=self.where, where_document=self.where_document)

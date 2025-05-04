@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
 
 import numpy as np
+from pyarrow.jvm import record_batch
+from torch.autograd.profiler import record_function
 
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.index_interface import IndexItem
@@ -75,17 +77,19 @@ class Collection:
             self._apply_delete(entry["record_id"])
 
     def _apply_insert(self, entry: dict) -> None:
-        rid = entry["record_id"]
+        record_id = entry["record_id"]
         orig = entry["original_data"]
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
+
+        print(f"rid insert start: {record_id}")
 
         # 1) Serialize components
         orig_b = json.dumps(orig).encode('utf-8')
         vec_b = vec.tobytes()
         meta_b = json.dumps(meta).encode('utf-8')
         header = struct.pack('<4I',
-                             len(rid),
+                             len(record_id),
                              len(orig_b),
                              len(vec_b),
                              len(meta_b),
@@ -94,9 +98,9 @@ class Collection:
         size = len(rec_bytes)
 
         # 2) Capture existing state for full restore
-        old_loc = self._location_index.get_record_location(rid)
+        old_loc = self._location_index.get_record_location(record_id)
         if old_loc:
-            old = self.get(rid)
+            old = self.get(record_id)
             old_vec = old.get("vector")
             old_meta = old.get("metadata", {})
         else:
@@ -114,49 +118,51 @@ class Collection:
 
             # B) location index
             if old_loc:
-                self._location_index.mark_deleted(rid)
-                self._location_index.delete_record(rid)
-            self._location_index.add_record(rid, new_offset, size)
-            print(f"Added to location index: rid={rid}, offset={new_offset}, size={size}")
+                self._location_index.mark_deleted(record_id)
+                self._location_index.delete_record(record_id)
+            self._location_index.add_record(record_id, new_offset, size)
+            print(f"Added to location index: rid={record_id}, offset={new_offset}, size={size}")
             updated_loc = True
 
             # C) metadata
-            self._metadata_index.add(MetadataItem(record_id=rid, metadata=meta))
+            self._metadata_index.add(MetadataItem(record_id=record_id, metadata=meta))
             updated_meta = True
 
             # D) vector
-            self._index.add(IndexItem(record_id=rid, vector=vec))
+            self._index.add(IndexItem(record_id=record_id, vector=vec))
             updated_vec = True
 
-            print(f"rid end: {rid}")
+            print(f"rid insert end: {record_id}")
 
         except Exception:
 
             # 1) Rollback vector
             if updated_vec:
-                self._index.delete(record_id=rid)
+                self._index.delete(record_id=record_id)
                 # restore old vector if it existed
                 if old_vec is not None:
-                    self._index.add(IndexItem(record_id=rid, vector=old_vec))
+                    self._index.add(IndexItem(record_id=record_id, vector=old_vec))
 
             # 3) Rollback metadata
             if updated_meta:
-                self._metadata_index.delete(MetadataItem(record_id=rid, metadata=meta))
+                self._metadata_index.delete(MetadataItem(record_id=record_id, metadata=meta))
                 # restore old metadata if it existed
                 if old_meta is not None:
-                    self._metadata_index.add(MetadataItem(record_id=rid, metadata=old_meta))
+                    self._metadata_index.add(MetadataItem(record_id=record_id, metadata=old_meta))
 
             # 5) Rollback location
             if updated_loc:
-                self._location_index.mark_deleted(rid)
-                self._location_index.delete_record(rid)
+                self._location_index.mark_deleted(record_id)
+                self._location_index.delete_record(record_id)
                 if old_loc is not None:
-                    self._location_index.add_record(rid, old_loc["offset"], old_loc["size"])
+                    self._location_index.add_record(record_id, old_loc["offset"], old_loc["size"])
 
             # 6) rethrow
             raise
 
     def _apply_delete(self, record_id: str) -> None:
+        print(f"rid delete start: {record_id}")
+
         old_loc = self._location_index.get_record_location(record_id)
         if not old_loc:
             return
@@ -180,6 +186,8 @@ class Collection:
             # 3) VectorIndex
             self._index.delete(record_id=record_id)
             removed_vec_index = True
+
+            print(f"rid delete end: {record_id}")
 
         except Exception:
             if removed_vec_index:

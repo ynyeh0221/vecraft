@@ -346,6 +346,7 @@ class HNSW:
         # Get internal ID using IdMapper
         internal_id = self._id_mapper.get_internal_id(record_id)
         if internal_id is None:
+            print(f"record_id {record_id} not found")
             return  # Record not found
 
         # Mark as deleted in the record_vector
