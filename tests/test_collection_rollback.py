@@ -15,7 +15,6 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def setUp(self):
         # temp file for JsonRecordLocationIndex
         self.loc_path = Path(tempfile.mkstemp()[1])
-        self.loc_path.write_text("")  # start empty
         self.storage = DummyStorage()
         self.schema = DummySchema(dim=4)
 

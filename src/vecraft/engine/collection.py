@@ -1,5 +1,6 @@
 import json
 import pickle
+import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
 
@@ -41,9 +42,9 @@ class Collection:
         self._meta_snap = Path(f"{name}.metasnap")
 
         # Load snapshots if existed, else full rebuild
-        if not self._load_snapshots():
-            self._rebuild_index()
-            self._rebuild_metadata_index()
+        #if not self._load_snapshots():
+            #self._rebuild_index()
+            #self._rebuild_metadata_index()
 
         # Apply WAL entries since snapshot
         self._rwlock.acquire_write()
@@ -83,12 +84,12 @@ class Collection:
         orig_b = json.dumps(orig).encode('utf-8')
         vec_b = vec.tobytes()
         meta_b = json.dumps(meta).encode('utf-8')
-        header = np.array([
-            int(rid),
-            len(orig_b),
-            len(vec_b),
-            len(meta_b)
-        ], dtype=np.int32).tobytes()
+        header = struct.pack('<4I',
+                             len(rid),
+                             len(orig_b),
+                             len(vec_b),
+                             len(meta_b),
+                             )
         rec_bytes = header + orig_b + vec_b + meta_b
         size = len(rec_bytes)
 
@@ -107,7 +108,8 @@ class Collection:
             # A) storage
             all_locs = self._location_index.get_all_record_locations()
             new_offset = max((l["offset"] + l["size"] for l in all_locs.values()), default=0)
-            self._storage.write(rec_bytes, new_offset)
+            actual_offset = self._storage.write(rec_bytes, new_offset)
+            print(f"Actual offset after write: {actual_offset}")
             wrote_storage = True
 
             # B) location index
@@ -115,6 +117,7 @@ class Collection:
                 self._location_index.mark_deleted(rid)
                 self._location_index.delete_record(rid)
             self._location_index.add_record(rid, new_offset, size)
+            print(f"Added to location index: rid={rid}, offset={new_offset}, size={size}")
             updated_loc = True
 
             # C) metadata
@@ -261,16 +264,21 @@ class Collection:
         loc = self._location_index.get_record_location(record_id)
         if not loc:
             return {}
+
         data = self._storage.read(loc['offset'], loc['size'])
         header_size = 4 * 4
-        header = np.frombuffer(data[:header_size], dtype=np.int32)
-        original_data_size, vector_size, metadata_size = header[1], header[2], header[3]
+        rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
+            '<4I',
+            data[:header_size]
+        )
         pos = header_size
-        orig_bytes = data[pos:pos+original_data_size]; pos += original_data_size
-        vec_bytes = data[pos:pos+vector_size]; pos += vector_size
+        orig_bytes = data[pos:pos+original_data_size];
+        pos += original_data_size
+        vec_bytes = data[pos:pos+vector_size];
+        pos += vector_size
         meta_bytes = data[pos:pos+metadata_size]
         return {
-            'id': int(header[0]),
+            'id': record_id,
             'original_data': json.loads(orig_bytes.decode('utf-8')),
             'vector': np.frombuffer(vec_bytes, dtype=np.float32),
             'metadata': json.loads(meta_bytes.decode('utf-8'))
@@ -285,8 +293,7 @@ class Collection:
     def _rebuild_index(self):
         for rid, loc in self._location_index.get_all_record_locations().items():
             data = self._storage.read(loc['offset'], loc['size'])
-            header = np.frombuffer(data[:16], dtype=np.int32)
-            orig_size, vec_size = header[1], header[2]
+            _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
             vec_start = 16 + orig_size
             vec = np.frombuffer(data[vec_start:vec_start+vec_size], dtype=np.float32)
             self._index.add(IndexItem(record_id=str(rid), vector=vec))

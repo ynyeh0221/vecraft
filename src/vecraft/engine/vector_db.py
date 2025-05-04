@@ -3,7 +3,8 @@ from typing import Dict, Any, List
 import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.index.record_location import Collection
+from src.vecraft.engine.collection import Collection
+from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
 from src.vecraft.metadata.catalog import JsonCatalog
 
 
@@ -11,11 +12,13 @@ class VectorDB:
     def __init__(self,
                  storage: StorageEngine,
                  catalog: JsonCatalog,
-                 index_factory):
+                 vector_index,
+                 location_index: RecordLocationIndex):
         self._storage = storage
         self._catalog = catalog
-        self._index_factory = index_factory
+        self._vector_index = vector_index
         self._collections: Dict[str, Collection] = {}
+        self._location_index = location_index
 
     def _get_collection(self, collection: str) -> Collection:
         """Get or create a Collection object."""
@@ -26,7 +29,8 @@ class VectorDB:
                 name=collection,
                 schema=schema,
                 storage=self._storage,
-                index_factory=self._index_factory
+                index_factory=self._vector_index,
+                location_index=self._location_index
             )
 
         return self._collections[collection]

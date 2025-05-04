@@ -1,13 +1,16 @@
+from typing import Any
 
-from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.query.plan_nodes import VectorScan
+from src.vecraft.query.plan_nodes import PlanNode
+
 
 class Executor:
-    def __init__(self, db: VectorDB):
-        self._db = db
+    """
+    Executor takes a plan (PlanNode) and executes it, managing any needed context.
+    """
+    def __init__(self, vector_db: Any):
+        self.context = {'vector_db': vector_db}
 
-    def execute(self, plan, query_raw):
-        if isinstance(plan, VectorScan):
-            return self._db.search(plan.collection, query_raw, plan.k)
-        raise NotImplementedError()
+    def execute(self, plan: PlanNode) -> Any:
+        # Could add logging, metrics, transaction boundaries, etc.
+        return plan.execute(self.context)
 

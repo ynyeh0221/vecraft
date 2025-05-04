@@ -107,7 +107,7 @@ class TestCollection(unittest.TestCase):
         meta = {"m": "x"}
         rid = self.col.insert(original, vec, meta)
         rec = self.col.get(rid)
-        self.assertEqual(int(rid), rec['id'])
+        self.assertEqual(rid, rec['id'])
         self.assertEqual(original, rec['original_data'])
         np.testing.assert_array_almost_equal(vec, rec['vector'])
         self.assertEqual(meta, rec['metadata'])

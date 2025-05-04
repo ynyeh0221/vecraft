@@ -50,8 +50,20 @@ class JsonRecordLocationIndex(RecordLocationIndex):
         return self._config['records'].get(str(record_id))
 
     def get_all_record_locations(self) -> Dict[str, Dict[str, int]]:
-        # return a shallow copy to avoid external mutation
-        return dict(self._config['records'])
+        """
+        Return only those record‐locations which have not been marked deleted.
+        We treat any (offset,size) in the tombstone list as “dead.”
+        """
+        # build set of tombstone chunks
+        deleted_chunks = {
+            (t['offset'], t['size'])
+            for t in self._config.get('deleted_records', [])
+        }
+        live = {}
+        for rid, loc in self._config.get('records', {}).items():
+            if (loc['offset'], loc['size']) not in deleted_chunks:
+                live[rid] = loc
+        return live
 
     def get_deleted_locations(self) -> List[Dict[str, int]]:
         # return a shallow copy of the tombstone list
@@ -66,6 +78,7 @@ class JsonRecordLocationIndex(RecordLocationIndex):
         self._config['deleted_records'] = [
             t for t in self._config['deleted_records']
             if not (t['offset'] == offset and t['size'] == size)
+
         ]
         self._save()
 
