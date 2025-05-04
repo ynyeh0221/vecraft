@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from src.vecraft.core.data import DataPacket
 from src.vecraft.wal.wal_manager import WALManager
 
 
@@ -26,8 +27,20 @@ class TestWALManager(unittest.TestCase):
     def test_append(self):
         """Test appending entries to the WAL file."""
         test_entries = [
-            {"action": "create", "key": "user:123", "value": {"name": "John"}},
-            {"action": "update", "key": "user:123", "value": {"name": "John Doe"}}
+            DataPacket(
+                type="insert",
+                record_id="user:123",
+                original_data={"name": "John"},
+                vector=None,
+                metadata={}
+            ),
+            DataPacket(
+                type="insert",
+                record_id="user:123",
+                original_data={"name": "John Doe"},
+                vector=None,
+                metadata={}
+            )
         ]
 
         # Append entries
@@ -45,13 +58,25 @@ class TestWALManager(unittest.TestCase):
 
         for i, line in enumerate(lines):
             loaded_entry = json.loads(line)
-            self.assertEqual(loaded_entry, test_entries[i])
+            self.assertEqual(loaded_entry, test_entries[i].to_dict())
 
     def test_replay(self):
         """Test replaying entries from the WAL file."""
         test_entries = [
-            {"action": "create", "key": "user:123", "value": {"name": "John"}},
-            {"action": "update", "key": "user:123", "value": {"name": "John Doe"}}
+            DataPacket(
+                type="insert",
+                record_id="user:123",
+                original_data={"name": "John"},
+                vector=None,
+                metadata={}
+            ),
+            DataPacket(
+                type="insert",
+                record_id="user:123",
+                original_data={"name": "John Doe"},
+                vector=None,
+                metadata={}
+            )
         ]
 
         # Append entries
@@ -68,7 +93,7 @@ class TestWALManager(unittest.TestCase):
         self.assertEqual(mock_handler.call_count, len(test_entries))
         for i, entry in enumerate(test_entries):
             call_args = mock_handler.call_args_list[i][0][0]
-            self.assertEqual(call_args, entry)
+            self.assertEqual(call_args, entry.to_dict())
 
         # Verify WAL file was deleted after replay
         self.assertFalse(self.wal_path.exists())
@@ -76,7 +101,14 @@ class TestWALManager(unittest.TestCase):
     def test_clear(self):
         """Test clearing the WAL file."""
         # Append an entry to create the file
-        self.wal_manager.append({"action": "test"})
+        test_packet = DataPacket(
+            type="insert",
+            record_id="test",
+            original_data={},
+            vector=None,
+            metadata={}
+        )
+        self.wal_manager.append(test_packet)
         self.assertTrue(self.wal_path.exists())
 
         # Clear the WAL
@@ -116,7 +148,14 @@ class TestWALManager(unittest.TestCase):
         mock_file.fileno.return_value = 42
         mock_open.return_value.__enter__.return_value = mock_file
 
-        self.wal_manager.append({"action": "test"})
+        test_packet = DataPacket(
+            type="insert",
+            record_id="test",
+            original_data={},
+            vector=None,
+            metadata={}
+        )
+        self.wal_manager.append(test_packet)
 
         # Verify flush and fsync were called
         mock_file.flush.assert_called_once()

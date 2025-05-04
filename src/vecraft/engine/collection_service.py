@@ -367,7 +367,7 @@ class CollectionService:
                             allowed_ids: Optional[Set[str]] = None) -> Set[str]:
         evaluator = DocumentFilterEvaluator()
         matching = set()
-        candidates = allowed_ids if allowed_ids else set(self._collections[name]['index'].get_all_ids())
+        candidates = allowed_ids if allowed_ids else set(self._collections[name]['vec_index'].get_all_ids())
         for rid in candidates:
             rec = self.get(name, rid)
             content = rec.get('original_data')

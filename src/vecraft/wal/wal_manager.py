@@ -4,9 +4,10 @@ from pathlib import Path
 from typing import Callable
 
 from src.vecraft.core.data import DataPacket
+from src.vecraft.wal.wal_interface import WALInterface
 
 
-class WALManager:
+class WALManager(WALInterface):
     def __init__(self, wal_path: Path):
         self._file = wal_path
 

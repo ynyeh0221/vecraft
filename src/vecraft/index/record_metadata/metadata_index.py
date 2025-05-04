@@ -1,19 +1,12 @@
 import pickle
-from dataclasses import dataclass
 from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
+from src.vecraft.index.record_metadata.metadata_index_interface import MetadataIndexInterface, MetadataItem
 
-@dataclass
-class MetadataItem:
-    """
-    A wrapper for record ID and its associated metadata.
-    """
-    record_id: str
-    metadata: Dict[str, Any]
 
-class MetadataIndex:
+class MetadataIndex(MetadataIndexInterface):
     """
     A metadata record_vector supporting equality and range queries.
 
