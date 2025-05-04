@@ -75,13 +75,10 @@ class Collection:
             self._apply_delete(entry["record_id"])
 
     def _apply_insert(self, entry: dict) -> None:
-        print(f"self: {self}")
         rid = entry["record_id"]
         orig = entry["original_data"]
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
-
-        print(f"\nrid start: {rid}")
 
         # 1) Serialize components
         orig_b = json.dumps(orig).encode('utf-8')
