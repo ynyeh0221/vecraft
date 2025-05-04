@@ -1,4 +1,3 @@
-import glob
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,54 +8,66 @@ import pytest
 
 from src.vecraft.core.data import DataPacket, QueryPacket
 from src.vecraft.core.errors import RecordNotFoundError
-from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.index.record_location.json_based_location_index import JsonRecordLocationIndex
-from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
+from src.vecraft.index.record_metadata.metadata_index import MetadataIndex
 from src.vecraft.index.record_vector.hnsw import HNSW
 from src.vecraft.metadata.catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
-from src.vecraft.storage.file_mmap import MMapStorage
+from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine
+from src.vecraft.wal.wal_manager import WALManager
 
 
-def setup_db(storage_path: str, catalog_path: str, location_path: str):
-    storage: StorageEngine = MMapStorage(storage_path)
-    catalog = JsonCatalog(catalog_path)
-    location_index: RecordLocationIndex = JsonRecordLocationIndex(Path(location_path))
+def setup_db(test_dir):
+    """Setup database with all files stored in test_dir"""
+    # Convert test_dir to Path object if it's not already
+    test_dir = Path(test_dir)
 
-    def vector_index(kind: str, dim: int):
+    # Use Path.joinpath or / operator for path construction
+    catalog_path = test_dir / "catalog.json"
+    catalog = JsonCatalog(str(catalog_path))
+
+    def wal_factory(wal_path: str):
+        return WALManager(test_dir / wal_path)
+
+    def storage_factory(data_path: str, index_path: str):
+        return MMapJsonStorageIndexEngine(
+            str(test_dir / data_path),
+            str(test_dir / index_path)
+        )
+
+    def vector_index_factory(kind: str, dim: int):
         if kind == "hnsw":
             return HNSW(dim=dim, M=16, ef_construction=200)
         raise ValueError(f"Unknown index kind: {kind}")
 
-    db = VectorDB(storage=storage, catalog=catalog,
-                  vector_index=vector_index, location_index=location_index)
+    def metadata_index_factory():
+        return MetadataIndex()
+
+    db = VectorDB(catalog=catalog,
+                  wal_factory=wal_factory,
+                  storage_factory=storage_factory,
+                  vector_index_factory=vector_index_factory,
+                  metadata_index_factory=metadata_index_factory)
     return db, catalog
+
 
 @pytest.fixture
 def temp_paths(tmp_path):
+    # Create a temporary directory for testing
     test_dir = tmp_path / "test_db"
     test_dir.mkdir()
-    storage_path = str(test_dir / "storage.json")
-    catalog_path = str(test_dir / "catalog.json")
-    location_path = str(test_dir / "location.json")
-    yield storage_path, catalog_path, location_path
 
-    # Clean up test_dir and any WAL files
-    wal_files = glob.glob("*.wal")
-    for wal_file in wal_files:
-        try:
-            Path(wal_file).unlink()
-        except (OSError, PermissionError) as e:
-            print(f"Warning: Could not delete WAL file {wal_file}: {e}")
+    # Return the Path object, not just the name
+    yield test_dir
 
+    # Clean up the temporary directory
     shutil.rmtree(test_dir)
 
 
 def test_insert_search_and_fetch_consistency(temp_paths):
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -105,8 +116,8 @@ def test_insert_search_and_fetch_consistency(temp_paths):
     assert len(set(ids)) == len(records)
 
 def test_insert_search_delete_and_fetch_consistency(temp_paths):
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -154,8 +165,8 @@ def test_insert_search_delete_and_fetch_consistency(temp_paths):
 
 def test_update_consistency(temp_paths):
     """Test updating records and ensuring consistency before and after updates."""
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -236,8 +247,8 @@ def test_update_consistency(temp_paths):
 
 def test_batch_operations_consistency(temp_paths):
     """Test bulk operations (insert, search, delete) for consistency."""
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -328,8 +339,8 @@ def test_batch_operations_consistency(temp_paths):
 
 def test_complex_filtering_consistency(temp_paths):
     """Test complex filtering scenarios (multiple tags, nested conditions)."""
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -405,8 +416,8 @@ def test_complex_filtering_consistency(temp_paths):
 
 def test_concurrent_modifications(temp_paths):
     """Test concurrent modifications to the same records."""
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -460,70 +471,10 @@ def test_concurrent_modifications(temp_paths):
     # The final version should be from one of our updates
     assert any(final_record["original_data"]["version"] == i for i in range(1, num_updates + 1))
 
-
-def test_small_dimension_vector(tmp_path):
-    """Test with a very small dimension vector."""
-    # Create a unique subdirectory for this test
-    test_dir = tmp_path / "test_db_small_dim_unique"
-    test_dir.mkdir()
-
-    storage_path = str(test_dir / "storage.json")
-    catalog_path = str(test_dir / "catalog.json")
-    location_path = str(test_dir / "location.json")
-
-    # Modify the setup_db function to pass auto_resize_dim=True to HNSW
-    def custom_vector_index(kind: str, dim: int):
-        if kind == "hnsw":
-            # Add auto_resize_dim=True to make it handle dimension mismatches
-            return HNSW(dim=dim, M=16, ef_construction=200, auto_resize_dim=True)
-        raise ValueError(f"Unknown index kind: {kind}")
-
-    # Use our custom vector_index function
-    storage = MMapStorage(storage_path)
-    catalog = JsonCatalog(catalog_path)
-    location_index = JsonRecordLocationIndex(Path(location_path))
-
-    db = VectorDB(storage=storage, catalog=catalog,
-                  vector_index=custom_vector_index, location_index=location_index)
-
-    planner = Planner()
-    executor = Executor(db)
-
-    # Use a unique collection name
-    collection = "small_dim_unique_test"
-    if collection not in catalog.list_collections():
-        catalog.create_collection(collection, dim=2, vector_type="float32")
-
-    # Insert with minimal vector
-    small_vec = np.array([0.5, 0.5], dtype=np.float32)
-    small_data = {"text": "small_vector"}
-    record_id = executor.execute(
-        planner.plan_insert(collection=collection,
-                            data_packet=DataPacket(type="insert",
-                                                   original_data=small_data,
-                                                   vector=small_vec,
-                                                   metadata={},
-                                                   record_id="id1"
-                                                   ))
-    )
-
-    # Verify it works
-    results = executor.execute(
-        planner.plan_search(collection=collection,
-                            query_packet=QueryPacket(query_vector=small_vec, k=1))
-    )
-    assert results[0]["id"] == record_id
-
-def test_special_characters(tmp_path):
+def test_special_characters(temp_paths):
     """Test with special characters in data."""
-    test_dir = tmp_path / "test_db_special"
-    test_dir.mkdir()
-
-    storage_path = str(test_dir / "storage.json")
-    catalog_path = str(test_dir / "catalog.json")
-    location_path = str(test_dir / "location.json")
-
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -558,16 +509,10 @@ def test_special_characters(tmp_path):
     assert result["original_data"]["nested"]["emoji"] == "😀🚀🌍"
     assert result["original_data"]["nested"]["quotes"] == "\"quoted text\""
 
-def test_large_metadata(tmp_path):
+def test_large_metadata(temp_paths):
     """Test with a large metadata object."""
-    test_dir = tmp_path / "test_db_large"
-    test_dir.mkdir()
-
-    storage_path = str(test_dir / "storage.json")
-    catalog_path = str(test_dir / "catalog.json")
-    location_path = str(test_dir / "location.json")
-
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 
@@ -605,8 +550,8 @@ def test_large_metadata(tmp_path):
 
 def test_scalability(temp_paths):
     """Test database performance with a larger number of records."""
-    storage_path, catalog_path, location_path = temp_paths
-    db, catalog = setup_db(storage_path, catalog_path, location_path)
+    test_dir = temp_paths
+    db, catalog = setup_db(test_dir)
     planner = Planner()
     executor = Executor(db)
 

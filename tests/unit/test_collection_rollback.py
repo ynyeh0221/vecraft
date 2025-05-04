@@ -5,8 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.vecraft.engine.collection import Collection
-from src.vecraft.index.record_location.json_based_location_index import JsonRecordLocationIndex
+from src.vecraft.engine.collection_service import CollectionService
+from src.vecraft.storage.index.json_based_location_index import JsonRecordLocationIndex
 from src.vecraft.index.record_vector.hnsw import HNSW
 from tests.unit.test_collection import DummyStorage, DummySchema
 
@@ -32,11 +32,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_storage_failure(self):
         """If storage.write fails, nothing is persisted and no tombstone is left."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -57,11 +57,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_metadata_failure(self):
         """If metadata.add fails, storage+location must roll back into exactly one tombstone."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -89,11 +89,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         class FailingHNSW(HNSW):
             def add(self, item):
                 raise RuntimeError("vector failure")
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: FailingHNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: FailingHNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -111,11 +111,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_location_failure(self):
         """If add_record fails, metadata+vector must roll back into one tombstone."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -134,11 +134,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_delete_metadata_failure(self):
         """If metadata.delete fails, nothing should be removed."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -160,11 +160,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_delete_vector_failure(self):
         """If vector.delete fails, nothing should be removed."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -186,11 +186,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_delete_location_failure(self):
         """If delete_record fails, nothing should be removed."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -212,11 +212,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_overwrite_metadata_failure_restores_original(self):
         """Overwriting metadata fails → original record remains untouched."""
         loc_index = JsonRecordLocationIndex(self.loc_path)
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: HNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: HNSW(dim=kw['dim']),
             location_index=loc_index
         )
 
@@ -257,11 +257,11 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
                     # mark that we've successfully added '0' once
                     self._added_once = True
 
-        col = Collection(
+        col = CollectionService(
             name="rollback_test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=lambda **kw: FailOnceVecHNSW(dim=kw['dim']),
+            storage_index_engine=self.storage,
+            vector_index_factory=lambda **kw: FailOnceVecHNSW(dim=kw['dim']),
             location_index=loc_index
         )
 

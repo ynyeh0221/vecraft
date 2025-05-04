@@ -9,8 +9,8 @@ import numpy as np
 
 from src.vecraft.core.index_interface import IndexItem, Index, Vector
 from src.vecraft.core.storage_interface import StorageEngine
-from src.vecraft.engine.collection import Collection
-from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
+from src.vecraft.engine.collection_service import CollectionService
+from src.vecraft.storage.index.location_index_interface import RecordLocationIndex
 from src.vecraft.metadata.schema import CollectionSchema
 
 
@@ -93,11 +93,11 @@ class TestCollection(unittest.TestCase):
         self.loc_index = DummyLocationIndex()
         self.index_factory = lambda **kwargs: DummyIndex(kwargs.get('kind'), kwargs.get('dim'))
         self.schema = DummySchema(dim=3)
-        self.col = Collection(
+        self.col = CollectionService(
             name="test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=self.index_factory,
+            storage_index_engine=self.storage,
+            vector_index_factory=self.index_factory,
             location_index=self.loc_index
         )
 
@@ -205,11 +205,11 @@ class TestCollection(unittest.TestCase):
         self.col.flush()
         self.assertTrue(os.path.exists('test.idxsnap'))
         self.assertTrue(os.path.exists('test.metasnap'))
-        col2 = Collection(
+        col2 = CollectionService(
             name="test",
             schema=self.schema,
-            storage=self.storage,
-            index_factory=self.index_factory,
+            storage_index_engine=self.storage,
+            vector_index_factory=self.index_factory,
             location_index=self.loc_index
         )
         rec2 = col2.get(rid)
