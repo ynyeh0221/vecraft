@@ -125,7 +125,15 @@ class Collection:
             updated_loc = True
 
             # C) metadata
-            self._metadata_index.add(MetadataItem(record_id=record_id, metadata=meta))
+            if old_meta:
+                # If updating an existing record, use update instead of add
+                self._metadata_index.update(
+                    MetadataItem(record_id=record_id, metadata=old_meta),
+                    MetadataItem(record_id=record_id, metadata=meta)
+                )
+            else:
+                # For new records, just add
+                self._metadata_index.add(MetadataItem(record_id=record_id, metadata=meta))
             updated_meta = True
 
             # D) vector
@@ -150,14 +158,14 @@ class Collection:
                 if old_meta is not None:
                     self._metadata_index.add(MetadataItem(record_id=record_id, metadata=old_meta))
 
-            # 5) Rollback location
+            # 4) Rollback location
             if updated_loc:
                 self._location_index.mark_deleted(record_id)
                 self._location_index.delete_record(record_id)
                 if old_loc is not None:
                     self._location_index.add_record(record_id, old_loc["offset"], old_loc["size"])
 
-            # 6) rethrow
+            # 5) rethrow
             raise
 
     def _apply_delete(self, record_id: str) -> None:
