@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from src.vecraft.core.data import DataPacket, QueryPacket
 from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.vector_db import VectorDB
@@ -74,16 +75,18 @@ def test_insert_search_and_fetch_consistency(temp_paths):
         idx, data, vec = args
         rec_id = executor.execute(
             planner.plan_insert(collection=collection,
-                                original_data=data,
-                                vector=vec,
-                                metadata={"tags": data["tags"]})
+                                data_packet=DataPacket(type="insert",
+                                                       original_data=data,
+                                                       vector=vec,
+                                                       metadata={"tags": data["tags"]},
+                                                       record_id=str(idx)))
         )
         # Filtered search by tag
         results = executor.execute(
             planner.plan_search(collection=collection,
-                                query_vector=rng.random(32).astype(np.float32),
-                                k=20,
-                                where={"tags": data["tags"]})
+                                query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                         k=20,
+                                                         where={"tags": data["tags"]}))
         )
         assert any(res["id"] == rec_id for res in results)
         # Fetch
@@ -92,8 +95,7 @@ def test_insert_search_and_fetch_consistency(temp_paths):
         # Zero-distance check
         top = executor.execute(
             planner.plan_search(collection=collection,
-                                query_vector=vec,
-                                k=1)
+                                query_packet=QueryPacket(query_vector=vec, k=1))
         )[0]
         assert top["id"] == rec_id and np.isclose(top["distance"], 0.0)
         return rec_id
@@ -116,27 +118,29 @@ def test_insert_search_delete_and_fetch_consistency(temp_paths):
     tasks = [(i, rng.random(24).astype(np.float32), {"text": f"temp_{i}", "tags": ["temp"]}) for i in range(10)]
 
     def task(args):
-        _, vec, data = args
+        idx, vec, data = args
         rec_id = executor.execute(
             planner.plan_insert(collection=collection,
-                                original_data=data,
-                                vector=vec,
-                                metadata={"tags": data["tags"]})
+                                data_packet=DataPacket(type="insert",
+                                                       original_data=data,
+                                                       vector=vec,
+                                                       metadata={"tags": data["tags"]},
+                                                       record_id=str(idx)))
         )
         # Pre-delete search
         pre = executor.execute(
             planner.plan_search(collection=collection,
-                                query_vector=vec,
-                                k=1)
+                                query_packet=QueryPacket(query_vector=vec, k=1))
         )
         assert pre and pre[0]["id"] == rec_id
         # Delete
-        executor.execute(planner.plan_delete(collection=collection, record_id=rec_id))
+        executor.execute(planner.plan_delete(collection=collection,
+                                             data_packet=DataPacket(type="delete",
+                                                                    record_id=str(idx))))
         # Post-delete search
         post = executor.execute(
             planner.plan_search(collection=collection,
-                                query_vector=vec,
-                                k=1)
+                                query_packet=QueryPacket(query_vector=vec, k=1))
         )
         assert all(r["id"] != rec_id for r in post)
         # Fetch must fail
@@ -168,17 +172,19 @@ def test_update_consistency(temp_paths):
     # Insert the record
     record_id = executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data=original_data,
-                            vector=original_vector,
-                            metadata={"tags": original_data["tags"]})
+                            data_packet=DataPacket(type="insert",
+                                                   original_data=original_data,
+                                                   vector=original_vector,
+                                                   metadata={"tags": original_data["tags"]},
+                                                   record_id="id1"))
     )
 
     # Verify it's searchable and fetchable
     results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=original_vector,
-                            k=5,
-                            where={"tags": original_data["tags"]})
+                            query_packet=QueryPacket(query_vector=original_vector,
+                                                     k=5,
+                                                     where={"tags": original_data["tags"]}))
     )
     assert any(res["id"] == record_id for res in results)
     rec = executor.execute(planner.plan_get(collection, record_id))
@@ -191,27 +197,28 @@ def test_update_consistency(temp_paths):
     # Re-insert with same ID (update)
     executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data=updated_data,
-                            vector=updated_vector,
-                            metadata={"tags": updated_data["tags"]},
-                            record_id=record_id)
+                            data_packet=DataPacket(type="insert",
+                                                   original_data=updated_data,
+                                                   vector=updated_vector,
+                                                   metadata={"tags": updated_data["tags"]},
+                                                   record_id=record_id))
     )
 
     # Verify old metadata doesn't return the record
     old_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=5,
-                            where={"tags": original_data["tags"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=5,
+                                                     where={"tags": original_data["tags"]}))
     )
     assert all(res["id"] != record_id for res in old_results)
 
     # Verify new metadata returns the record
     new_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=5,
-                            where={"tags": updated_data["tags"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=5,
+                                                     where={"tags": updated_data["tags"]}))
     )
     assert any(res["id"] == record_id for res in new_results)
 
@@ -222,8 +229,7 @@ def test_update_consistency(temp_paths):
     # Verify zero-distance search with updated vector works
     top = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=updated_vector,
-                            k=1)
+                            query_packet=QueryPacket(query_vector=updated_vector, k=1))
     )[0]
     assert top["id"] == record_id and np.isclose(top["distance"], 0.0)
 
@@ -256,9 +262,11 @@ def test_batch_operations_consistency(temp_paths):
     for i in range(batch_size):
         rec_id = executor.execute(
             planner.plan_insert(collection=collection,
-                                original_data=records[i],
-                                vector=vectors[i],
-                                metadata={"tags": records[i]["tags"]})
+                                data_packet=DataPacket(type="insert",
+                                                       original_data=records[i],
+                                                       vector=vectors[i],
+                                                       metadata={"tags": records[i]["tags"]},
+                                                       record_id=str(i)))
         )
         record_ids.append(rec_id)
 
@@ -270,24 +278,26 @@ def test_batch_operations_consistency(temp_paths):
     # Verify filtering by tag works
     even_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=batch_size,
-                            where={"tags": ["even"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=batch_size,
+                                                     where={"tags": ["even"]}))
     )
     assert len(even_results) > 0
 
     odd_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=batch_size,
-                            where={"tags": ["odd"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=batch_size,
+                                                     where={"tags": ["odd"]}))
     )
     assert len(odd_results) > 0
 
     # Batch delete even records
     for i, rec_id in enumerate(record_ids):
         if i % 2 == 0:  # Delete even records
-            executor.execute(planner.plan_delete(collection=collection, record_id=rec_id))
+            executor.execute(planner.plan_delete(collection=collection,
+                                                 data_packet=DataPacket(type="delete",
+                                                                        record_id=str(rec_id))))
 
     # Verify even records are gone
     for i, rec_id in enumerate(record_ids):
@@ -301,18 +311,18 @@ def test_batch_operations_consistency(temp_paths):
     # Verify searching by "even" tag returns no results
     empty_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=batch_size,
-                            where={"tags": ["even"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=batch_size,
+                                                     where={"tags": ["even"]}))
     )
     assert len(empty_results) == 0
 
     # Odd records should still be searchable
     odd_results_after = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=batch_size,
-                            where={"tags": ["odd"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=batch_size,
+                                                     where={"tags": ["odd"]}))
     )
     assert len(odd_results_after) > 0
 
@@ -339,53 +349,56 @@ def test_complex_filtering_consistency(temp_paths):
     ]
 
     record_ids = []
-    for data in records:
+    for idx, data in enumerate(records):
         vec = rng.random(32).astype(np.float32)
         rec_id = executor.execute(
             planner.plan_insert(collection=collection,
-                                original_data=data,
-                                vector=vec,
-                                metadata={
-                                    "tags": data["tags"],
-                                    "category": data["category"],
-                                    "count": data["count"]
-                                })
+                                data_packet=DataPacket(type="insert",
+                                                       original_data=data,
+                                                       vector=vec,
+                                                       metadata={
+                                                           "tags": data["tags"],
+                                                           "category": data["category"],
+                                                           "count": data["count"]
+                                                       },
+                                                       record_id=str(idx)
+                                                       ))
         )
         record_ids.append(rec_id)
 
     # Test filtering by single tag
     red_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=10,
-                            where={"tags": ["red"]})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=10,
+                                                     where={"tags": ["red"]}))
     )
     assert len(red_results) == 3  # 3 red items
 
     # Test filtering by category
     produce_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=10,
-                            where={"category": "produce"})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=10,
+                                                     where={"category": "produce"}))
     )
     assert len(produce_results) == 3  # 3 produce items
 
     # Test filtering with numeric comparison
     high_count_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=10,
-                            where={"count": {"$gt": 4}})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=10,
+                                                     where={"count": {"$gt": 4}}))
     )
     assert len(high_count_results) == 2  # 2 items with count > 4
 
     # Test combined filtering
     red_produce_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=rng.random(32).astype(np.float32),
-                            k=10,
-                            where={"tags": ["red"], "category": "produce"})
+                            query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
+                                                     k=10,
+                                                     where={"tags": ["red"], "category": "produce"}))
     )
     assert len(red_produce_results) == 2  # 2 red produce items
 
@@ -408,9 +421,12 @@ def test_concurrent_modifications(temp_paths):
     initial_vector = rng.random(32).astype(np.float32)
     record_id = executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data=initial_data,
-                            vector=initial_vector,
-                            metadata={"version": initial_data["version"]})
+                            data_packet=DataPacket(type="insert",
+                                                   original_data=initial_data,
+                                                   vector=initial_vector,
+                                                   metadata={"version": initial_data["version"]},
+                                                   record_id="id1"
+                                                   ))
     )
 
     # Define task for concurrent updates
@@ -420,10 +436,12 @@ def test_concurrent_modifications(temp_paths):
         try:
             executor.execute(
                 planner.plan_insert(collection=collection,
-                                    original_data=data,
-                                    vector=vec,
-                                    metadata={"version": data["version"]},
-                                    record_id=record_id)
+                                    data_packet=DataPacket(type="insert",
+                                                           original_data=data,
+                                                           vector=vec,
+                                                           metadata={"version": data["version"]},
+                                                           record_id=record_id
+                                                           ))
             )
             return i
         except Exception as e:
@@ -481,16 +499,18 @@ def test_small_dimension_vector(tmp_path):
     small_data = {"text": "small_vector"}
     record_id = executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data=small_data,
-                            vector=small_vec,
-                            metadata={})
+                            data_packet=DataPacket(type="insert",
+                                                   original_data=small_data,
+                                                   vector=small_vec,
+                                                   metadata={},
+                                                   record_id="id1"
+                                                   ))
     )
 
     # Verify it works
     results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=small_vec,
-                            k=1)
+                            query_packet=QueryPacket(query_vector=small_vec, k=1))
     )
     assert results[0]["id"] == record_id
 
@@ -525,9 +545,12 @@ def test_special_characters(tmp_path):
     special_vec = rng.random(8).astype(np.float32)
     record_id = executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data=special_data,
-                            vector=special_vec,
-                            metadata={"has_emoji": True})
+                            data_packet=DataPacket(type="insert",
+                                                   original_data=special_data,
+                                                   vector=special_vec,
+                                                   metadata={"has_emoji": True},
+                                                   record_id="id1"
+                                                   ))
     )
 
     # Verify complex data is preserved
@@ -562,17 +585,20 @@ def test_large_metadata(tmp_path):
     large_vec = rng.random(4).astype(np.float32)
     record_id = executor.execute(
         planner.plan_insert(collection=collection,
-                            original_data={"text": "large_meta"},
-                            vector=large_vec,
-                            metadata=large_meta)
+                            data_packet=DataPacket(type="insert",
+                                                   original_data={"text": "large_meta"},
+                                                   vector=large_vec,
+                                                   metadata=large_meta,
+                                                   record_id="id1"
+                                                   ))
     )
 
     # Verify we can search by one of the metadata values
     results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=large_vec,
-                            k=1,
-                            where={"key_50": "value_50"})
+                            query_packet=QueryPacket(query_vector=large_vec,
+                                                     k=1,
+                                                     where={"key_50": "value_50"}))
     )
     assert len(results) == 1
     assert results[0]["id"] == record_id
@@ -611,12 +637,15 @@ def test_scalability(temp_paths):
 
         rec_id = executor.execute(
             planner.plan_insert(collection=collection,
-                                original_data=data,
-                                vector=vec,
-                                metadata={
-                                    "category": category,
-                                    "price_range": "high" if data["price"] > 500 else "low"
-                                })
+                                data_packet=DataPacket(type="insert",
+                                                       original_data=data,
+                                                       vector=vec,
+                                                       metadata={
+                                                           "category": category,
+                                                           "price_range": "high" if data["price"] > 500 else "low"
+                                                       },
+                                                       record_id=str(i)
+                                                       ))
         )
         record_ids.append(rec_id)
 
@@ -630,24 +659,23 @@ def test_scalability(temp_paths):
     search_vector = rng.random(32).astype(np.float32)
     results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=search_vector,
-                            k=10)
+                            query_packet=QueryPacket(query_vector=search_vector, k=10))
     )
 
     # Filtered search
     filtered_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=search_vector,
-                            k=10,
-                            where={"category": "electronics"})
+                            query_packet=QueryPacket(query_vector=search_vector,
+                                                     k=10,
+                                                     where={"category": "electronics"}))
     )
 
     # Complex filtered search
     complex_results = executor.execute(
         planner.plan_search(collection=collection,
-                            query_vector=search_vector,
-                            k=10,
-                            where={"category": "electronics", "price_range": "high"})
+                            query_packet=QueryPacket(query_vector=search_vector,
+                                                     k=10,
+                                                     where={"category": "electronics", "price_range": "high"}))
     )
 
     search_time = time.time() - start_time

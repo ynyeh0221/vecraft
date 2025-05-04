@@ -1,15 +1,19 @@
-import json, os
+import json
+import os
 from pathlib import Path
 from typing import Callable
+
+from src.vecraft.core.data import DataPacket
+
 
 class WALManager:
     def __init__(self, wal_path: Path):
         self._file = wal_path
 
-    def append(self, entry: dict) -> None:
+    def append(self, data_packet: DataPacket) -> None:
         """Append a JSON-record, flush & fsync."""
         with open(self._file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry))
+            f.write(json.dumps(data_packet.to_dict()))
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())

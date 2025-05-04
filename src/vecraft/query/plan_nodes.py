@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-import numpy as np
+from src.vecraft.core.data import DataPacket, QueryPacket
+
 
 class PlanNode(ABC):
     @abstractmethod
@@ -13,25 +14,22 @@ class PlanNode(ABC):
         pass
 
 class InsertNode(PlanNode):
-    def __init__(self, collection: str, original_data: Any, vector: np.ndarray, metadata: Dict[str, Any], record_id: Optional[str] = None):
+    def __init__(self, collection: str, data_packet: DataPacket):
         self.collection = collection
-        self.original_data = original_data
-        self.vector = vector
-        self.metadata = metadata
-        self.record_id = record_id
+        self.data_packet = data_packet
 
     def execute(self, context: Dict[str, Any]) -> str:
         db = context['vector_db']
-        return db.insert(self.collection, self.original_data, self.vector, self.metadata, self.record_id)
+        return db.insert(self.collection, self.data_packet)
 
 class DeleteNode(PlanNode):
-    def __init__(self, collection: str, record_id: str):
+    def __init__(self, collection: str, data_packet: DataPacket):
         self.collection = collection
-        self.record_id = record_id
+        self.data_packet = data_packet
 
     def execute(self, context: Dict[str, Any]) -> bool:
         db = context['vector_db']
-        return db.delete(self.collection, self.record_id)
+        return db.delete(self.collection, self.data_packet)
 
 class GetNode(PlanNode):
     def __init__(self, collection: str, record_id: str):
@@ -43,15 +41,10 @@ class GetNode(PlanNode):
         return db.get(self.collection, self.record_id)
 
 class SearchNode(PlanNode):
-    def __init__(self, collection: str, query_vector: np.ndarray, k: int,
-                 where: Optional[Dict[str, Any]] = None,
-                 where_document: Optional[Dict[str, Any]] = None):
+    def __init__(self, collection: str, query_packet: QueryPacket):
         self.collection = collection
-        self.query_vector = query_vector
-        self.k = k
-        self.where = where
-        self.where_document = where_document
+        self.query_packet = query_packet
 
     def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         db = context['vector_db']
-        return db.search(self.collection, self.query_vector, self.k, where=self.where, where_document=self.where_document)
+        return db.search(self.collection, self.query_packet)

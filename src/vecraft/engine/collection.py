@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
+from src.vecraft.core.data import DataPacket, QueryPacket
 from src.vecraft.core.index_interface import IndexItem
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
@@ -68,17 +69,22 @@ class Collection:
         self._meta_snap.write_bytes(self._metadata_index.serialize())
 
     def _replay_entry(self, entry: dict) -> None:
-        typ = entry.get("type")
-        if typ == "insert":
-            self._apply_insert(entry)
-        elif typ == "delete":
-            self._apply_delete(entry["record_id"])
+        data_packet = DataPacket.from_dict(entry)
+        data_packet.validate()
 
-    def _apply_insert(self, entry: dict) -> None:
-        record_id = entry["record_id"]
-        orig = entry["original_data"]
-        vec = np.array(entry["vector"], dtype=np.float32)
-        meta = entry["metadata"]
+        typ = data_packet.type
+        if typ == "insert":
+            self._apply_insert(data_packet)
+        elif typ == "delete":
+            self._apply_delete(data_packet)
+
+        data_packet.validate()
+
+    def _apply_insert(self, data_packet: DataPacket) -> None:
+        record_id = data_packet.record_id
+        orig = data_packet.original_data
+        vec = data_packet.vector
+        meta = data_packet.metadata
 
         print(f"rid insert start: {record_id}")
 
@@ -166,7 +172,8 @@ class Collection:
             # 5) rethrow
             raise
 
-    def _apply_delete(self, record_id: str) -> None:
+    def _apply_delete(self, data_packet: DataPacket) -> None:
+        record_id = data_packet.record_id
         print(f"rid delete start: {record_id}")
 
         old_loc = self._location_index.get_record_location(record_id)
@@ -207,63 +214,57 @@ class Collection:
     @write_locked_attr('_rwlock')
     def insert(
         self,
-        original_data: Any,
-        vector: np.ndarray,
-        metadata: Dict[str, Any],
-        record_id: str = None
+        data_packet: DataPacket
     ) -> str:
-        if len(vector) != self.schema.field.dim:
-            raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(vector)}")
-        if record_id is None:
-            record_id = self._location_index.get_next_id()
-        entry = {
-            "type": "insert",
-            "record_id": record_id,
-            "original_data": original_data,
-            "vector": vector.tolist(),
-            "metadata": metadata
-        }
-        self._wal.append(entry)
-        self._apply_insert(entry)
-        return record_id
+        data_packet.validate()
+
+        if len(data_packet.vector) != self.schema.field.dim:
+            raise ValueError(f"Vector dimension mismatch: expected {self.schema.field.dim}, got {len(data_packet.vector)}")
+        self._wal.append(data_packet)
+        self._apply_insert(data_packet)
+
+        data_packet.validate()
+
+        return data_packet.record_id
 
     @write_locked_attr('_rwlock')
-    def delete(self, record_id: str) -> bool:
-        entry = {"type": "delete", "record_id": record_id}
-        self._wal.append(entry)
-        self._apply_delete(record_id)
+    def delete(self, data_packet: DataPacket) -> bool:
+        data_packet.validate()
+
+        self._wal.append(data_packet)
+        self._apply_delete(data_packet)
+
+        data_packet.validate()
+
         return True
 
     @read_locked_attr('_rwlock')
     def search(
         self,
-        query_vector: np.ndarray,
-        k: int,
-        where: Dict[str, Any] = None,
-        where_document: Dict[str, Any] = None
+        query_packet: QueryPacket
     ) -> List[Dict[str, Any]]:
-        if len(query_vector) != self.schema.field.dim:
+        if len(query_packet.query_vector) != self.schema.field.dim:
             raise ValueError(
-                f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_vector)}"
+                f"Query dimension mismatch: expected {self.schema.field.dim}, got {len(query_packet.query_vector)}"
             )
         allowed_ids: Optional[Set[str]] = None
 
         # 1) MetadataIndex
-        if where:
-            metadata_ids = self._metadata_index.get_matching_ids(where)
+        if query_packet.where:
+            metadata_ids = self._metadata_index.get_matching_ids(query_packet.where)
             if metadata_ids is not None:
                 allowed_ids = metadata_ids
                 if not allowed_ids:
                     return []
 
-        if where_document:
-            doc_ids = self._filter_by_document(where_document, allowed_ids)
+        if query_packet.where_document:
+            doc_ids = self._filter_by_document(query_packet.where_document, allowed_ids)
             allowed_ids = allowed_ids & doc_ids if allowed_ids is not None else doc_ids
             if not allowed_ids:
                 return []
 
         # 2) VectorIndex
-        raw_results = self._index.search(query_vector, k, allowed_ids=allowed_ids)
+        raw_results = self._index.search(query_packet.query_vector, query_packet.k, allowed_ids=allowed_ids)
 
         # 3) LocationIndex + Storage inside get()
         results: List[Dict[str, Any]] = []
@@ -273,6 +274,9 @@ class Collection:
                 continue
             rec['distance'] = dist
             results.append(rec)
+
+        query_packet.validate()
+
         return results
 
     @read_locked_attr('_rwlock')
@@ -288,9 +292,9 @@ class Collection:
             data[:header_size]
         )
         pos = header_size
-        orig_bytes = data[pos:pos+original_data_size];
+        orig_bytes = data[pos:pos+original_data_size]
         pos += original_data_size
-        vec_bytes = data[pos:pos+vector_size];
+        vec_bytes = data[pos:pos+vector_size]
         pos += vector_size
         meta_bytes = data[pos:pos+metadata_size]
         return {

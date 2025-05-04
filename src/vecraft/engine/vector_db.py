@@ -1,7 +1,6 @@
 from typing import Dict, Any, List
 
-import numpy as np
-
+from src.vecraft.core.data import DataPacket, QueryPacket
 from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.collection import Collection
@@ -39,42 +38,32 @@ class VectorDB:
 
         return self._collections[collection]
 
-    def insert(self, collection: str, original_data: Any, vector: np.ndarray, metadata: dict,
-               record_id: int = None) -> str:
+    def insert(self, collection: str, data_packet: DataPacket) -> str:
         """
         Insert or update a record in the record_location.
 
         Args:
             collection: Name of the record_location
-            original_data: The original data to store
-            vector: The pre-encoded vector
-            metadata: User-provided metadata
-            record_id: Optional record ID
+            data_packet: Data fields and checksum
 
         Returns:
             The record ID
         """
         col = self._get_collection(collection)
-        return col.insert(original_data, vector, metadata, record_id)
+        return col.insert(data_packet)
 
-    def search(self, collection: str, query_vector: np.ndarray, k: int,
-               where: Dict[str, Any] = None,
-               where_document: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
         """
         Search for similar vectors with filtering.
 
         Args:
             collection: Name of the record_location
-            query_vector: The pre-encoded query vector
-            k: Number of results to return
-            where: Optional dictionary specifying metadata filter conditions
-            where_document: Optional dictionary specifying document content filter conditions
-
+            query_packat: Query field and checksum
         Returns:
             List of matching records with similarity scores
         """
         col = self._get_collection(collection)
-        return col.search(query_vector, k, where, where_document)
+        return col.search(query_packet)
 
     def get(self, collection: str, record_id: str) -> dict:
         """Retrieve a record by ID."""
@@ -84,10 +73,10 @@ class VectorDB:
             raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
         return result
 
-    def delete(self, collection: str, record_id: str) -> bool:
+    def delete(self, collection: str, data_packet: DataPacket) -> bool:
         """Delete a record by ID."""
         col = self._get_collection(collection)
-        return col.delete(record_id)
+        return col.delete(data_packet)
 
     def flush(self):
         """Flush all collections' data and indices to disk."""
