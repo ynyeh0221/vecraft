@@ -4,6 +4,7 @@ import numpy as np
 
 from src.vecraft.core.storage_interface import StorageEngine
 from src.vecraft.engine.collection import Collection
+from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr
 from src.vecraft.index.record_location.location_index_interface import RecordLocationIndex
 from src.vecraft.metadata.catalog import JsonCatalog
 
@@ -14,12 +15,14 @@ class VectorDB:
                  catalog: JsonCatalog,
                  vector_index,
                  location_index: RecordLocationIndex):
+        self._rwlock = ReentrantRWLock()
         self._storage = storage
         self._catalog = catalog
         self._vector_index = vector_index
         self._collections: Dict[str, Collection] = {}
         self._location_index = location_index
 
+    @write_locked_attr('_rwlock')
     def _get_collection(self, collection: str) -> Collection:
         """Get or create a Collection object."""
         if collection not in self._collections:

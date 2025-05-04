@@ -140,10 +140,13 @@ def write_locked_attr(attr_name):
         @wraps(fn)
         def wrapper(self, *args, **kwargs):
             lock = getattr(self, attr_name)
+            print(f"\n try get lock {lock}")
             lock.acquire_write()
+            print("\n has lock")
             try:
                 return fn(self, *args, **kwargs)
             finally:
+                print("\n release lock")
                 lock.release_write()
 
         return wrapper

@@ -42,9 +42,9 @@ class Collection:
         self._meta_snap = Path(f"{name}.metasnap")
 
         # Load snapshots if existed, else full rebuild
-        #if not self._load_snapshots():
-            #self._rebuild_index()
-            #self._rebuild_metadata_index()
+        if not self._load_snapshots():
+            self._rebuild_index()
+            self._rebuild_metadata_index()
 
         # Apply WAL entries since snapshot
         self._rwlock.acquire_write()
@@ -75,10 +75,13 @@ class Collection:
             self._apply_delete(entry["record_id"])
 
     def _apply_insert(self, entry: dict) -> None:
+        print(f"self: {self}")
         rid = entry["record_id"]
         orig = entry["original_data"]
         vec = np.array(entry["vector"], dtype=np.float32)
         meta = entry["metadata"]
+
+        print(f"\nrid start: {rid}")
 
         # 1) Serialize components
         orig_b = json.dumps(orig).encode('utf-8')
@@ -127,6 +130,8 @@ class Collection:
             # D) vector
             self._index.add(IndexItem(record_id=rid, vector=vec))
             updated_vec = True
+
+            print(f"rid end: {rid}")
 
         except Exception:
 
