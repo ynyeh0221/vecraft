@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Callable
 
-from src.vecraft.core.data import DataPacket, QueryPacket, validate_checksum
+from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, validate_checksum
 from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.engine.collection_service import CollectionService
 from src.vecraft.metadata.catalog import JsonCatalog

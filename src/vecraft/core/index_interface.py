@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any, Set
 
-from src.vecraft.core.data import IndexItem, Vector
+from src.vecraft.core.checksummed_data import IndexItem, Vector
 
 
 class Index(ABC):

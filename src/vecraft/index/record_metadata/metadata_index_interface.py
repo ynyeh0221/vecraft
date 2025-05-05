@@ -1,6 +1,6 @@
 from typing import runtime_checkable, Any, Dict, Optional, Set, Protocol
 
-from src.vecraft.core.data import MetadataItem
+from src.vecraft.core.checksummed_data import MetadataItem
 
 
 @runtime_checkable

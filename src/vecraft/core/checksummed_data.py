@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional, Callable, Union, List
 
 import numpy as np
 
+from src.vecraft.core.errors import ChecksumValidationFailureError
+
 # Type for checksum function: takes bytes -> hex string
 ChecksumFunc = Callable[[bytes], str]
 
@@ -106,11 +108,14 @@ class DataPacket:
 
     def validate_checksum(self) -> bool:
         """
-        Recompute checksum and compare. Returns False if data was corrupted.
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
         """
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
-        return func(raw) == self.checksum
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("DataPacket checksum validation failed",
+                                                 record_id=self.record_id)
+        return True
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -152,9 +157,14 @@ class QueryPacket:
         return _concat_bytes(parts)
 
     def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
+        """
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
-        return func(raw) == self.checksum
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("QueryPacket checksum validation failed")
+        return True
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -226,11 +236,14 @@ class IndexItem:
 
     def validate_checksum(self) -> bool:
         """
-        Recompute checksum and compare. Returns False if data was corrupted.
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
         """
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
-        return func(raw) == self.checksum
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("IndexItem checksum validation failed",
+                                                 record_id=self.record_id)
+        return True
 
 
 @dataclass
@@ -265,17 +278,21 @@ class MetadataItem:
 
     def validate_checksum(self) -> bool:
         """
-        Recompute checksum and compare. Returns False if data was corrupted.
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
         """
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
-        return func(raw) == self.checksum
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("MetadataItem checksum validation failed",
+                                                 record_id=self.record_id)
+        return True
 
 
 def validate_checksum(func):
     """
     A decorator that validates parameters of specific types:
     IndexItem, DataPacket, QueryPacket, or MetadataItem.
+    Raises ChecksumValidationFailureError if any validation fails.
     """
 
     def wrapper(self, *args, **kwargs):
@@ -297,14 +314,28 @@ def validate_checksum(func):
 
         # Pre-validation
         for item in items_to_validate:
-            item.validate_checksum()
+            try:
+                item.validate_checksum()
+            except ChecksumValidationFailureError as e:
+                # Add collection information if available from self
+                if hasattr(self, 'collection_name'):
+                    raise ChecksumValidationFailureError(
+                        e.message, record_id=e.record_id, collection=self.collection_name)
+                raise
 
         # Execute the original function
         result = func(self, *args, **kwargs)
 
         # Post-validation
         for item in items_to_validate:
-            item.validate_checksum()
+            try:
+                item.validate_checksum()
+            except ChecksumValidationFailureError as e:
+                # Add collection information if available from self
+                if hasattr(self, 'collection_name'):
+                    raise ChecksumValidationFailureError(
+                        e.message, record_id=e.record_id, collection=self.collection_name)
+                raise
 
         return result
 

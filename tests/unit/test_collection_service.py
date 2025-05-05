@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.core.data import DataPacket, QueryPacket
+from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.core.index_interface import IndexItem, Vector
 from src.vecraft.engine.collection_service import CollectionService
 from src.vecraft.index.record_metadata.metadata_index import MetadataItem

@@ -3,7 +3,7 @@ from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
-from src.vecraft.core.data import MetadataItem, validate_checksum
+from src.vecraft.core.checksummed_data import MetadataItem, validate_checksum
 from src.vecraft.index.record_metadata.metadata_index_interface import MetadataIndexInterface
 
 

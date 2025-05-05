@@ -3,7 +3,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
-from src.vecraft.core.data import IndexItem, validate_checksum
+from src.vecraft.core.checksummed_data import IndexItem, validate_checksum
 from src.vecraft.index.record_vector.id_mapper import IdMapper  # Import the new IdMapper class
 
 

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from src.vecraft.core.data import DataPacket
+from src.vecraft.core.checksummed_data import DataPacket
 from src.vecraft.wal.wal_interface import WALInterface
 
 

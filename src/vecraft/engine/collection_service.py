@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.core.data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
+from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
 from src.vecraft.index.record_vector.document_filter_evaluator import DocumentFilterEvaluator
 from src.vecraft.metadata.catalog import JsonCatalog
