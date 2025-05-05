@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 from typing import List, Tuple, Union, Optional, Any, Set
 
@@ -14,6 +15,8 @@ class DistanceMetric(str, Enum):
     INNER_PRODUCT = "ip"  # Inner product (dot product)
     COSINE = "cosine"  # Cosine similarity
 
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 class HNSW:
     """
@@ -354,7 +357,7 @@ class HNSW:
         # Get internal ID using IdMapper
         internal_id = self._id_mapper.get_internal_id(record_id)
         if internal_id is None:
-            print(f"record_id {record_id} not found")
+            logger.info(f"record_id {record_id} not found")
             return  # Record not found
 
         # Mark as deleted in the record_vector
