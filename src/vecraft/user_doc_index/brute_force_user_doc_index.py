@@ -5,7 +5,7 @@ from typing import Optional, Set, Dict, Any
 
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.data.checksummed_data import DocItem, validate_checksum
-from src.vecraft.user_doc.document_filter_evaluator import DocumentFilterEvaluator
+from src.vecraft.user_doc_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
 class BruteForceDocIndex(DocIndexInterface):
@@ -63,7 +63,7 @@ class BruteForceDocIndex(DocIndexInterface):
 
     def serialize(self) -> bytes:
         """
-        Serialize the user_doc record_vector to bytes for snapshotting.
+        Serialize the user_doc_index record_vector to bytes for snapshotting.
         """
         state = {
             'doc_index': {field: dict(vals) for field, vals in self._doc_index.items()}
@@ -72,7 +72,7 @@ class BruteForceDocIndex(DocIndexInterface):
 
     def deserialize(self, data: bytes) -> None:
         """
-        Restore the user_doc record_vector from serialized bytes.
+        Restore the user_doc_index record_vector from serialized bytes.
         """
         state = pickle.loads(data)
         self._doc_index = defaultdict(lambda: defaultdict(set), {

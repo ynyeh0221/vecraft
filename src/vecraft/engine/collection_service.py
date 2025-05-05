@@ -67,8 +67,8 @@ class CollectionService:
                 vector_index.add(IndexItem(record_id=str(rid), vector=vec))
             for rid in storage.get_all_record_locations().keys():
                 rec_data = self.get(name, rid)
-                if rec_data and 'user_metadata' in rec_data:
-                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['user_metadata']))
+                if rec_data and 'user_metadata_index' in rec_data:
+                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['user_metadata_index']))
                 if rec_data and 'original_data' in rec_data:
                     doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
 
@@ -94,7 +94,7 @@ class CollectionService:
         }
 
     def _load_snapshots(self, name: str) -> bool:
-        """Load vector vector_index and user_metadata snapshots for the given collection, if they exist."""
+        """Load vector vector_index and user_metadata_index snapshots for the given collection, if they exist."""
         res = self._collections[name]
         vec_snap = res['vec_snap']
         meta_snap = res['meta_snap']
@@ -103,10 +103,10 @@ class CollectionService:
             # vector index
             vec_data = pickle.loads(vec_snap.read_bytes())
             res['vec_index'].deserialize(vec_data)
-            # user_metadata index
+            # user_metadata_index index
             meta_data = meta_snap.read_bytes()
             res['meta_index'].deserialize(meta_data)
-            # user_doc index
+            # user_doc_index index
             doc_data = doc_snap.read_bytes()
             res['doc_index'].deserialize(doc_data)
             return True
@@ -146,7 +146,7 @@ class CollectionService:
         if old_loc:
             old = self.get(name, record_id)
             old_vec = old.get('vector')
-            old_meta = old.get('user_metadata', {})
+            old_meta = old.get('user_metadata_index', {})
             old_doc = old.get('original_data', {})
             try:
                 old_doc = json.dumps(old_doc)
@@ -226,7 +226,7 @@ class CollectionService:
             return
         rec = self.get(name, record_id)
         old_vec = rec.get('vector')
-        old_meta = rec.get('user_metadata', {})
+        old_meta = rec.get('user_metadata_index', {})
 
         removed_storage = removed_meta = removed_vec = False
 
@@ -355,7 +355,7 @@ class CollectionService:
             'id': record_id,
             'original_data': json.loads(orig_bytes.decode('utf-8')),
             'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-            'user_metadata': json.loads(meta_bytes.decode('utf-8'))
+            'user_metadata_index': json.loads(meta_bytes.decode('utf-8'))
         }
 
     @write_locked_attr('_rwlock')

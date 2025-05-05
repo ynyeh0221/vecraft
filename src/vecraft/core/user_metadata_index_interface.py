@@ -6,7 +6,7 @@ from src.vecraft.data.checksummed_data import MetadataItem
 @runtime_checkable
 class MetadataIndexInterface(Protocol):
     """
-    Interface for user_metadata indexing supporting equality and range queries.
+    Interface for user_metadata_index indexing supporting equality and range queries.
     """
     def add(self, item: MetadataItem) -> None:
         ...

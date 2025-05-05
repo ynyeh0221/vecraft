@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from src.vecraft.data.checksummed_data import MetadataItem, DataPacket, QueryPacket, IndexItem
-from src.vecraft.data.errors import ChecksumValidationFailureError
+from src.vecraft.data.exception import ChecksumValidationFailureError
 
 
 class ChecksumValidationTests(unittest.TestCase):
@@ -89,7 +89,7 @@ class ChecksumValidationTests(unittest.TestCase):
         # Verify initial checksum is valid
         self.assertTrue(metadata_item.validate_checksum())
 
-        # Tamper with the user_metadata without updating checksum
+        # Tamper with the user_metadata_index without updating checksum
         metadata_item.metadata = {"tags": ["tampered"]}
 
         # Validation should now fail with exception

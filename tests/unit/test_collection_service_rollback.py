@@ -106,7 +106,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_insert_metadata_failure(self):
-        """If user_metadata.add fails, storage+location must roll back."""
+        """If user_metadata_index.add fails, storage+location must roll back."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -139,7 +139,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_insert_vector_failure(self):
-        """If vector.add fails, user_metadata+location must roll back."""
+        """If vector.add fails, user_metadata_index+location must roll back."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -172,7 +172,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_delete_metadata_failure(self):
-        """If user_metadata.delete fails, nothing should be removed."""
+        """If user_metadata_index.delete fails, nothing should be removed."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -256,7 +256,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertEqual({record_id}, collection['meta_index'].get_matching_ids({"tag": "F"}))
 
     def test_overwrite_metadata_failure_restores_original(self):
-        """Overwriting user_metadata fails → original record remains untouched."""
+        """Overwriting user_metadata_index fails → original record remains untouched."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -308,7 +308,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         rec = self.collection_service.get(self.collection_name, record_id)
         self.assertEqual(orig1, rec["original_data"])
         np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["user_metadata"])
+        self.assertEqual(meta1, rec["user_metadata_index"])
 
     def test_overwrite_vector_failure_restores_original(self):
         """Overwriting vector fails → original record remains untouched."""
@@ -367,7 +367,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         rec = self.collection_service.get(self.collection_name, record_id)
         self.assertEqual(orig1, rec["original_data"])
         np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["user_metadata"])
+        self.assertEqual(meta1, rec["user_metadata_index"])
 
 
 if __name__ == '__main__':
