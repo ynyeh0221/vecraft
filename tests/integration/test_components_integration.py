@@ -10,12 +10,12 @@ import numpy as np
 from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.core.errors import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.index.record_metadata.metadata_index import MetadataIndex
-from src.vecraft.index.record_vector.hnsw import HNSW
-from src.vecraft.metadata.catalog import JsonCatalog
+from src.vecraft.metadata.metadata_index import MetadataIndex
+from src.vecraft.core.catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
 from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine
+from src.vecraft.vector_index.hnsw import HNSW
 from src.vecraft.wal.wal_manager import WALManager
 
 

@@ -9,9 +9,9 @@ import numpy as np
 from src.vecraft.analysis.tsne import generate_tsne
 from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
-from src.vecraft.index.record_vector.document_filter_evaluator import DocumentFilterEvaluator
-from src.vecraft.metadata.catalog import JsonCatalog
-from src.vecraft.metadata.schema import CollectionSchema
+from src.vecraft.core.catalog import JsonCatalog
+from src.vecraft.core.schema import CollectionSchema
+from src.vecraft.vector_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
 class CollectionService:
@@ -84,15 +84,15 @@ class CollectionService:
         }
 
     def _load_snapshots(self, name: str) -> bool:
-        """Load vector index and metadata snapshots for the given collection, if they exist."""
+        """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
         res = self._collections[name]
         vec_snap = res['vec_snap']
         meta_snap = res['meta_snap']
         if vec_snap.exists() and meta_snap.exists():
-            # vector index
+            # vector vector_index
             vec_data = pickle.loads(vec_snap.read_bytes())
             res['vec_index'].deserialize(vec_data)
-            # metadata index
+            # metadata vector_index
             meta_data = meta_snap.read_bytes()
             res['meta_index'].deserialize(meta_data)
             return True
@@ -143,7 +143,7 @@ class CollectionService:
             actual_offset = res['storage'].write(rec_bytes, new_offset)
             wrote_storage = True
 
-            # B) location index
+            # B) location vector_index
             if old_loc:
                 res['storage'].mark_deleted(record_id)
                 res['storage'].delete_record(record_id)
@@ -160,7 +160,7 @@ class CollectionService:
                 res['meta_index'].add(MetadataItem(record_id=record_id, metadata=meta))
             updated_meta = True
 
-            # D) vector index
+            # D) vector vector_index
             res['vec_index'].add(IndexItem(record_id=record_id, vector=vec))
             updated_vec = True
 
@@ -332,7 +332,7 @@ class CollectionService:
 
     @write_locked_attr('_rwlock')
     def _rebuild_index(self, name: str) -> None:
-        """Rebuild the vector index for the given collection from storage."""
+        """Rebuild the vector vector_index for the given collection from storage."""
         res = self._collections[name]
         for rid, loc in res['storage'].get_all_record_locations().items():
             data = res['storage'].read(loc['offset'], loc['size'])
@@ -340,11 +340,11 @@ class CollectionService:
             _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
             vec_start = 16 + orig_size
             vec = np.frombuffer(data[vec_start:vec_start + vec_size], dtype=np.float32)
-            res['index'].add(IndexItem(record_id=str(rid), vector=vec))
+            res['vector_index'].add(IndexItem(record_id=str(rid), vector=vec))
 
     @write_locked_attr('_rwlock')
     def _rebuild_metadata_index(self, name: str) -> None:
-        """Rebuild the metadata index for the given collection from storage."""
+        """Rebuild the metadata vector_index for the given collection from storage."""
         res = self._collections[name]
         for rid in res['storage'].get_all_record_locations().keys():
             rec = self.get(name, rid)

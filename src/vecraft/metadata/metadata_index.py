@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
 from src.vecraft.core.checksummed_data import MetadataItem, validate_checksum
-from src.vecraft.index.record_metadata.metadata_index_interface import MetadataIndexInterface
+from src.vecraft.metadata.metadata_index_interface import MetadataIndexInterface
 
 
 class MetadataIndex(MetadataIndexInterface):

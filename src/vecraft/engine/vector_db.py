@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Callable
 from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, validate_checksum
 from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.metadata.catalog import JsonCatalog
+from src.vecraft.core.catalog import JsonCatalog
 
 
 class VectorDB:
@@ -22,10 +22,10 @@ class VectorDB:
     @validate_checksum
     def insert(self, collection: str, data_packet: DataPacket) -> str:
         """
-        Insert or update a record in the index.
+        Insert or update a record in the vector_index.
 
         Args:
-            collection: Name of the index
+            collection: Name of the vector_index
             data_packet: Data fields and checksum
 
         Returns:
@@ -39,7 +39,7 @@ class VectorDB:
         Search for similar vectors with filtering.
 
         Args:
-            collection: Name of the index
+            collection: Name of the vector_index
             query_packet: Query field and checksum
         Returns:
             List of matching records with similarity scores

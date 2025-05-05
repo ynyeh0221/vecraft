@@ -10,9 +10,9 @@ import numpy as np
 from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.core.index_interface import IndexItem, Vector
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.index.record_metadata.metadata_index import MetadataItem
-from src.vecraft.metadata.catalog import JsonCatalog
-from src.vecraft.metadata.schema import CollectionSchema
+from src.vecraft.metadata.metadata_index import MetadataItem
+from src.vecraft.core.catalog import JsonCatalog
+from src.vecraft.core.schema import CollectionSchema
 
 
 # Dummy implementations for testing
@@ -90,15 +90,15 @@ class DummyMetadataIndex:
         self.items = {}
 
     def add(self, item: MetadataItem) -> None:
-        """Add a metadata item to the index."""
+        """Add a metadata item to the vector_index."""
         self.items[item.record_id] = item.metadata
 
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
-        """Update a metadata item in the index."""
+        """Update a metadata item in the vector_index."""
         self.items[new_item.record_id] = new_item.metadata
 
     def delete(self, item: MetadataItem) -> None:
-        """Delete a metadata item from the index."""
+        """Delete a metadata item from the vector_index."""
         self.items.pop(item.record_id, None)
 
     def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
@@ -115,11 +115,11 @@ class DummyMetadataIndex:
         return result
 
     def serialize(self) -> bytes:
-        """Serialize the index to bytes."""
+        """Serialize the vector_index to bytes."""
         return pickle.dumps(self.items)
 
     def deserialize(self, data: bytes) -> None:
-        """Deserialize the index from bytes."""
+        """Deserialize the vector_index from bytes."""
         self.items = pickle.loads(data)
 
 

@@ -7,7 +7,7 @@ import numpy as np
 
 from src.vecraft.core.checksummed_data import DataPacket
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.metadata.catalog import JsonCatalog
+from src.vecraft.core.catalog import JsonCatalog
 # Dummy implementations can be imported from test_collection_service
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, DummySchema
 

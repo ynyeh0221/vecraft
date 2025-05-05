@@ -211,7 +211,7 @@ class IndexItem:
 
     def _serialize_for_checksum(self) -> bytes:
         """
-        Serialize index item fields into bytes for checksum calculation.
+        Serialize vector_index item fields into bytes for checksum calculation.
         """
         parts: List[bytes] = []
 

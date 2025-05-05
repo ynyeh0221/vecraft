@@ -18,7 +18,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         page_size: int = 4096,
         initial_size: int = 4096
     ):
-        # underlying storage & location index
+        # underlying storage & location vector_index
         self._storage = MMapStorage(data_path, page_size, initial_size)
         self._loc_index = SQLiteRecordLocationIndex(Path(index_path))
 
@@ -31,7 +31,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
     def flush(self) -> None:
         self._storage.flush()
-        # ensure any index changes are also persisted
+        # ensure any vector_index changes are also persisted
         # (RecordLocationIndex writes on every change)
 
     # --- RecordLocationIndex methods ---

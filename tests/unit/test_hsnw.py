@@ -6,8 +6,8 @@ import unittest
 import numpy as np
 
 from src.vecraft.core.index_interface import IndexItem
-from src.vecraft.index.record_vector.hnsw import HNSW, DistanceMetric
-from src.vecraft.index.record_vector.id_mapper import IdMapper
+from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
+from src.vecraft.vector_index.id_mapper import IdMapper
 
 
 class TestHNSW(unittest.TestCase):
@@ -698,7 +698,7 @@ class TestHNSW(unittest.TestCase):
 
 
     def test_serialize_uninitialized_index(self):
-        """Test serializing an record_vector that hasn't been initialized yet."""
+        """Test serializing a record_vector that hasn't been initialized yet."""
         # Create HNSW instance but don't add any items or initialize record_vector
         hnsw = HNSW(dim=3)
 

@@ -9,7 +9,7 @@ class PlanNode(ABC):
     def execute(self, context: Dict[str, Any]) -> Any:
         """
         Execute this plan node in the given context and return its result.
-        Context holds references like storage, index, collection instances, etc.
+        Context holds references like storage, vector_index, collection instances, etc.
         """
         pass
 

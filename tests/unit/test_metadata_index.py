@@ -1,6 +1,6 @@
 import unittest
 
-from src.vecraft.index.record_metadata.metadata_index import MetadataItem, MetadataIndex
+from src.vecraft.metadata.metadata_index import MetadataItem, MetadataIndex
 
 
 class TestMetadataIndex(unittest.TestCase):
