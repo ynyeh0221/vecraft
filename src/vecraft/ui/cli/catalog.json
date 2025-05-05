@@ -1,0 +1,9 @@
+{
+  "testCollection": {
+    "field": {
+      "name": "testCollection",
+      "dim": 3,
+      "vector_type": "float32"
+    }
+  }
+}

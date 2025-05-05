@@ -1,0 +1,10 @@
+{
+  "next_id": 0,
+  "records": {
+    "id1": {
+      "offset": 0,
+      "size": 35
+    }
+  },
+  "deleted_records": []
+}

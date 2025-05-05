@@ -18,7 +18,7 @@ from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum, \
     DocItem
-from src.vecraft.data.exception import VectorDimensionMismatchException
+from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
 
 # Set up logger for this module
@@ -578,7 +578,7 @@ class CollectionService:
         if not vectors:
             err_msg = "No vectors available for t-SNE visualization"
             logger.error(err_msg)
-            raise ValueError(err_msg)
+            raise NullOrZeroVectorException(err_msg)
 
         # Stack into a 2D array
         data = np.vstack(vectors)

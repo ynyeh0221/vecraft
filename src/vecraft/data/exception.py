@@ -248,48 +248,20 @@ class QuotaExceededException(Exception):
         return self.message
 
 
-class DuplicateIDException(Exception):
+class CollectionUnavailableException(Exception):
     """
-    Exception raised when attempting to insert a vector with an ID
-    that already exists when duplicates aren't allowed.
+    Exception raised when target collection isn't available, so the operation can't proceed.
     """
 
-    def __init__(self, message, vector_id=None, collection=None):
-        self.vector_id = vector_id
-        self.collection = collection
+    def __init__(self, message, collection_name=None):
+        self.collection_name = collection_name
         self.message = message
         super().__init__(self.message)
 
     def __str__(self):
         details = []
-        if self.vector_id is not None:
-            details.append(f"vector_id={self.vector_id}")
-        if self.collection is not None:
-            details.append(f"collection={self.collection}")
-
-        if details:
-            return f"{self.message} ({', '.join(details)})"
-        return self.message
-
-
-class ShardUnavailableException(Exception):
-    """
-    Exception raised when part of the index is offline (node failure, maintenance)
-    so the operation can't proceed.
-    """
-
-    def __init__(self, message, shard_id=None, node_id=None):
-        self.shard_id = shard_id
-        self.node_id = node_id
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.shard_id is not None:
-            details.append(f"shard_id={self.shard_id}")
-        if self.node_id is not None:
-            details.append(f"node_id={self.node_id}")
+        if self.collection_name is not None:
+            details.append(f"collection_name={self.collection_name}")
 
         if details:
             return f"{self.message} ({', '.join(details)})"

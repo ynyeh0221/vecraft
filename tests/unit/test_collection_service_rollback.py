@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.data.checksummed_data import DataPacket
 from src.vecraft.engine.collection_service import CollectionService
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \

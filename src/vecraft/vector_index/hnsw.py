@@ -5,7 +5,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 import numpy as np
 
 from src.vecraft.data.checksummed_data import IndexItem, validate_checksum
-from src.vecraft.data.exception import VectorDimensionMismatchException
+from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException
 from src.vecraft.vector_index.id_mapper import IdMapper
 
 
@@ -114,7 +114,7 @@ class HNSW:
 
         # guard against empty vectors
         if np_vec.size == 0:
-            raise VectorDimensionMismatchException("Cannot record_vector an empty vector; vector length must be > 0.")
+            raise NullOrZeroVectorException("Cannot record_vector an empty vector; vector length must be > 0.")
 
         # Handle dimension inference
         if self._dim is None:

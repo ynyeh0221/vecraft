@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Callable
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, validate_checksum
 from src.vecraft.data.exception import RecordNotFoundError
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.json_catalog import JsonCatalog
 
 
 class VectorDB:

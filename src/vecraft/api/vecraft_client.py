@@ -5,7 +5,7 @@ import numpy as np
 
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
 from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine

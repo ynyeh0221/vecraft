@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.catalog.schema import CollectionSchema
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
