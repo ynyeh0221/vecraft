@@ -9,17 +9,28 @@ import numpy as np
 
 from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.catalog.schema import CollectionSchema
-from src.vecraft.core.vector_index_interface import IndexItem, Vector
+from src.vecraft.core.storage_engine_interface import StorageIndexEngine
+from src.vecraft.core.user_doc_index_interface import DocIndexInterface
+from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
+from src.vecraft.core.vector_index_interface import IndexItem, Vector, Index
+from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem
 from src.vecraft.engine.collection_service import CollectionService
 
 
 # Dummy implementations for testing
-class DummyStorage:
+class DummyStorage(StorageIndexEngine):
+
     def __init__(self, data_path=None, index_path=None):
         self._buffer = bytearray()
         self._locs = {}
         self._next_id = 1
+
+    def get_next_id(self) -> str:
+        pass
+
+    def get_deleted_locations(self) -> List[Dict[str, int]]:
+        pass
 
     def write(self, data: bytes, offset: int):
         end = offset + len(data)
@@ -49,9 +60,9 @@ class DummyStorage:
     def mark_deleted(self, record_id):
         pass
 
+class DummyVectorIndex(Index):
 
-class DummyVectorIndex:
-    def __init__(self, kind=None, dim=None):
+    def __init__(self, kind:str=None, dim:int=None):
         self.dim = dim
         self.items = {}
 
@@ -61,11 +72,21 @@ class DummyVectorIndex:
     def delete(self, record_id: str):
         self.items.pop(record_id, None)
 
-    def search(self, query: Vector, k: int, allowed_ids: Optional[Set[str]] = None) -> List[Tuple[str, float]]:
+    def search(self, query: Vector,
+               k: int,
+               allowed_ids: Optional[Set[str]] = None,
+               where: Optional[Dict[str, Any]] = None,
+               where_document: Optional[Dict[str, Any]] = None) -> List[Tuple[str, float]]:
         ids = list(self.items.keys())
         if allowed_ids is not None:
             ids = [i for i in ids if i in allowed_ids]
         return [(rid, 0.0) for rid in ids[:k]]
+
+    def build(self, items: List[IndexItem]) -> None:
+        pass
+
+    def get_ids(self) -> Set[str]:
+        pass
 
     def get_all_ids(self):
         return list(self.items.keys())
@@ -79,8 +100,7 @@ class DummyVectorIndex:
         else:
             self.items = pickle.loads(data)
 
-
-class DummyMetadataIndex:
+class DummyMetadataIndex(MetadataIndexInterface):
     """
     Implementation of MetadataIndexInterface for testing.
     """
@@ -121,7 +141,7 @@ class DummyMetadataIndex:
         """Deserialize the vector_index from bytes."""
         self.items = pickle.loads(data)
 
-class DummyDocIndex:
+class DummyDocIndex(DocIndexInterface):
     """
     Implementation of DocIndexInterface for testing.
     """
@@ -133,7 +153,7 @@ class DummyDocIndex:
         """Add a user_doc_index item to the vector_index."""
         self.items[item.record_id] = item.document
 
-    def update(self, old_item: MetadataItem, new_item: DocItem) -> None:
+    def update(self, old_item: DocItem, new_item: DocItem) -> None:
         """Update a user_doc_index item in the vector_index."""
         self.items[new_item.record_id] = new_item.document
 
@@ -141,7 +161,9 @@ class DummyDocIndex:
         """Delete a user_doc_index item from the vector_index."""
         self.items.pop(item.record_id, None)
 
-    def get_matching_ids(self, allowed_ids: Optional[Set[str]], where: Dict[str, Any]) -> Optional[Set[str]]:
+    def get_matching_ids(self,
+                         allowed_ids: Optional[Set[str]] = None,
+                         where_document: Optional[Dict[str, Any]] = None) -> Set[str]:
         """Find all record IDs with user_doc_index matching the where clause."""
         result = set()
 
@@ -155,9 +177,9 @@ class DummyDocIndex:
                 continue
 
             match = True
-            for key, value in where.items():
+            for key, value in where_document.items():
                 if key not in doc or doc[key] != value:
-                    match = False  # Fixed: was doc = False
+                    match = False
                     break
             if match:
                 result.add(rid)
@@ -171,7 +193,7 @@ class DummyDocIndex:
         """Deserialize the vector_index from bytes."""
         self.items = pickle.loads(data)
 
-class DummyWAL:
+class DummyWAL(WALInterface):
     """
     Implementation of WALInterface for testing.
     """
@@ -191,7 +213,6 @@ class DummyWAL:
     def clear(self) -> None:
         """Clear all entries from the WAL."""
         self.entries.clear()
-
 
 class DummySchema(CollectionSchema):
     def __init__(self, dim):
@@ -216,8 +237,8 @@ class TestCollectionService(unittest.TestCase):
         def wal_factory(path):
             return DummyWAL(path)
 
-        def vector_index_factory(**kwargs):
-            return DummyVectorIndex(**kwargs)
+        def vector_index_factory(king: str, dim: int):
+            return DummyVectorIndex(king, dim)
 
         def metadata_index_factory():
             return DummyMetadataIndex()

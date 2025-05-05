@@ -21,3 +21,9 @@ class DocIndexInterface(Protocol):
                          allowed_ids: Optional[Set[str]] = None,
                          where_document: Optional[Dict[str, Any]] = None) -> Set[str]:
         ...
+
+    def serialize(self) -> bytes:
+        ...
+
+    def deserialize(self, data: bytes) -> None:
+        ...

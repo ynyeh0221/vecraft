@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from src.vecraft.core.storage_engine_interface import StorageIndexEngine
+from src.vecraft.core.storage_engine_interface import StorageIndexEngine, StorageIndexEngineFactory
 from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
 from src.vecraft.storage.data.file_mmap import MMapStorage
 
@@ -58,3 +58,5 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
     def close(self) -> None:
         self._storage.close()
+
+StorageIndexEngineFactory.register("mmap_btree", MMapSQLiteStorageIndexEngine)

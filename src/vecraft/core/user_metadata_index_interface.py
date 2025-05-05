@@ -19,3 +19,9 @@ class MetadataIndexInterface(Protocol):
 
     def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
         ...
+
+    def serialize(self) -> bytes:
+        ...
+
+    def deserialize(self, data: bytes) -> None:
+        ...

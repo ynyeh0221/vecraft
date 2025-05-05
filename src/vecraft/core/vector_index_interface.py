@@ -11,22 +11,22 @@ class Index(ABC):
     @abstractmethod
     def build(self, items: List[IndexItem]) -> None:
         """Build the record_vector from a list of IndexItems."""
-        pass
+        ...
 
     @abstractmethod
     def add(self, item: IndexItem) -> None:
         """Add a single IndexItem to the record_vector."""
-        pass
+        ...
 
     @abstractmethod
     def delete(self, record_id: str) -> None:
         """Delete a single IndexItem from the record_vector."""
-        pass
+        ...
 
     @abstractmethod
     def get_ids(self) -> Set[str]:
         """Get all record IDs in the record_vector."""
-        pass
+        ...
 
     @abstractmethod
     def search(self, query: Vector, k: int,
@@ -46,4 +46,12 @@ class Index(ABC):
         Returns:
             List of (record_id, distance) tuples for the k nearest neighbors
         """
-        pass
+        ...
+
+    @abstractmethod
+    def serialize(self) -> bytes:
+        ...
+
+    @abstractmethod
+    def deserialize(self, data: bytes) -> None:
+        ...

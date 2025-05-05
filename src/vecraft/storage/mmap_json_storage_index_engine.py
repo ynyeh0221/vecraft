@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
-from src.vecraft.storage.index.json_based_location_index import JsonRecordLocationIndex
 from src.vecraft.storage.data.file_mmap import MMapStorage
+from src.vecraft.storage.index.json_based_location_index import JsonRecordLocationIndex
 
 
 class MMapJsonStorageIndexEngine(StorageIndexEngine):

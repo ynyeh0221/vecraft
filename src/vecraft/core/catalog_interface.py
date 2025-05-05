@@ -2,8 +2,8 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-class Collection(ABC):
-    name: str
+from src.vecraft.catalog.schema import CollectionSchema
+
 
 class Catalog(ABC):
 
@@ -20,5 +20,5 @@ class Catalog(ABC):
         ...
 
     @abstractmethod
-    def get_schema(self, name: str) -> Collection:
+    def get_schema(self, name: str) -> CollectionSchema:
         ...

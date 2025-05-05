@@ -31,8 +31,8 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             self.wal = DummyWAL(path)
             return self.wal
 
-        def vector_index_factory(**kwargs):
-            self.vector_index = DummyVectorIndex(**kwargs)
+        def vector_index_factory(king: str, dim: int):
+            self.vector_index = DummyVectorIndex(king, dim)
             return self.vector_index
 
         def metadata_index_factory():

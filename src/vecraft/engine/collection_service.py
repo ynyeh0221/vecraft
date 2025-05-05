@@ -7,8 +7,13 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.catalog.schema import CollectionSchema
+from src.vecraft.core.catalog_interface import Catalog
+from src.vecraft.core.storage_engine_interface import StorageIndexEngine
+from src.vecraft.core.user_doc_index_interface import DocIndexInterface
+from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
+from src.vecraft.core.vector_index_interface import Index
+from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum, \
     DocItem
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
@@ -17,12 +22,12 @@ from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_lo
 class CollectionService:
     def __init__(
         self,
-        catalog: JsonCatalog,
-        wal_factory: Callable,
-        storage_factory: Callable,
-        vector_index_factory: Callable,
-        metadata_index_factory: Callable,
-        doc_index_factory: Callable
+        catalog: Catalog,
+        wal_factory: Callable[[str], WALInterface],
+        storage_factory: Callable[[str, str], StorageIndexEngine],
+        vector_index_factory: Callable[[str, int], Index],
+        metadata_index_factory: Callable[[], MetadataIndexInterface],
+        doc_index_factory: Callable[[], DocIndexInterface]
     ):
         self._rwlock = ReentrantRWLock()
         self._catalog = catalog
@@ -44,8 +49,8 @@ class CollectionService:
         vec_snap = Path(f"{name}.idxsnap")
         meta_snap = Path(f"{name}.metasnap")
         doc_snap = Path(f"{name}.docsnap")
-        storage = self._storage_factory(data_path=f"{name}_storage.json", index_path=f"{name}_location_index.json")
-        vector_index = self._vector_index_factory(kind="hnsw", dim=schema.field.dim)
+        storage = self._storage_factory(f"{name}_storage.json", f"{name}_location_index.json")
+        vector_index = self._vector_index_factory("hnsw", schema.field.dim)
         meta_index = self._metadata_index_factory()
         doc_index = self._doc_index_factory()
 
