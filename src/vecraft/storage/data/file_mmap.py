@@ -2,7 +2,7 @@ import mmap
 import os
 from pathlib import Path
 
-from src.vecraft.core.storage_index_engine import StorageEngine
+from src.vecraft.core.storage_engine_interface import StorageEngine
 
 
 class MMapStorage(StorageEngine):

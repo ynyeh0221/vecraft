@@ -7,12 +7,11 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
-from src.vecraft.core.index_interface import IndexItem, Vector
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem
+from src.vecraft.core.vector_index_interface import IndexItem, Vector
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.metadata.metadata_index import MetadataItem
-from src.vecraft.core.catalog import JsonCatalog
-from src.vecraft.core.schema import CollectionSchema
+from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.schema import CollectionSchema
 
 
 # Dummy implementations for testing
@@ -90,19 +89,19 @@ class DummyMetadataIndex:
         self.items = {}
 
     def add(self, item: MetadataItem) -> None:
-        """Add a metadata item to the vector_index."""
+        """Add a user_metadata item to the vector_index."""
         self.items[item.record_id] = item.metadata
 
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
-        """Update a metadata item in the vector_index."""
+        """Update a user_metadata item in the vector_index."""
         self.items[new_item.record_id] = new_item.metadata
 
     def delete(self, item: MetadataItem) -> None:
-        """Delete a metadata item from the vector_index."""
+        """Delete a user_metadata item from the vector_index."""
         self.items.pop(item.record_id, None)
 
     def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
-        """Find all record IDs with metadata matching the where clause."""
+        """Find all record IDs with user_metadata matching the where clause."""
         result = set()
         for rid, meta in self.items.items():
             match = True
@@ -216,7 +215,7 @@ class TestCollectionService(unittest.TestCase):
         self.assertEqual(record_id, rec['id'])
         self.assertEqual(original, rec['original_data'])
         np.testing.assert_array_almost_equal(vec, rec['vector'])
-        self.assertEqual(meta, rec['metadata'])
+        self.assertEqual(meta, rec['user_metadata'])
 
     def test_delete(self):
         # Insert a record
@@ -279,7 +278,7 @@ class TestCollectionService(unittest.TestCase):
         ids = {r['id'] for r in results}
         self.assertSetEqual(ids, {r1, r2})
 
-        # Search with metadata filter
+        # Search with user_metadata filter
         query_with_filter = QueryPacket(
             query_vector=np.array([1, 1, 1], dtype=np.float32),
             k=2,

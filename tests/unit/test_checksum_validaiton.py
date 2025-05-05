@@ -1,8 +1,8 @@
 import unittest
 import numpy as np
 
-from src.vecraft.core.checksummed_data import MetadataItem, DataPacket, QueryPacket, IndexItem
-from src.vecraft.core.errors import ChecksumValidationFailureError
+from src.vecraft.data.checksummed_data import MetadataItem, DataPacket, QueryPacket, IndexItem
+from src.vecraft.data.errors import ChecksumValidationFailureError
 
 
 class ChecksumValidationTests(unittest.TestCase):
@@ -91,7 +91,7 @@ class ChecksumValidationTests(unittest.TestCase):
         # Verify initial checksum is valid
         self.assertTrue(metadata_item.validate_checksum())
 
-        # Tamper with the metadata without updating checksum
+        # Tamper with the user_metadata without updating checksum
         original_checksum = metadata_item.checksum
         metadata_item.metadata = {"tags": ["tampered"]}
 

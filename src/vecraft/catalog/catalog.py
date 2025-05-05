@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from typing import List, Dict
-from src.vecraft.core.schema import CollectionSchema, Field
+from src.vecraft.catalog.schema import CollectionSchema, Field
 from src.vecraft.core.catalog_interface import Catalog
 
 class JsonCatalog(Catalog):

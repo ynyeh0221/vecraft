@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Callable, Union, List
 
 import numpy as np
 
-from src.vecraft.core.errors import ChecksumValidationFailureError
+from src.vecraft.data.errors import ChecksumValidationFailureError
 
 # Type for checksum function: takes bytes -> hex string
 ChecksumFunc = Callable[[bytes], str]
@@ -128,7 +128,7 @@ class DataPacket:
             type=d['type'],
             original_data=d['original_data'],
             vector=np.array(d['vector']),
-            metadata=d['metadata'],
+            metadata=d['user_metadata'],
             record_id=d.get('record_id'),
             checksum_algorithm=d.get('checksum_algorithm', 'sha256')
         )
@@ -194,7 +194,7 @@ Vector = np.ndarray
 
 @dataclass
 class IndexItem:
-    """Vector with associated ID, document content, and metadata."""
+    """Vector with associated ID, document content, and user_metadata."""
     record_id: str
     vector: Vector
     document: Optional[str] = None  # Original document content
@@ -248,7 +248,7 @@ class IndexItem:
 
 @dataclass
 class MetadataItem:
-    """A wrapper for record ID and its associated metadata."""
+    """A wrapper for record ID and its associated user_metadata."""
     record_id: str
     metadata: Dict[str, Any]
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
@@ -263,7 +263,7 @@ class MetadataItem:
 
     def _serialize_for_checksum(self) -> bytes:
         """
-        Serialize metadata item fields into bytes for checksum calculation.
+        Serialize user_metadata item fields into bytes for checksum calculation.
         """
         parts: List[bytes] = []
 

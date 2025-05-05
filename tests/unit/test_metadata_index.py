@@ -1,6 +1,7 @@
 import unittest
 
-from src.vecraft.metadata.metadata_index import MetadataItem, MetadataIndex
+from src.vecraft.data.checksummed_data import MetadataItem
+from src.vecraft.user_metadata.user_metadata_index import MetadataIndex
 
 
 class TestMetadataIndex(unittest.TestCase):
@@ -9,7 +10,7 @@ class TestMetadataIndex(unittest.TestCase):
         """Set up a fresh record_vector before each test."""
         self.index = MetadataIndex()
 
-        # Create some sample metadata items
+        # Create some sample user_metadata items
         self.item1 = MetadataItem(
             record_id="doc1",
             metadata={
@@ -223,7 +224,7 @@ class TestMetadataIndex(unittest.TestCase):
         result = self.index.get_matching_ids({"type": "article"})
         self.assertEqual(set(), result)
 
-        # Add item with empty metadata
+        # Add item with empty user_metadata
         empty_item = MetadataItem("empty", {})
         self.index.add(empty_item)
 

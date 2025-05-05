@@ -5,10 +5,9 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from src.vecraft.core.checksummed_data import DataPacket
+from src.vecraft.data.checksummed_data import DataPacket
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.core.catalog import JsonCatalog
-# Dummy implementations can be imported from test_collection_service
+from src.vecraft.catalog.catalog import JsonCatalog
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, DummySchema
 
 
@@ -101,7 +100,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_insert_metadata_failure(self):
-        """If metadata.add fails, storage+location must roll back."""
+        """If user_metadata.add fails, storage+location must roll back."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -134,7 +133,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_insert_vector_failure(self):
-        """If vector.add fails, metadata+location must roll back."""
+        """If vector.add fails, user_metadata+location must roll back."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -167,7 +166,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertListEqual([], collection['vec_index'].get_all_ids())
 
     def test_delete_metadata_failure(self):
-        """If metadata.delete fails, nothing should be removed."""
+        """If user_metadata.delete fails, nothing should be removed."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -194,7 +193,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         collection['meta_index'].delete = failing_delete
 
-        # Attempt delete, which should fail
+        # Attempt to delete, which should fail
         delete_packet = DataPacket(
             type="delete",
             record_id=record_id
@@ -236,7 +235,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         collection['vec_index'].delete = failing_delete
 
-        # Attempt delete, which should fail
+        # Attempt to delete, which should fail
         delete_packet = DataPacket(
             type="delete",
             record_id=record_id
@@ -251,7 +250,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         self.assertEqual({record_id}, collection['meta_index'].get_matching_ids({"tag": "F"}))
 
     def test_overwrite_metadata_failure_restores_original(self):
-        """Overwriting metadata fails → original record remains untouched."""
+        """Overwriting user_metadata fails → original record remains untouched."""
         # Initialize the collection
         self.collection_service._init_collection(self.collection_name)
 
@@ -303,7 +302,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         rec = self.collection_service.get(self.collection_name, record_id)
         self.assertEqual(orig1, rec["original_data"])
         np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["metadata"])
+        self.assertEqual(meta1, rec["user_metadata"])
 
     def test_overwrite_vector_failure_restores_original(self):
         """Overwriting vector fails → original record remains untouched."""
@@ -362,7 +361,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         rec = self.collection_service.get(self.collection_name, record_id)
         self.assertEqual(orig1, rec["original_data"])
         np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["metadata"])
+        self.assertEqual(meta1, rec["user_metadata"])
 
 
 if __name__ == '__main__':

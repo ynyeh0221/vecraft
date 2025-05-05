@@ -3,13 +3,13 @@ from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
-from src.vecraft.core.checksummed_data import MetadataItem, validate_checksum
-from src.vecraft.metadata.metadata_index_interface import MetadataIndexInterface
+from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
+from src.vecraft.data.checksummed_data import MetadataItem, validate_checksum
 
 
 class MetadataIndex(MetadataIndexInterface):
     """
-    A metadata record_vector supporting equality and range queries.
+    A user_metadata record_vector supporting equality and range queries.
 
     - Equality queries via inverted record_vector: field -> value -> set(record_id).
     - Range queries via sorted lists: field -> list of (value, record_id).
@@ -21,7 +21,7 @@ class MetadataIndex(MetadataIndexInterface):
     @validate_checksum
     def add(self, item: MetadataItem) -> None:
         """
-        Index a record's metadata.
+        Index a record's user_metadata.
         """
         rid = item.record_id
         for field, value in item.metadata.items():
@@ -42,7 +42,7 @@ class MetadataIndex(MetadataIndexInterface):
     @validate_checksum
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
         """
-        Update a record's metadata by removing old and adding new.
+        Update a record's user_metadata by removing old and adding new.
         """
         self.delete(old_item)
         self.add(new_item)
@@ -50,7 +50,7 @@ class MetadataIndex(MetadataIndexInterface):
     @validate_checksum
     def delete(self, item: MetadataItem) -> None:
         """
-        Remove a record's metadata from the record_vector.
+        Remove a record's user_metadata from the record_vector.
         """
         rid = item.record_id
         for field, value in item.metadata.items():
@@ -124,7 +124,7 @@ class MetadataIndex(MetadataIndexInterface):
 
     def serialize(self) -> bytes:
         """
-        Serialize the metadata record_vector to bytes for snapshotting.
+        Serialize the user_metadata record_vector to bytes for snapshotting.
         """
         state = {
             'eq_index': {field: dict(vals) for field, vals in self._eq_index.items()},
@@ -134,7 +134,7 @@ class MetadataIndex(MetadataIndexInterface):
 
     def deserialize(self, data: bytes) -> None:
         """
-        Restore the metadata record_vector from serialized bytes.
+        Restore the user_metadata record_vector from serialized bytes.
         """
         state = pickle.loads(data)
         self._eq_index = defaultdict(lambda: defaultdict(set), {

@@ -1,4 +1,4 @@
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.query.plan_nodes import InsertNode, PlanNode, DeleteNode, GetNode, SearchNode
 
 

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.vecraft.core.checksummed_data import DataPacket
+from src.vecraft.data.checksummed_data import DataPacket
 from src.vecraft.wal.wal_manager import WALManager
 
 

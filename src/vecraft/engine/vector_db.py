@@ -1,9 +1,9 @@
 from typing import Dict, Any, List, Callable
 
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, validate_checksum
-from src.vecraft.core.errors import RecordNotFoundError
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, validate_checksum
+from src.vecraft.data.errors import RecordNotFoundError
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.core.catalog import JsonCatalog
+from src.vecraft.catalog.catalog import JsonCatalog
 
 
 class VectorDB:

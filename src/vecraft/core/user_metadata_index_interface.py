@@ -1,12 +1,12 @@
 from typing import runtime_checkable, Any, Dict, Optional, Set, Protocol
 
-from src.vecraft.core.checksummed_data import MetadataItem
+from src.vecraft.data.checksummed_data import MetadataItem
 
 
 @runtime_checkable
 class MetadataIndexInterface(Protocol):
     """
-    Interface for metadata indexing supporting equality and range queries.
+    Interface for user_metadata indexing supporting equality and range queries.
     """
     def add(self, item: MetadataItem) -> None:
         ...

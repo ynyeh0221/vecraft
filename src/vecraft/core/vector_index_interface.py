@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any, Set
 
-from src.vecraft.core.checksummed_data import IndexItem, Vector
+from src.vecraft.data.checksummed_data import IndexItem, Vector
 
 
 class Index(ABC):
@@ -40,7 +40,7 @@ class Index(ABC):
             query: Query vector
             k: Number of results to return
             allowed_ids: Optional set of record IDs to consider (pre-filtering)
-            where: Optional filter for metadata
+            where: Optional filter for user_metadata
             where_document: Optional filter for document content
 
         Returns:

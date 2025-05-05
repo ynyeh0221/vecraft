@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from src.vecraft.core.checksummed_data import DataPacket
-from src.vecraft.wal.wal_interface import WALInterface
+from src.vecraft.data.checksummed_data import DataPacket
+from src.vecraft.core.wal_interface import WALInterface
 
 
 class WALManager(WALInterface):

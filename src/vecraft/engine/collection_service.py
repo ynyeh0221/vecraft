@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
-from src.vecraft.core.catalog import JsonCatalog
-from src.vecraft.core.schema import CollectionSchema
+from src.vecraft.catalog.catalog import JsonCatalog
+from src.vecraft.catalog.schema import CollectionSchema
 from src.vecraft.vector_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
@@ -61,8 +61,8 @@ class CollectionService:
                 vector_index.add(IndexItem(record_id=str(rid), vector=vec))
             for rid in storage.get_all_record_locations().keys():
                 rec_data = self.get(name, rid)
-                if rec_data and 'metadata' in rec_data:
-                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
+                if rec_data and 'user_metadata' in rec_data:
+                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['user_metadata']))
 
         # replay WAL
         self._rwlock.acquire_write()
@@ -84,7 +84,7 @@ class CollectionService:
         }
 
     def _load_snapshots(self, name: str) -> bool:
-        """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
+        """Load vector vector_index and user_metadata snapshots for the given collection, if they exist."""
         res = self._collections[name]
         vec_snap = res['vec_snap']
         meta_snap = res['meta_snap']
@@ -92,7 +92,7 @@ class CollectionService:
             # vector vector_index
             vec_data = pickle.loads(vec_snap.read_bytes())
             res['vec_index'].deserialize(vec_data)
-            # metadata vector_index
+            # user_metadata vector_index
             meta_data = meta_snap.read_bytes()
             res['meta_index'].deserialize(meta_data)
             return True
@@ -130,7 +130,7 @@ class CollectionService:
         if old_loc:
             old = self.get(name, record_id)
             old_vec = old.get('vector')
-            old_meta = old.get('metadata', {})
+            old_meta = old.get('user_metadata', {})
         else:
             old_vec = old_meta = None
 
@@ -150,7 +150,7 @@ class CollectionService:
             res['storage'].add_record(record_id, new_offset, size)
             updated_loc = True
 
-            # C) metadata
+            # C) user_metadata
             if old_meta is not None:
                 res['meta_index'].update(
                     MetadataItem(record_id=record_id, metadata=old_meta),
@@ -192,7 +192,7 @@ class CollectionService:
             return
         rec = self.get(name, record_id)
         old_vec = rec.get('vector')
-        old_meta = rec.get('metadata', {})
+        old_meta = rec.get('user_metadata', {})
 
         removed_location = removed_meta = removed_vec = False
 
@@ -319,7 +319,7 @@ class CollectionService:
             'id': record_id,
             'original_data': json.loads(orig_bytes.decode('utf-8')),
             'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-            'metadata': json.loads(meta_bytes.decode('utf-8'))
+            'user_metadata': json.loads(meta_bytes.decode('utf-8'))
         }
 
     @write_locked_attr('_rwlock')
@@ -344,12 +344,12 @@ class CollectionService:
 
     @write_locked_attr('_rwlock')
     def _rebuild_metadata_index(self, name: str) -> None:
-        """Rebuild the metadata vector_index for the given collection from storage."""
+        """Rebuild the user_metadata vector_index for the given collection from storage."""
         res = self._collections[name]
         for rid in res['storage'].get_all_record_locations().keys():
             rec = self.get(name, rid)
-            if rec and 'metadata' in rec:
-                res['meta_index'].add(MetadataItem(record_id=rid, metadata=rec['metadata']))
+            if rec and 'user_metadata' in rec:
+                res['meta_index'].add(MetadataItem(record_id=rid, metadata=rec['user_metadata']))
 
     @read_locked_attr('_rwlock')
     def _filter_by_document(self,

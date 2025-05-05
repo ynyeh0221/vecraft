@@ -7,14 +7,14 @@ import tempfile
 
 import numpy as np
 
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
-from src.vecraft.core.errors import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.errors import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.metadata.metadata_index import MetadataIndex
-from src.vecraft.core.catalog import JsonCatalog
+from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
 from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine
+from src.vecraft.user_metadata.user_metadata_index import MetadataIndex
 from src.vecraft.vector_index.hnsw import HNSW
 from src.vecraft.wal.wal_manager import WALManager
 
@@ -205,7 +205,7 @@ class TestVectorDB(unittest.TestCase):
                                                             record_id=record_id))
         )
 
-        # Verify old metadata doesn't return the record
+        # Verify old user_metadata doesn't return the record
         old_results = self.executor.execute(
             self.planner.plan_search(collection=collection,
                                      query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
@@ -214,7 +214,7 @@ class TestVectorDB(unittest.TestCase):
         )
         self.assertTrue(all(res["id"] != record_id for res in old_results))
 
-        # Verify new metadata returns the record
+        # Verify new user_metadata returns the record
         new_results = self.executor.execute(
             self.planner.plan_search(collection=collection,
                                      query_packet=QueryPacket(query_vector=rng.random(32).astype(np.float32),
@@ -479,12 +479,12 @@ class TestVectorDB(unittest.TestCase):
         self.assertEqual(result["original_data"]["nested"]["quotes"], "\"quoted text\"")
 
     def test_large_metadata(self):
-        """Test with a large metadata object."""
+        """Test with a large user_metadata object."""
         collection = "large_meta"
         if collection not in self.catalog.list_collections():
             self.catalog.create_collection(collection, dim=4, vector_type="float32")
 
-        # Create large metadata with many keys
+        # Create large user_metadata with many keys
         large_meta = {}
         for i in range(100):
             large_meta[f"key_{i}"] = f"value_{i}"
@@ -502,7 +502,7 @@ class TestVectorDB(unittest.TestCase):
                                                             ))
         )
 
-        # Verify we can search by one of the metadata values
+        # Verify we can search by one of the user_metadata values
         results = self.executor.execute(
             self.planner.plan_search(collection=collection,
                                      query_packet=QueryPacket(query_vector=large_vec,
@@ -588,9 +588,9 @@ class TestVectorDB(unittest.TestCase):
 
         # Assertions to verify functionality
         self.assertTrue(len(results) <= 10)
-        self.assertTrue(all(r["metadata"]["category"] == "electronics" for r in filtered_results))
-        self.assertTrue(all(r["metadata"]["category"] == "electronics" and
-                            r["metadata"]["price_range"] == "high" for r in complex_results))
+        self.assertTrue(all(r["user_metadata"]["category"] == "electronics" for r in filtered_results))
+        self.assertTrue(all(r["user_metadata"]["category"] == "electronics" and
+                            r["user_metadata"]["price_range"] == "high" for r in complex_results))
 
     def test_validate_checksum_decorator(self):
         """Test that the validate_checksum decorator catches and enriches exceptions."""

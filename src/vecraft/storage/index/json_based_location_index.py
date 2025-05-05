@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from src.vecraft.core.storage_index_engine import RecordLocationIndex
+from src.vecraft.core.storage_engine_interface import RecordLocationIndex
 
 
 class JsonRecordLocationIndex(RecordLocationIndex):

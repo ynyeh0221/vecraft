@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.core.index_interface import IndexItem
+from src.vecraft.core.vector_index_interface import IndexItem
 from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
 from src.vecraft.vector_index.id_mapper import IdMapper
 

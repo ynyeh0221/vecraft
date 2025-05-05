@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
-from src.vecraft.core.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
 
 
 class PlanNode(ABC):
