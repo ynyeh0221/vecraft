@@ -166,7 +166,7 @@ class TestVecraftClient(unittest.TestCase):
             new_metadata={"tags": updated_data["tags"]}
         )
 
-        # Verify old user_metadata_index doesn't return the record
+        # Verify old metadata doesn't return the record
         old_results = self.client.search(
             collection=collection,
             query_vector=rng.random(32).astype(np.float32),
@@ -175,7 +175,7 @@ class TestVecraftClient(unittest.TestCase):
         )
         self.assertTrue(all(res["id"] != record_id for res in old_results))
 
-        # Verify new user_metadata_index returns the record
+        # Verify new metadata returns the record
         new_results = self.client.search(
             collection=collection,
             query_vector=rng.random(32).astype(np.float32),
@@ -430,12 +430,12 @@ class TestVecraftClient(unittest.TestCase):
         self.assertEqual(result["original_data"]["nested"]["quotes"], "\"quoted text\"")
 
     def test_large_metadata(self):
-        """Test with a large user_metadata_index object."""
+        """Test with a large metadata object."""
         collection = "large_meta"
         if collection not in self.client.list_collections():
             self.client.create_collection(collection, dim=4, vector_type="float32")
 
-        # Create large user_metadata_index with many keys
+        # Create large metadata with many keys
         large_meta = {}
         for i in range(100):
             large_meta[f"key_{i}"] = f"value_{i}"
@@ -451,7 +451,7 @@ class TestVecraftClient(unittest.TestCase):
             metadata=large_meta
         )
 
-        # Verify we can search by one of the user_metadata_index values
+        # Verify we can search by one of the metadata values
         results = self.client.search(
             collection=collection,
             query_vector=large_vec,
@@ -535,9 +535,9 @@ class TestVecraftClient(unittest.TestCase):
 
         # Assertions to verify functionality
         self.assertTrue(len(results) <= 10)
-        self.assertTrue(all(r["user_metadata_index"]["category"] == "electronics" for r in filtered_results))
-        self.assertTrue(all(r["user_metadata_index"]["category"] == "electronics" and
-                            r["user_metadata_index"]["price_range"] == "high" for r in complex_results))
+        self.assertTrue(all(r["metadata"]["category"] == "electronics" for r in filtered_results))
+        self.assertTrue(all(r["metadata"]["category"] == "electronics" and
+                            r["metadata"]["price_range"] == "high" for r in complex_results))
 
     def test_validate_checksum_decorator(self):
         """Test that the validate_checksum decorator catches and enriches exceptions."""

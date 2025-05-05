@@ -94,8 +94,8 @@ class CollectionService:
             logger.debug(f"Rebuilding metadata and document indices for collection {name}")
             for rid in storage.get_all_record_locations().keys():
                 rec_data = self.get(name, rid)
-                if rec_data and 'user_metadata_index' in rec_data:
-                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['user_metadata_index']))
+                if rec_data and 'metadata' in rec_data:
+                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
                 if rec_data and 'original_data' in rec_data:
                     doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
 
@@ -130,7 +130,7 @@ class CollectionService:
         logger.info(f"Collection {name} initialized successfully")
 
     def _load_snapshots(self, name: str) -> bool:
-        """Load vector vector_index and user_metadata_index snapshots for the given collection, if they exist."""
+        """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
         logger.info(f"Attempting to load snapshots for collection {name}")
         res = self._collections[name]
         vec_snap = res['vec_snap']
@@ -145,7 +145,7 @@ class CollectionService:
             res['vec_index'].deserialize(vec_data)
             logger.debug(f"Loaded vector index snapshot ({vec_size} bytes)")
 
-            # user_metadata_index index
+            # metadata index
             meta_data = meta_snap.read_bytes()
             meta_size = len(meta_data)
             res['meta_index'].deserialize(meta_data)
@@ -228,7 +228,7 @@ class CollectionService:
             logger.debug(f"Record {record_id} already exists, performing update")
             old = self.get(name, record_id)
             old_vec = old.get('vector')
-            old_meta = old.get('user_metadata_index', {})
+            old_meta = old.get('metadata', {})
             old_doc = old.get('original_data', {})
             try:
                 old_doc = json.dumps(old_doc)
@@ -329,7 +329,7 @@ class CollectionService:
 
         rec = self.get(name, record_id)
         old_vec = rec.get('vector')
-        old_meta = rec.get('user_metadata_index', {})
+        old_meta = rec.get('metadata', {})
 
         removed_storage = removed_meta = removed_vec = False
 
@@ -512,7 +512,7 @@ class CollectionService:
             'id': record_id,
             'original_data': json.loads(orig_bytes.decode('utf-8')),
             'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-            'user_metadata_index': json.loads(meta_bytes.decode('utf-8'))
+            'metadata': json.loads(meta_bytes.decode('utf-8'))
         }
 
     @write_locked_attr('_rwlock')

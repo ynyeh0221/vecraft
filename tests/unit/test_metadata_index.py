@@ -10,7 +10,7 @@ class TestMetadataIndex(unittest.TestCase):
         """Set up a fresh record_vector before each test."""
         self.index = MetadataIndex()
 
-        # Create some sample user_metadata_index items
+        # Create some sample metadata items
         self.item1 = MetadataItem(
             record_id="doc1",
             metadata={
@@ -224,7 +224,7 @@ class TestMetadataIndex(unittest.TestCase):
         result = self.index.get_matching_ids({"type": "article"})
         self.assertEqual(set(), result)
 
-        # Add item with empty user_metadata_index
+        # Add item with empty metadata
         empty_item = MetadataItem("empty", {})
         self.index.add(empty_item)
 

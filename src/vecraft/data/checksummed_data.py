@@ -128,7 +128,7 @@ class DataPacket:
             type=d['type'],
             original_data=d['original_data'],
             vector=np.array(d['vector']),
-            metadata=d['user_metadata_index'],
+            metadata=d['metadata'],
             record_id=d.get('record_id'),
             checksum_algorithm=d.get('checksum_algorithm', 'sha256')
         )
@@ -194,7 +194,7 @@ Vector = np.ndarray
 
 @dataclass
 class IndexItem:
-    """Vector with associated ID, document content, and user_metadata_index."""
+    """Vector with associated ID, document content, and metadata."""
     record_id: str
     vector: Vector
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
@@ -274,7 +274,7 @@ class DocItem:
 
 @dataclass
 class MetadataItem:
-    """A wrapper for record ID and its associated user_metadata_index."""
+    """A wrapper for record ID and its associated metadata."""
     record_id: str
     metadata: Dict[str, Any]
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
@@ -289,7 +289,7 @@ class MetadataItem:
 
     def _serialize_for_checksum(self) -> bytes:
         """
-        Serialize user_metadata_index item fields into bytes for checksum calculation.
+        Serialize metadata item fields into bytes for checksum calculation.
         """
         parts: List[bytes] = []
 

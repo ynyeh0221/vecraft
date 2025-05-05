@@ -89,7 +89,7 @@ class ChecksumValidationTests(unittest.TestCase):
         # Verify initial checksum is valid
         self.assertTrue(metadata_item.validate_checksum())
 
-        # Tamper with the user_metadata_index without updating checksum
+        # Tamper with the metadata without updating checksum
         metadata_item.metadata = {"tags": ["tampered"]}
 
         # Validation should now fail with exception

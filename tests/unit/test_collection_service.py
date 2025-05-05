@@ -109,19 +109,19 @@ class DummyMetadataIndex(MetadataIndexInterface):
         self.items = {}
 
     def add(self, item: MetadataItem) -> None:
-        """Add a user_metadata_index item to the vector_index."""
+        """Add a metadata item to the vector_index."""
         self.items[item.record_id] = item.metadata
 
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
-        """Update a user_metadata_index item in the vector_index."""
+        """Update a metadata item in the vector_index."""
         self.items[new_item.record_id] = new_item.metadata
 
     def delete(self, item: MetadataItem) -> None:
-        """Delete a user_metadata_index item from the vector_index."""
+        """Delete a metadata item from the vector_index."""
         self.items.pop(item.record_id, None)
 
     def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
-        """Find all record IDs with user_metadata_index matching the where clause."""
+        """Find all record IDs with metadata matching the where clause."""
         result = set()
         for rid, meta in self.items.items():
             match = True
@@ -289,7 +289,7 @@ class TestCollectionService(unittest.TestCase):
         self.assertEqual(record_id, rec['id'])
         self.assertEqual(original, rec['original_data'])
         np.testing.assert_array_almost_equal(vec, rec['vector'])
-        self.assertEqual(meta, rec['user_metadata_index'])
+        self.assertEqual(meta, rec['metadata'])
 
     def test_delete(self):
         # Insert a record
@@ -352,7 +352,7 @@ class TestCollectionService(unittest.TestCase):
         ids = {r['id'] for r in results}
         self.assertSetEqual(ids, {r1, r2})
 
-        # Search with user_metadata_index filter
+        # Search with metadata filter
         query_with_filter = QueryPacket(
             query_vector=np.array([1, 1, 1], dtype=np.float32),
             k=2,

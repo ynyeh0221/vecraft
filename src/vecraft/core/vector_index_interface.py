@@ -40,7 +40,7 @@ class Index(ABC):
             query: Query vector
             k: Number of results to return
             allowed_ids: Optional set of record IDs to consider (pre-filtering)
-            where: Optional filter for user_metadata_index
+            where: Optional filter for metadata
             where_document: Optional filter for document content
 
         Returns:
