@@ -197,8 +197,6 @@ class IndexItem:
     """Vector with associated ID, document content, and user_metadata."""
     record_id: str
     vector: Vector
-    document: Optional[str] = None  # Original document content
-    metadata: Optional[Dict[str, Any]] = None
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
 
     checksum: str = field(init=False)
@@ -222,15 +220,43 @@ class IndexItem:
         else:
             parts.append(b"null")
 
-        if self.document is not None:
-            parts.append(self.document.encode('utf-8'))
-        else:
-            parts.append(b"null")
+        return _concat_bytes(parts)
 
-        if self.metadata is not None:
-            parts.append(_prepare_field_bytes(self.metadata))
-        else:
-            parts.append(b"null")
+    def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
+        """
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("IndexItem checksum validation failed",
+                                                 record_id=self.record_id)
+        return True
+
+@dataclass
+class DocItem:
+    """A wrapper for record ID and its associated document content."""
+    record_id: str
+    document: str
+    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+
+    checksum: str = field(init=False)
+
+    def __post_init__(self):
+        # compute checksum from serialized fields
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        self.checksum = func(raw)
+
+    def _serialize_for_checksum(self) -> bytes:
+        """
+        Serialize vector_index item fields into bytes for checksum calculation.
+        """
+        parts: List[bytes] = []
+
+        parts.append(self.record_id.encode('utf-8'))
+
+        parts.append(self.document.encode('utf-8'))
 
         return _concat_bytes(parts)
 
@@ -291,13 +317,13 @@ class MetadataItem:
 def validate_checksum(func):
     """
     A decorator that validates parameters of specific types:
-    IndexItem, DataPacket, QueryPacket, or MetadataItem.
+    IndexItem, DataPacket, QueryPacket, DocItem or MetadataItem.
     Raises ChecksumValidationFailureError if any validation fails.
     """
 
     def wrapper(self, *args, **kwargs):
         # Define the types to validate
-        types_to_validate = (IndexItem, DataPacket, QueryPacket, MetadataItem)
+        types_to_validate = (IndexItem, DataPacket, QueryPacket, MetadataItem, DocItem)
 
         # Collect all parameters of the specified types
         items_to_validate = []

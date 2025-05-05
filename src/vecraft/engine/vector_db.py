@@ -12,12 +12,14 @@ class VectorDB:
                  wal_factory: Callable,
                  storage_factory: Callable,
                  vector_index_factory: Callable,
-                 metadata_index_factory: Callable):
+                 metadata_index_factory: Callable,
+                 doc_index_factory: Callable):
         self._collection_service = CollectionService(catalog=catalog,
                                                      wal_factory=wal_factory,
                                                      storage_factory=storage_factory,
                                                      vector_index_factory=vector_index_factory,
-                                                     metadata_index_factory=metadata_index_factory)
+                                                     metadata_index_factory=metadata_index_factory,
+                                                     doc_index_factory=doc_index_factory)
 
     @validate_checksum
     def insert(self, collection: str, data_packet: DataPacket) -> str:

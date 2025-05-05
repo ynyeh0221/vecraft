@@ -7,11 +7,11 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem
-from src.vecraft.core.vector_index_interface import IndexItem, Vector
-from src.vecraft.engine.collection_service import CollectionService
 from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.catalog.schema import CollectionSchema
+from src.vecraft.core.vector_index_interface import IndexItem, Vector
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem
+from src.vecraft.engine.collection_service import CollectionService
 
 
 # Dummy implementations for testing
@@ -121,6 +121,55 @@ class DummyMetadataIndex:
         """Deserialize the vector_index from bytes."""
         self.items = pickle.loads(data)
 
+class DummyDocIndex:
+    """
+    Implementation of DocIndexInterface for testing.
+    """
+
+    def __init__(self):
+        self.items = {}
+
+    def add(self, item: DocItem) -> None:
+        """Add a user_doc item to the vector_index."""
+        self.items[item.record_id] = item.document
+
+    def update(self, old_item: MetadataItem, new_item: DocItem) -> None:
+        """Update a user_doc item in the vector_index."""
+        self.items[new_item.record_id] = new_item.document
+
+    def delete(self, item: DocItem) -> None:
+        """Delete a user_doc item from the vector_index."""
+        self.items.pop(item.record_id, None)
+
+    def get_matching_ids(self, allowed_ids: Optional[Set[str]], where: Dict[str, Any]) -> Optional[Set[str]]:
+        """Find all record IDs with user_doc matching the where clause."""
+        result = set()
+
+        # If allowed_ids is None, we can't find matches within it
+        if allowed_ids is None:
+            return result
+
+        for rid, doc in self.items.items():
+            # Skip if rid is not in allowed_ids
+            if rid not in allowed_ids:
+                continue
+
+            match = True
+            for key, value in where.items():
+                if key not in doc or doc[key] != value:
+                    match = False  # Fixed: was doc = False
+                    break
+            if match:
+                result.add(rid)
+        return result
+
+    def serialize(self) -> bytes:
+        """Serialize the vector_index to bytes."""
+        return pickle.dumps(self.items)
+
+    def deserialize(self, data: bytes) -> None:
+        """Deserialize the vector_index from bytes."""
+        self.items = pickle.loads(data)
 
 class DummyWAL:
     """
@@ -173,6 +222,9 @@ class TestCollectionService(unittest.TestCase):
         def metadata_index_factory():
             return DummyMetadataIndex()
 
+        def doc_index_factory():
+            return DummyDocIndex()
+
         # Mock catalog
         self.catalog = MagicMock(spec=JsonCatalog)
         self.schema = DummySchema(dim=3)
@@ -184,7 +236,8 @@ class TestCollectionService(unittest.TestCase):
             wal_factory=wal_factory,
             storage_factory=storage_factory,
             vector_index_factory=vector_index_factory,
-            metadata_index_factory=metadata_index_factory
+            metadata_index_factory=metadata_index_factory,
+            doc_index_factory=doc_index_factory
         )
 
         # Collection name for tests
@@ -433,6 +486,7 @@ class TestCollectionService(unittest.TestCase):
         # Verify snapshot files were created
         self.assertTrue(os.path.exists(f"{self.collection_name}.idxsnap"))
         self.assertTrue(os.path.exists(f"{self.collection_name}.metasnap"))
+        self.assertTrue(os.path.exists(f"{self.collection_name}.docsnap"))
 
     @patch('src.vecraft.engine.collection_service.generate_tsne')
     def test_generate_tsne_plot(self, mock_tsne):

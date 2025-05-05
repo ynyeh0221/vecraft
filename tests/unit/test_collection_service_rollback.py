@@ -5,10 +5,11 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
+from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.data.checksummed_data import DataPacket
 from src.vecraft.engine.collection_service import CollectionService
-from src.vecraft.catalog.catalog import JsonCatalog
-from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, DummySchema
+from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
+    DummySchema, DummyDocIndex
 
 
 class TestCollectionRollbackWithRealIndex(unittest.TestCase):
@@ -38,6 +39,10 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             self.metadata_index = DummyMetadataIndex()
             return self.metadata_index
 
+        def doc_index_factory():
+            self.doc_index = DummyDocIndex()
+            return self.doc_index
+
         # Mock catalog
         self.catalog = MagicMock(spec=JsonCatalog)
         self.schema = DummySchema(dim=4)
@@ -49,7 +54,8 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             wal_factory=wal_factory,
             storage_factory=storage_factory,
             vector_index_factory=vector_index_factory,
-            metadata_index_factory=metadata_index_factory
+            metadata_index_factory=metadata_index_factory,
+            doc_index_factory=doc_index_factory
         )
 
         # Collection name for tests

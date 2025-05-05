@@ -7,11 +7,11 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
-from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
 from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.catalog.schema import CollectionSchema
-from src.vecraft.vector_index.document_filter_evaluator import DocumentFilterEvaluator
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum, \
+    DocItem
+from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
 
 
 class CollectionService:
@@ -21,7 +21,8 @@ class CollectionService:
         wal_factory: Callable,
         storage_factory: Callable,
         vector_index_factory: Callable,
-        metadata_index_factory: Callable
+        metadata_index_factory: Callable,
+        doc_index_factory: Callable
     ):
         self._rwlock = ReentrantRWLock()
         self._catalog = catalog
@@ -29,6 +30,7 @@ class CollectionService:
         self._storage_factory = storage_factory
         self._vector_index_factory = vector_index_factory
         self._metadata_index_factory = metadata_index_factory
+        self._doc_index_factory = doc_index_factory
 
         # resources per collection_name
         self._collections: Dict[str, Dict[str, Any]] = {}
@@ -41,9 +43,11 @@ class CollectionService:
         wal = self._wal_factory(f"{name}.wal")
         vec_snap = Path(f"{name}.idxsnap")
         meta_snap = Path(f"{name}.metasnap")
+        doc_snap = Path(f"{name}.docsnap")
         storage = self._storage_factory(data_path=f"{name}_storage.json", index_path=f"{name}_location_index.json")
         vector_index = self._vector_index_factory(kind="hnsw", dim=schema.field.dim)
         meta_index = self._metadata_index_factory()
+        doc_index = self._doc_index_factory()
 
         # load or rebuild
         if vec_snap.exists() and meta_snap.exists():
@@ -51,6 +55,8 @@ class CollectionService:
             vector_index.deserialize(vec_data)
             meta_data = meta_snap.read_bytes()
             meta_index.deserialize(meta_data)
+            doc_data = doc_snap.read_bytes()
+            doc_index.deserialize(doc_data)
         else:
             # full rebuild loops
             for rid, loc in storage.get_all_record_locations().items():
@@ -63,6 +69,8 @@ class CollectionService:
                 rec_data = self.get(name, rid)
                 if rec_data and 'user_metadata' in rec_data:
                     meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['user_metadata']))
+                if rec_data and 'original_data' in rec_data:
+                    doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
 
         # replay WAL
         self._rwlock.acquire_write()
@@ -79,8 +87,10 @@ class CollectionService:
             'storage': storage,
             'vec_index': vector_index,
             'meta_index': meta_index,
+            'doc_index': doc_index,
             'vec_snap': vec_snap,
-            'meta_snap': meta_snap
+            'meta_snap': meta_snap,
+            'doc_snap': doc_snap
         }
 
     def _load_snapshots(self, name: str) -> bool:
@@ -88,13 +98,17 @@ class CollectionService:
         res = self._collections[name]
         vec_snap = res['vec_snap']
         meta_snap = res['meta_snap']
-        if vec_snap.exists() and meta_snap.exists():
-            # vector vector_index
+        doc_snap = res['doc_snap']
+        if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
+            # vector index
             vec_data = pickle.loads(vec_snap.read_bytes())
             res['vec_index'].deserialize(vec_data)
-            # user_metadata vector_index
+            # user_metadata index
             meta_data = meta_snap.read_bytes()
             res['meta_index'].deserialize(meta_data)
+            # user_doc index
+            doc_data = doc_snap.read_bytes()
+            res['doc_index'].deserialize(doc_data)
             return True
         return False
 
@@ -102,6 +116,7 @@ class CollectionService:
         res = self._collections[name]
         res['vec_snap'].write_bytes(res['vec_index'].serialize())
         res['meta_snap'].write_bytes(res['meta_index'].serialize())
+        res['doc_snap'].write_bytes(res['doc_index'].serialize())
 
     def _replay_entry(self, name: str, entry: dict) -> None:
         data_packet = DataPacket.from_dict(entry)
@@ -119,7 +134,8 @@ class CollectionService:
         vec = data_packet.vector
         meta = data_packet.metadata
 
-        orig_b = json.dumps(orig).encode('utf-8')
+        doc = json.dumps(orig)
+        orig_b = doc.encode('utf-8')
         vec_b = vec.tobytes()
         meta_b = json.dumps(meta).encode('utf-8')
         header = struct.pack('<4I', len(record_id), len(orig_b), len(vec_b), len(meta_b))
@@ -131,26 +147,29 @@ class CollectionService:
             old = self.get(name, record_id)
             old_vec = old.get('vector')
             old_meta = old.get('user_metadata', {})
+            old_doc = old.get('original_data', {})
+            try:
+                old_doc = json.dumps(old_doc)
+            except:
+                old_doc = str(old_doc)
         else:
-            old_vec = old_meta = None
+            old_vec = old_meta = old_doc = None
 
-        wrote_storage = updated_loc = updated_meta = updated_vec = False
+        updated_storage = updated_meta = updated_vec = updated_doc = False
 
         try:
-            # A) write storage
+            # A) storage
             all_locs = res['storage'].get_all_record_locations()
             new_offset = max((l['offset'] + l['size'] for l in all_locs.values()), default=0)
             actual_offset = res['storage'].write(rec_bytes, new_offset)
-            wrote_storage = True
 
-            # B) location vector_index
             if old_loc:
                 res['storage'].mark_deleted(record_id)
                 res['storage'].delete_record(record_id)
             res['storage'].add_record(record_id, new_offset, size)
-            updated_loc = True
+            updated_storage = True
 
-            # C) user_metadata
+            # B) user metadata index
             if old_meta is not None:
                 res['meta_index'].update(
                     MetadataItem(record_id=record_id, metadata=old_meta),
@@ -160,7 +179,17 @@ class CollectionService:
                 res['meta_index'].add(MetadataItem(record_id=record_id, metadata=meta))
             updated_meta = True
 
-            # D) vector vector_index
+            # C) user document index
+            if old_doc is not None:
+                res['doc_index'].update(
+                    DocItem(record_id=record_id, document=old_doc),
+                    DocItem(record_id=record_id, document=doc)
+                )
+            else:
+                res['doc_index'].add(DocItem(record_id=record_id, document=doc))
+            updated_doc = True
+
+            # D) vector index
             res['vec_index'].add(IndexItem(record_id=record_id, vector=vec))
             updated_vec = True
 
@@ -171,12 +200,17 @@ class CollectionService:
                 if old_vec is not None:
                     res['vec_index'].add(IndexItem(record_id=record_id, vector=old_vec))
 
+            if updated_doc:
+                res['doc_index'].delete(DocItem(record_id=record_id, document=doc))
+                if old_doc is not None:
+                    res['doc_index'].add(DocItem(record_id=record_id, document=old_doc))
+
             if updated_meta:
                 res['meta_index'].delete(MetadataItem(record_id=record_id, metadata=meta))
                 if old_meta is not None:
                     res['meta_index'].add(MetadataItem(record_id=record_id, metadata=old_meta))
 
-            if updated_loc:
+            if updated_storage:
                 res['storage'].mark_deleted(record_id)
                 res['storage'].delete_record(record_id)
                 if old_loc is not None:
@@ -194,11 +228,11 @@ class CollectionService:
         old_vec = rec.get('vector')
         old_meta = rec.get('user_metadata', {})
 
-        removed_location = removed_meta = removed_vec = False
+        removed_storage = removed_meta = removed_vec = False
 
         try:
             res['storage'].mark_deleted(record_id)
-            removed_location = True
+            removed_storage = True
 
             res['storage'].delete_record(record_id)
             res['meta_index'].delete(MetadataItem(record_id=record_id, metadata=old_meta))
@@ -214,7 +248,7 @@ class CollectionService:
             if removed_meta:
                 res['meta_index'].add(MetadataItem(record_id=record_id, metadata=old_meta))
 
-            if removed_location:
+            if removed_storage:
                 res['storage'].add_record(record_id, old_loc['offset'], old_loc['size'])
 
             raise
@@ -260,7 +294,7 @@ class CollectionService:
             )
         allowed_ids: Optional[Set[str]] = None
 
-        # 1) MetadataIndex
+        # 1) user metadata index
         if query_packet.where:
             metadata_ids = self._collections[collection]['meta_index'].get_matching_ids(query_packet.where)
             if metadata_ids is not None:
@@ -268,16 +302,18 @@ class CollectionService:
                 if not allowed_ids:
                     return []
 
+        # 2) user document index
         if query_packet.where_document:
-            doc_ids = self._filter_by_document(collection, query_packet.where_document, allowed_ids)
-            allowed_ids = allowed_ids & doc_ids if allowed_ids is not None else doc_ids
-            if not allowed_ids:
-                return []
+            doc_ids = self._collections[collection]['doc_index'].get_matching_ids(allowed_ids, query_packet.where)
+            if doc_ids is not None:
+                allowed_ids = doc_ids
+                if not allowed_ids:
+                    return []
 
-        # 2) VectorIndex
+        # 3) vector index
         raw_results = self._collections[collection]['vec_index'].search(query_packet.query_vector, query_packet.k, allowed_ids=allowed_ids)
 
-        # 3) LocationIndex + Storage inside get()
+        # 4) storage
         results: List[Dict[str, Any]] = []
         for rec_id, dist in raw_results:
             rec = self.get(collection, rec_id)
@@ -330,49 +366,6 @@ class CollectionService:
             self._save_snapshots(name)
             print(f"Flushing {name} completed")
 
-    @write_locked_attr('_rwlock')
-    def _rebuild_index(self, name: str) -> None:
-        """Rebuild the vector vector_index for the given collection from storage."""
-        res = self._collections[name]
-        for rid, loc in res['storage'].get_all_record_locations().items():
-            data = res['storage'].read(loc['offset'], loc['size'])
-            # unpack header
-            _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
-            vec_start = 16 + orig_size
-            vec = np.frombuffer(data[vec_start:vec_start + vec_size], dtype=np.float32)
-            res['vector_index'].add(IndexItem(record_id=str(rid), vector=vec))
-
-    @write_locked_attr('_rwlock')
-    def _rebuild_metadata_index(self, name: str) -> None:
-        """Rebuild the user_metadata vector_index for the given collection from storage."""
-        res = self._collections[name]
-        for rid in res['storage'].get_all_record_locations().keys():
-            rec = self.get(name, rid)
-            if rec and 'user_metadata' in rec:
-                res['meta_index'].add(MetadataItem(record_id=rid, metadata=rec['user_metadata']))
-
-    @read_locked_attr('_rwlock')
-    def _filter_by_document(self,
-                            name: str,
-                            filter_condition: Dict[str, Any],
-                            allowed_ids: Optional[Set[str]] = None) -> Set[str]:
-        evaluator = DocumentFilterEvaluator()
-        matching = set()
-        candidates = allowed_ids if allowed_ids else set(self._collections[name]['vec_index'].get_all_ids())
-        for rid in candidates:
-            rec = self.get(name, rid)
-            content = rec.get('original_data')
-            if content is None:
-                continue
-            if not isinstance(content, str):
-                try:
-                    content = json.dumps(content)
-                except:
-                    content = str(content)
-            if evaluator.matches(content, filter_condition):
-                matching.add(rid)
-        return matching
-
     @read_locked_attr('_rwlock')
     def generate_tsne_plot(
             self,
@@ -386,6 +379,7 @@ class CollectionService:
         Generate a t-SNE scatter plot for the given record IDs (or all records if None).
 
         Args:
+            name: Collection name.
             record_ids: Optional list of record IDs to visualize.
             perplexity: t-SNE perplexity parameter.
             random_state: Random seed for reproducibility.

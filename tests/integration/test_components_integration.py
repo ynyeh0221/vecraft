@@ -14,6 +14,7 @@ from src.vecraft.catalog.catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
 from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine
+from src.vecraft.user_doc.brute_force_user_doc_index import BruteForceDocIndex
 from src.vecraft.user_metadata.user_metadata_index import MetadataIndex
 from src.vecraft.vector_index.hnsw import HNSW
 from src.vecraft.wal.wal_manager import WALManager
@@ -45,11 +46,15 @@ def setup_db(test_dir):
     def metadata_index_factory():
         return MetadataIndex()
 
+    def doc_index_factory():
+        return BruteForceDocIndex()
+
     db = VectorDB(catalog=catalog,
                   wal_factory=wal_factory,
                   storage_factory=storage_factory,
                   vector_index_factory=vector_index_factory,
-                  metadata_index_factory=metadata_index_factory)
+                  metadata_index_factory=metadata_index_factory,
+                  doc_index_factory=doc_index_factory)
     return db, catalog
 
 

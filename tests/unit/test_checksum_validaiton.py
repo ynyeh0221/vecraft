@@ -1,4 +1,5 @@
 import unittest
+
 import numpy as np
 
 from src.vecraft.data.checksummed_data import MetadataItem, DataPacket, QueryPacket, IndexItem
@@ -60,17 +61,14 @@ class ChecksumValidationTests(unittest.TestCase):
         # Create a valid IndexItem
         index_item = IndexItem(
             record_id="test1",
-            vector=np.array([0.1, 0.2, 0.3, 0.4]),
-            document="test document",
-            metadata={"tags": ["test"]}
+            vector=np.array([0.1, 0.2, 0.3, 0.4])
         )
 
         # Verify initial checksum is valid
         self.assertTrue(index_item.validate_checksum())
 
         # Tamper with the document without updating checksum
-        original_checksum = index_item.checksum
-        index_item.document = "tampered document"
+        index_item.vector = np.array([0.1, 0.2, 0.3, 0.5])
 
         # Validation should now fail with exception
         with self.assertRaises(ChecksumValidationFailureError) as context:
@@ -92,7 +90,6 @@ class ChecksumValidationTests(unittest.TestCase):
         self.assertTrue(metadata_item.validate_checksum())
 
         # Tamper with the user_metadata without updating checksum
-        original_checksum = metadata_item.checksum
         metadata_item.metadata = {"tags": ["tampered"]}
 
         # Validation should now fail with exception
