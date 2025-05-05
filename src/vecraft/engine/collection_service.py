@@ -16,6 +16,7 @@ from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum, \
     DocItem
+from src.vecraft.data.exception import VectorDimensionMismatchException
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
 
 
@@ -265,8 +266,9 @@ class CollectionService:
 
         print(f"Inserting {data_packet.record_id} to {collection} started")
         schema: CollectionSchema = self._collections[collection]['schema']
+        # Check vector dim and reject mismatch
         if len(data_packet.vector) != schema.field.dim:
-            raise ValueError(f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}")
+            raise VectorDimensionMismatchException(f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}")
         self._collections[collection]['wal'].append(data_packet)
         self._apply_insert(collection, data_packet)
         print(f"Inserting {data_packet.record_id} to {collection} completed")
