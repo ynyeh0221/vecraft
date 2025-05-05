@@ -4,6 +4,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 import numpy as np
 
 from src.vecraft.data.checksummed_data import IndexItem, validate_checksum
+from src.vecraft.data.exception import VectorDimensionMismatchException
 from src.vecraft.vector_index.id_mapper import IdMapper
 
 
@@ -110,7 +111,7 @@ class HNSW:
 
         # guard against empty vectors
         if np_vec.size == 0:
-            raise ValueError("Cannot record_vector an empty vector; vector length must be > 0.")
+            raise VectorDimensionMismatchException("Cannot record_vector an empty vector; vector length must be > 0.")
 
         # Handle dimension inference
         if self._dim is None:
@@ -129,7 +130,7 @@ class HNSW:
                     # Truncate longer vectors
                     np_vec = np_vec[:self._dim]
             else:
-                raise ValueError(
+                raise VectorDimensionMismatchException(
                     f"Vector dimension mismatch. Expected {self._dim}, got {len(np_vec)}. "
                     f"Set auto_resize_dim=True to automatically handle dimension mismatches."
                 )
@@ -196,7 +197,7 @@ class HNSW:
                         # Truncate longer vectors
                         vector = vector[:self._dim]
                 else:
-                    raise ValueError(
+                    raise VectorDimensionMismatchException(
                         f"Vector dimension mismatch. Expected {self._dim}, got {len(vector)}. "
                         f"Set auto_resize_dim=True to automatically handle dimension mismatches."
                     )

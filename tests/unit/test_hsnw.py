@@ -6,6 +6,7 @@ import unittest
 import numpy as np
 
 from src.vecraft.core.vector_index_interface import IndexItem
+from src.vecraft.data.exception import VectorDimensionMismatchException
 from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
 from src.vecraft.vector_index.id_mapper import IdMapper
 
@@ -174,8 +175,8 @@ class TestHNSW(unittest.TestCase):
         # Create an item with a different dimension
         item = IndexItem(record_id="rec5", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32))
 
-        # Adding the item should raise a ValueError
-        with self.assertRaises(ValueError):
+        # Adding the item should raise a VectorDimensionMismatchException
+        with self.assertRaises(VectorDimensionMismatchException):
             hnsw.add(item)
 
     def test_normalize_vectors(self):
@@ -597,8 +598,8 @@ class TestHNSW(unittest.TestCase):
         # Test with auto_resize_dim=False
         hnsw = HNSW(dim=3, auto_resize_dim=False)
 
-        # Should raise ValueError
-        with self.assertRaises(ValueError):
+        # Should raise VectorDimensionMismatchException
+        with self.assertRaises(VectorDimensionMismatchException):
             hnsw.build(items)
 
         # Test with auto_resize_dim=True

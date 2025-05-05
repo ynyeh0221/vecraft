@@ -296,7 +296,7 @@ class CollectionService:
 
         schema: CollectionSchema = self._collections[collection]['schema']
         if len(query_packet.query_vector) != schema.field.dim:
-            raise ValueError(
+            raise VectorDimensionMismatchException(
                 f"Query dimension mismatch: expected {schema.field.dim}, got {len(query_packet.query_vector)}"
             )
         allowed_ids: Optional[Set[str]] = None
