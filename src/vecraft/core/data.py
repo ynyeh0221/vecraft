@@ -104,7 +104,7 @@ class DataPacket:
 
         return _concat_bytes(parts)
 
-    def validate(self) -> bool:
+    def validate_checksum(self) -> bool:
         """
         Recompute checksum and compare. Returns False if data was corrupted.
         """
@@ -151,7 +151,7 @@ class QueryPacket:
                               _prepare_field_bytes(self.where or {}), _prepare_field_bytes(self.where_document or {})]
         return _concat_bytes(parts)
 
-    def validate(self) -> bool:
+    def validate_checksum(self) -> bool:
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         return func(raw) == self.checksum
@@ -177,3 +177,135 @@ class QueryPacket:
         )
         packet.checksum = d['checksum']
         return packet
+
+# Define Vector type
+Vector = np.ndarray
+
+
+@dataclass
+class IndexItem:
+    """Vector with associated ID, document content, and metadata."""
+    record_id: str
+    vector: Vector
+    document: Optional[str] = None  # Original document content
+    metadata: Optional[Dict[str, Any]] = None
+    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+
+    checksum: str = field(init=False)
+
+    def __post_init__(self):
+        # compute checksum from serialized fields
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        self.checksum = func(raw)
+
+    def _serialize_for_checksum(self) -> bytes:
+        """
+        Serialize index item fields into bytes for checksum calculation.
+        """
+        parts: List[bytes] = []
+
+        parts.append(self.record_id.encode('utf-8'))
+
+        if self.vector is not None:
+            parts.append(self.vector.tobytes())
+        else:
+            parts.append(b"null")
+
+        if self.document is not None:
+            parts.append(self.document.encode('utf-8'))
+        else:
+            parts.append(b"null")
+
+        if self.metadata is not None:
+            parts.append(_prepare_field_bytes(self.metadata))
+        else:
+            parts.append(b"null")
+
+        return _concat_bytes(parts)
+
+    def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Returns False if data was corrupted.
+        """
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        return func(raw) == self.checksum
+
+
+@dataclass
+class MetadataItem:
+    """A wrapper for record ID and its associated metadata."""
+    record_id: str
+    metadata: Dict[str, Any]
+    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+
+    checksum: str = field(init=False)
+
+    def __post_init__(self):
+        # compute checksum from serialized fields
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        self.checksum = func(raw)
+
+    def _serialize_for_checksum(self) -> bytes:
+        """
+        Serialize metadata item fields into bytes for checksum calculation.
+        """
+        parts: List[bytes] = []
+
+        parts.append(self.record_id.encode('utf-8'))
+
+        if self.metadata is not None:
+            parts.append(_prepare_field_bytes(self.metadata))
+        else:
+            parts.append(b"null")
+
+        return _concat_bytes(parts)
+
+    def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Returns False if data was corrupted.
+        """
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        return func(raw) == self.checksum
+
+
+def validate_checksum(func):
+    """
+    A decorator that validates parameters of specific types:
+    IndexItem, DataPacket, QueryPacket, or MetadataItem.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        # Define the types to validate
+        types_to_validate = (IndexItem, DataPacket, QueryPacket, MetadataItem)
+
+        # Collect all parameters of the specified types
+        items_to_validate = []
+
+        # Check positional arguments
+        for arg in args:
+            if isinstance(arg, types_to_validate):
+                items_to_validate.append(arg)
+
+        # Check keyword arguments
+        for arg in kwargs.values():
+            if isinstance(arg, types_to_validate):
+                items_to_validate.append(arg)
+
+        # Pre-validation
+        for item in items_to_validate:
+            item.validate_checksum()
+
+        # Execute the original function
+        result = func(self, *args, **kwargs)
+
+        # Post-validation
+        for item in items_to_validate:
+            item.validate_checksum()
+
+        return result
+
+    return wrapper

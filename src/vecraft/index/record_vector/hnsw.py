@@ -3,7 +3,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
-from src.vecraft.core.index_interface import IndexItem
+from src.vecraft.core.data import IndexItem, validate_checksum
 from src.vecraft.index.record_vector.id_mapper import IdMapper  # Import the new IdMapper class
 
 
@@ -228,6 +228,7 @@ class HNSW:
         self._index.add_items(data, ids)
         self._current_elements = len(items)
 
+    @validate_checksum
     def add(self, item: IndexItem) -> None:
         """
         Add a single IndexItem to the record_vector.
@@ -284,6 +285,9 @@ class HNSW:
         if not items:
             return
 
+        # Validate checksum
+        [item.validate_checksum() for item in items]
+
         # If dimension is not set yet, infer from first vector
         if self._dim is None:
             first_item = items[0]
@@ -335,6 +339,9 @@ class HNSW:
 
         # Add all vectors at once
         self._index.add_items(np.array(data), np.array(ids, dtype=np.int32))
+
+        # Validate checksum
+        [item.validate_checksum() for item in items]
 
     def delete(self, record_id: str) -> None:
         """

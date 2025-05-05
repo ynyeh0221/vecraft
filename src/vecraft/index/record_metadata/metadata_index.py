@@ -3,7 +3,8 @@ from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
-from src.vecraft.index.record_metadata.metadata_index_interface import MetadataIndexInterface, MetadataItem
+from src.vecraft.core.data import MetadataItem, validate_checksum
+from src.vecraft.index.record_metadata.metadata_index_interface import MetadataIndexInterface
 
 
 class MetadataIndex(MetadataIndexInterface):
@@ -17,6 +18,7 @@ class MetadataIndex(MetadataIndexInterface):
         self._eq_index: Dict[str, Dict[Any, Set[str]]] = defaultdict(lambda: defaultdict(set))
         self._range_index: Dict[str, list] = defaultdict(list)
 
+    @validate_checksum
     def add(self, item: MetadataItem) -> None:
         """
         Index a record's metadata.
@@ -37,6 +39,7 @@ class MetadataIndex(MetadataIndexInterface):
                 except TypeError:
                     pass
 
+    @validate_checksum
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
         """
         Update a record's metadata by removing old and adding new.
@@ -44,6 +47,7 @@ class MetadataIndex(MetadataIndexInterface):
         self.delete(old_item)
         self.add(new_item)
 
+    @validate_checksum
     def delete(self, item: MetadataItem) -> None:
         """
         Remove a record's metadata from the record_vector.

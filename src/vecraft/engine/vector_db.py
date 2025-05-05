@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Callable
 
-from src.vecraft.core.data import DataPacket, QueryPacket
+from src.vecraft.core.data import DataPacket, QueryPacket, validate_checksum
 from src.vecraft.core.errors import RecordNotFoundError
 from src.vecraft.engine.collection_service import CollectionService
 from src.vecraft.metadata.catalog import JsonCatalog
@@ -19,6 +19,7 @@ class VectorDB:
                                                      vector_index_factory=vector_index_factory,
                                                      metadata_index_factory=metadata_index_factory)
 
+    @validate_checksum
     def insert(self, collection: str, data_packet: DataPacket) -> str:
         """
         Insert or update a record in the index.
@@ -32,6 +33,7 @@ class VectorDB:
         """
         return self._collection_service.insert(collection, data_packet)
 
+    @validate_checksum
     def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
         """
         Search for similar vectors with filtering.
@@ -51,6 +53,7 @@ class VectorDB:
             raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
         return result
 
+    @validate_checksum
     def delete(self, collection: str, data_packet: DataPacket) -> bool:
         """Delete a record by ID."""
         return self._collection_service.delete(collection, data_packet)

@@ -1,11 +1,6 @@
-from dataclasses import dataclass
 from typing import runtime_checkable, Any, Dict, Optional, Set, Protocol
 
-@dataclass
-class MetadataItem:
-    """A wrapper for record ID and its associated metadata."""
-    record_id: str
-    metadata: Dict[str, Any]
+from src.vecraft.core.data import MetadataItem
 
 
 @runtime_checkable

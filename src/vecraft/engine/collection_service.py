@@ -7,10 +7,8 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.core.data import DataPacket, QueryPacket
-from src.vecraft.core.index_interface import IndexItem
+from src.vecraft.core.data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum
 from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
-from src.vecraft.index.record_metadata.metadata_index import MetadataItem
 from src.vecraft.index.record_vector.document_filter_evaluator import DocumentFilterEvaluator
 from src.vecraft.metadata.catalog import JsonCatalog
 from src.vecraft.metadata.schema import CollectionSchema
@@ -107,12 +105,12 @@ class CollectionService:
 
     def _replay_entry(self, name: str, entry: dict) -> None:
         data_packet = DataPacket.from_dict(entry)
-        data_packet.validate()
+        data_packet.validate_checksum()
         if data_packet.type == "insert":
             self._apply_insert(name, data_packet)
         elif data_packet.type == "delete":
             self._apply_delete(name, data_packet)
-        data_packet.validate()
+        data_packet.validate_checksum()
 
     def _apply_insert(self, name: str, data_packet: DataPacket) -> None:
         res = self._collections[name]
@@ -221,39 +219,34 @@ class CollectionService:
 
             raise
 
+    @validate_checksum
     @write_locked_attr('_rwlock')
     def insert(self, collection: str, data_packet: DataPacket) -> str:
         self._init_collection(collection)
 
         print(f"Inserting {data_packet.record_id} to {collection} started")
-
-        data_packet.validate()
         schema: CollectionSchema = self._collections[collection]['schema']
         if len(data_packet.vector) != schema.field.dim:
             raise ValueError(f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}")
         self._collections[collection]['wal'].append(data_packet)
         self._apply_insert(collection, data_packet)
-        data_packet.validate()
-
         print(f"Inserting {data_packet.record_id} to {collection} completed")
 
         return data_packet.record_id
 
+    @validate_checksum
     @write_locked_attr('_rwlock')
     def delete(self, collection: str, data_packet: DataPacket) -> bool:
         self._init_collection(collection)
 
         print(f"Deleting {data_packet.record_id} from {collection} started")
-
-        data_packet.validate()
         self._collections[collection]['wal'].append(data_packet)
         self._apply_delete(collection, data_packet)
-        data_packet.validate()
-
         print(f"Deleting {data_packet.record_id} from {collection} completed")
 
         return True
 
+    @validate_checksum
     @read_locked_attr('_rwlock')
     def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
         self._init_collection(collection)
@@ -292,8 +285,6 @@ class CollectionService:
                 continue
             rec['distance'] = dist
             results.append(rec)
-
-        query_packet.validate()
 
         print(f"Searching from {collection} completed")
 
