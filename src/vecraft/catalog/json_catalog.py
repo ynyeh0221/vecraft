@@ -1,10 +1,9 @@
-
 import json
 from pathlib import Path
 from typing import List, Dict
 from src.vecraft.catalog.schema import CollectionSchema, Field
 from src.vecraft.core.catalog_interface import Catalog
-from src.vecraft.data.exception import CollectionUnavailableException
+from src.vecraft.data.exception import CollectionNotExistedException
 
 
 class JsonCatalog(Catalog):
@@ -39,6 +38,6 @@ class JsonCatalog(Catalog):
 
     def get_schema(self, name: str) -> CollectionSchema:
         if name not in self._collections:
-            raise CollectionUnavailableException(f"Collection {name} not found", name)
+            raise CollectionNotExistedException(f"Collection {name} not found", name)
         return self._collections[name]
 

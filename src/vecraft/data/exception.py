@@ -248,7 +248,7 @@ class QuotaExceededException(Exception):
         return self.message
 
 
-class CollectionUnavailableException(Exception):
+class CollectionNotExistedException(Exception):
     """
     Exception raised when target collection isn't available, so the operation can't proceed.
     """
