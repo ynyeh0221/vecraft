@@ -610,3 +610,92 @@ class MetadataItem:
                 self.metadata == other.metadata and
                 self.checksum_algorithm == other.checksum_algorithm and
                 self.checksum == other.checksum)
+
+@dataclass
+class LocationItem:
+    """
+    A data structure to track the physical location of a record in storage,
+    with checksum validation capabilities.
+    """
+    record_id: str  # ID of the record this location refers to
+    offset: int  # Starting byte position in storage
+    size: int  # Size in bytes of the record
+    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+
+    # The checksum field will be initialized in __post_init__
+    checksum: str = field(init=False)
+
+    def __post_init__(self):
+        # Compute checksum from serialized fields
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        self.checksum = func(raw)
+
+    def _serialize_for_checksum(self) -> bytes:
+        """
+        Serialize location index fields into bytes for checksum calculation.
+        """
+        parts: List[bytes] = []
+
+        # Include record_id
+        parts.append(self.record_id.encode('utf-8'))
+
+        # Include offset and size
+        parts.append(_prepare_field_bytes(self.offset))
+        parts.append(_prepare_field_bytes(self.size))
+
+        return _concat_bytes(parts)
+
+    def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
+        """
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError(
+                "LocationIndex checksum validation failed",
+                record_id=self.record_id
+            )
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Turn this LocationIndex into a JSON-friendly dict.
+        """
+        return {
+            'record_id': self.record_id,
+            'offset': self.offset,
+            'size': self.size,
+            'checksum_algorithm': self.checksum_algorithm,
+            'checksum': self.checksum
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'LocationIndex':
+        """
+        Reconstruct a LocationIndex from a dictionary.
+        """
+        # Create the LocationIndex
+        location = cls(
+            record_id=d['record_id'],
+            offset=d['offset'],
+            size=d['size'],
+            checksum_algorithm=d.get('checksum_algorithm', 'sha256')
+        )
+
+        # Restore the original checksum (skip re-hashing)
+        if 'checksum' in d:
+            location.checksum = d['checksum']
+
+        return location
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+
+        return (self.record_id == other.record_id and
+                self.offset == other.offset and
+                self.size == other.size and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)
