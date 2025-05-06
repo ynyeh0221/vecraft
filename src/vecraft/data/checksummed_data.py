@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import zlib
@@ -165,11 +166,22 @@ class DataPacket:
         packet.checksum = d['checksum']
         return packet
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
 
-import base64
-import numpy as np
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+        # Compare vectors using np.array_equal
+        vectors_equal = ((self.vector is None and other.vector is None) or
+                         (self.vector is not None and other.vector is not None and
+                          np.array_equal(self.vector, other.vector)))
+
+        return (self.type == other.type and
+                self.record_id == other.record_id and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.original_data == other.original_data and
+                vectors_equal and
+                self.metadata == other.metadata and
+                self.checksum == other.checksum)
 
 @dataclass
 class QueryPacket:
@@ -245,6 +257,20 @@ class QueryPacket:
         packet.checksum = d['checksum']
         return packet
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+
+        # Compare query vectors using np.array_equal
+        vectors_equal = np.array_equal(self.query_vector, other.query_vector)
+
+        return (vectors_equal and
+                self.k == other.k and
+                self.where == other.where and
+                self.where_document == other.where_document and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)
+
 # Define Vector type
 Vector = np.ndarray
 
@@ -290,6 +316,20 @@ class IndexItem:
                                                  record_id=self.record_id)
         return True
 
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+
+        # Compare vectors using np.array_equal
+        vectors_equal = ((self.vector is None and other.vector is None) or
+                         (self.vector is not None and other.vector is not None and
+                          np.array_equal(self.vector, other.vector)))
+
+        return (self.record_id == other.record_id and
+                vectors_equal and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)
+
 @dataclass
 class DocItem:
     """A wrapper for record ID and its associated document content."""
@@ -327,6 +367,15 @@ class DocItem:
             raise ChecksumValidationFailureError("IndexItem checksum validation failed",
                                                  record_id=self.record_id)
         return True
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+
+        return (self.record_id == other.record_id and
+                self.document == other.document and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)
 
 
 @dataclass
@@ -369,6 +418,15 @@ class MetadataItem:
             raise ChecksumValidationFailureError("MetadataItem checksum validation failed",
                                                  record_id=self.record_id)
         return True
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+
+        return (self.record_id == other.record_id and
+                self.metadata == other.metadata and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)
 
 
 def validate_checksum(func):
