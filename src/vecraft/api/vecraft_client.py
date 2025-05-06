@@ -100,16 +100,18 @@ class VecraftClient:
         self.executor.execute(plan)
 
     def search(
-        self,
-        collection: str,
-        query_vector: np.ndarray,
-        k: int,
-        where: Optional[Dict[str, Any]] = None,
+            self,
+            collection: str,
+            query_vector: np.ndarray,
+            k: int,
+            where: Optional[Dict[str, Any]] = None,
+            where_document: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         packet = QueryPacket(
             query_vector=query_vector,
             k=k,
             where=where or {},
+            where_document=where_document or {},
         )
         plan = self.planner.plan_search(collection=collection, query_packet=packet)
         return self.executor.execute(plan)

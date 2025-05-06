@@ -74,6 +74,7 @@ def get_parser():
     c_search.add_argument("vector", type=parse_vector, help="Query vector")
     c_search.add_argument("k", type=int, help="Number of neighbors to return")
     c_search.add_argument("--where", default="{}", help="Optional filter as JSON string")
+    c_search.add_argument("--where-document", default="{}", help="Optional document filter as JSON string")
 
     return parser
 
@@ -104,11 +105,13 @@ def execute_command(client, args):
             print(f"Deleted record '{args.id}'")
         elif args.command == "search":
             where = json.loads(args.where)
+            where_document = json.loads(args.where_document)
             results = client.search(
                 collection=args.collection,
                 query_vector=args.vector,
                 k=args.k,
-                where=where
+                where=where,
+                where_document=where_document
             )
             print(json.dumps(results, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
         else:
