@@ -19,4 +19,4 @@ where = ["."]
 include = ["src", "src.*"]
 
 [project.scripts]
-vecraft = "src.vecraft.cli:entry_point"
+vecraft = "src.vecraft.ui.cli:entry_point"
