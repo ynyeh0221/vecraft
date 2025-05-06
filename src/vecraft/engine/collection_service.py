@@ -51,40 +51,83 @@ class CollectionService:
     def _get_or_init_collection(self, name: str):
         """
         Optimized method to get or initialize a collection without always acquiring the global lock.
-        Uses optimistic concurrency control to minimize lock contention.
+        Uses threading.Event for signaling initialization completion.
         """
         # First, try to access the collection without locking
         # This is safe for reading since Python's dict access is atomic
         if name in self._collections:
             res = self._collections[name]
-            # wait until someone does res['init_event'].set()
+            # Wait until initialization is complete
             res['init_event'].wait()
             return res
 
         # If we reach here, the collection doesn't exist (or at least didn't when we checked)
         # We need to acquire the global lock to either create it or get it if another thread created it
+        collection_resources = None
         with self._global_lock.write_lock():
             # Double-check if the collection was created by another thread while we were waiting
             if name in self._collections:
                 res = self._collections[name]
+                # Wait until initialization is complete
                 res['init_event'].wait()
                 return res
 
-            logger.info(f"Initializing collection {name}")
+            logger.info(f"Registering collection {name}")
+
+            # Only retrieve the schema under the global lock
             schema: CollectionSchema = self._catalog.get_schema(name)
             logger.debug(f"Retrieved schema for collection {name} with dimension {schema.field.dim}")
-            wal = self._wal_factory(f"{name}.wal")
+
+            # Create paths for snapshots
             vec_snap = Path(f"{name}.idxsnap")
             meta_snap = Path(f"{name}.metasnap")
             doc_snap = Path(f"{name}.docsnap")
+
+            # Create a collection-specific lock
+            collection_lock = ReentrantRWLock()
+            # Create an event to signal initialization completion
+            init_event = threading.Event()
+
+            # Create a minimal collection entry with just enough information
+            # to allow other threads to find it and wait on the event
+            collection_resources = {
+                'schema': schema,
+                'vec_snap': vec_snap,
+                'meta_snap': meta_snap,
+                'doc_snap': doc_snap,
+                'lock': collection_lock,  # Add the collection-specific lock
+                'init_event': init_event,  # Add the initialization event
+                'initialized': False  # Mark as not fully initialized yet
+            }
+            self._collections[name] = collection_resources
+
+        # Released global lock - now continue with collection-specific initialization
+        # using the collection-specific lock
+        assert collection_resources is not None
+
+        # Acquire collection lock for initialization
+        with collection_resources['lock'].write_lock():
+            # Check if another thread already initialized it while we were waiting
+            if collection_resources.get('initialized', False):
+                return collection_resources
+
+            logger.info(f"Initializing collection {name} resources")
+
+            # Now create the heavyweight resources under the collection lock
+            wal = self._wal_factory(f"{name}.wal")
             storage = self._storage_factory(f"{name}_storage.json", f"{name}_location_index.json")
             vector_index = self._vector_index_factory("hnsw", schema.field.dim)
             meta_index = self._metadata_index_factory()
             doc_index = self._doc_index_factory()
 
-            # Create a collection-specific lock
-            collection_lock = ReentrantRWLock()
-            init_event = threading.Event()
+            # Add these resources to the collection
+            collection_resources.update({
+                'wal': wal,
+                'storage': storage,
+                'vec_index': vector_index,
+                'meta_index': meta_index,
+                'doc_index': doc_index
+            })
 
             # load or rebuild
             if vec_snap.exists() and meta_snap.exists():
@@ -123,56 +166,26 @@ class CollectionService:
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
 
-            # Store the collection with basic resources first, before WAL replay
-            collection_resources = {
-                'schema': schema,
-                'wal': wal,
-                'storage': storage,
-                'vec_index': vector_index,
-                'meta_index': meta_index,
-                'doc_index': doc_index,
-                'vec_snap': vec_snap,
-                'meta_snap': meta_snap,
-                'doc_snap': doc_snap,
-                'lock': collection_lock,  # Add the collection-specific lock
-                'init_event': init_event,
-                'initialized': False  # Mark as not fully initialized yet
-            }
-            self._collections[name] = collection_resources
-
-        # Collection is now in the dictionary, but WAL replay needs to happen
-        # Release the global lock and use collection-specific lock for WAL replay
-        collection_resources = self._collections[name]
-
-        # If already initialized by another thread, just return
-        if collection_resources.get('initialized', False):
-            return collection_resources
-
-        # Outside global lock: replay WAL under per-collection write-lock
-        res = self._collections[name]
-        with res['lock'].write_lock():
-            # If another thread already replayed
-            if res['initialized']:
-                # ensure waiters aren’t stuck
-                res['init_event'].set()
-                return res
-
+            # Now replay the WAL
             logger.info(f"Replaying WAL for collection {name}")
             wal_start = time.time()
             try:
-                replay_count = res['wal'].replay(lambda e: self._replay_entry(name, e))
-                res['wal'].clear()
-                logger.info(f"Replayed and cleared {replay_count} entries in {time.time() - wal_start:.2f}s")
+                replay_count = wal.replay(
+                    lambda entry: self._replay_entry(name, entry)
+                )
+                wal.clear()
+                logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
 
                 # Mark as fully initialized
-                res['initialized'] = True
+                collection_resources['initialized'] = True
 
             finally:
-                # ALWAYS wake up anyone waiting, even if replay throws
-                res['init_event'].set()
+                # ALWAYS wake up anyone waiting, even if initialization fails
+                collection_resources['init_event'].set()
 
             logger.info(f"Collection {name} initialized successfully")
-        return res
+
+        return collection_resources
 
     def _load_snapshots(self, name: str) -> bool:
         """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
