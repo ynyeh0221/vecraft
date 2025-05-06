@@ -3,22 +3,22 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
 from src.vecraft.engine.vector_db import VectorDB
-from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
-from src.vecraft.storage.mmap_json_storage_index_engine import MMapJsonStorageIndexEngine
-from src.vecraft.user_doc_index.brute_force_user_doc_index import BruteForceDocIndex
-from src.vecraft.user_metadata_index.user_metadata_index import MetadataIndex
+from src.vecraft.storage.mmap_btree_storage_index_engine import MMapSQLiteStorageIndexEngine
+from src.vecraft.user_doc_index.inverted_index_user_doc_index import InvertedIndexDocIndex
+from src.vecraft.user_metadata_index.user_metadata_index import InvertedIndexMetadataIndex
 from src.vecraft.vector_index.hnsw import HNSW
 from src.vecraft.wal.wal_manager import WALManager
+
 
 class VecraftClient:
     def __init__(
         self,
         root: str,
-        vector_index_kind: str = "hnsw",
         vector_index_params: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -35,7 +35,7 @@ class VecraftClient:
             return WALManager(self.root / wal_path)
 
         def storage_factory(data_path: str, index_path: str):
-            return MMapJsonStorageIndexEngine(
+            return MMapSQLiteStorageIndexEngine(
                 str(self.root / data_path),
                 str(self.root / index_path)
             )
@@ -50,10 +50,10 @@ class VecraftClient:
                 raise ValueError(f"Unknown index kind: {kind}")
 
         def metadata_index_factory():
-            return MetadataIndex()
+            return InvertedIndexMetadataIndex()
 
         def doc_index_factory():
-            return BruteForceDocIndex()
+            return InvertedIndexDocIndex()
 
         self.db = VectorDB(
             catalog=self.catalog,

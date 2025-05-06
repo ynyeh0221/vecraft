@@ -21,7 +21,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests by removing the temporary database file."""
         # Close the connection first to avoid any file locks
-        self.index._conn.close()
+        self.index.close()
 
         # Remove the temporary file
         if os.path.exists(self.temp_path):
@@ -45,24 +45,6 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         next_id = cursor.fetchone()[0]
         self.assertEqual(next_id, 0)
 
-        conn.close()
-
-    def test_get_next_id(self):
-        """Test getting and incrementing next_id."""
-        # Get initial next_id
-        id1 = self.index.get_next_id()
-        self.assertEqual(id1, "0")
-
-        # Get next_id again, should be incremented
-        id2 = self.index.get_next_id()
-        self.assertEqual(id2, "1")
-
-        # Verify stored next_id is updated correctly
-        conn = sqlite3.connect(str(self.temp_path))
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM config WHERE key='next_id'")
-        next_id = cursor.fetchone()[0]
-        self.assertEqual(next_id, 2)
         conn.close()
 
     def test_add_record(self):
@@ -268,7 +250,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         self.assertEqual(loc["size"], 50)
 
         # Clean up
-        in_memory_index._conn.close()
+        in_memory_index.close()
 
 
 if __name__ == "__main__":

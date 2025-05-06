@@ -7,7 +7,7 @@ from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterfac
 from src.vecraft.data.checksummed_data import MetadataItem, validate_checksum
 
 
-class MetadataIndex(MetadataIndexInterface):
+class InvertedIndexMetadataIndex(MetadataIndexInterface):
     """
     A metadata record_vector supporting equality and range queries.
 

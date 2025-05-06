@@ -35,8 +35,6 @@ class MMapJsonStorageIndexEngine(StorageIndexEngine):
         # (RecordLocationIndex writes on every change)
 
     # --- RecordLocationIndex methods ---
-    def get_next_id(self) -> str:
-        return self._loc_index.get_next_id()
 
     def get_record_location(self, record_id: str) -> Optional[Dict[str, int]]:
         return self._loc_index.get_record_location(record_id)

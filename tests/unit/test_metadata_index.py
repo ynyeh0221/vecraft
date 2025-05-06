@@ -1,14 +1,14 @@
 import unittest
 
 from src.vecraft.data.checksummed_data import MetadataItem
-from src.vecraft.user_metadata_index.user_metadata_index import MetadataIndex
+from src.vecraft.user_metadata_index.user_metadata_index import InvertedIndexMetadataIndex
 
 
 class TestMetadataIndex(unittest.TestCase):
 
     def setUp(self):
         """Set up a fresh record_vector before each test."""
-        self.index = MetadataIndex()
+        self.index = InvertedIndexMetadataIndex()
 
         # Create some sample metadata items
         self.item1 = MetadataItem(
@@ -187,7 +187,7 @@ class TestMetadataIndex(unittest.TestCase):
         serialized = self.index.serialize()
 
         # Create a new record_vector and deserialize
-        new_index = MetadataIndex()
+        new_index = InvertedIndexMetadataIndex()
         new_index.deserialize(serialized)
 
         # Verify queries work the same on both indexes

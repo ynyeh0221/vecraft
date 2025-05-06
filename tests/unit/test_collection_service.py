@@ -27,9 +27,6 @@ class DummyStorage(StorageIndexEngine):
         self._locs = {}
         self._next_id = 1
 
-    def get_next_id(self) -> str:
-        pass
-
     def get_deleted_locations(self) -> List[Dict[str, int]]:
         pass
 

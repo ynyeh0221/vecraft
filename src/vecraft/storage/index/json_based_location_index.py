@@ -40,12 +40,6 @@ class JsonRecordLocationIndex(RecordLocationIndex):
         # atomic write could be added here if desired
         self._path.write_text(json.dumps(self._config, indent=2))
 
-    def get_next_id(self) -> str:
-        nid = self._config['next_id']
-        self._config['next_id'] += 1
-        self._save()
-        return str(nid)
-
     def get_record_location(self, record_id: str) -> Optional[Dict[str, int]]:
         return self._config['records'].get(str(record_id))
 

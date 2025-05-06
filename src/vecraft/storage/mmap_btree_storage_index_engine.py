@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from src.vecraft.core.storage_engine_interface import StorageIndexEngine, StorageIndexEngineFactory
+from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
 from src.vecraft.storage.data.file_mmap import MMapStorage
 
@@ -35,8 +35,6 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         # (RecordLocationIndex writes on every change)
 
     # --- RecordLocationIndex methods ---
-    def get_next_id(self) -> str:
-        return self._loc_index.get_next_id()
 
     def get_record_location(self, record_id: str) -> Optional[Dict[str, int]]:
         return self._loc_index.get_record_location(record_id)
@@ -58,5 +56,3 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
     def close(self) -> None:
         self._storage.close()
-
-StorageIndexEngineFactory.register("mmap_btree", MMapSQLiteStorageIndexEngine)

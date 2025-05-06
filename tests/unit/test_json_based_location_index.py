@@ -59,27 +59,12 @@ class TestJsonRecordLocationIndex(unittest.TestCase):
             index = JsonRecordLocationIndex(test_path)
 
             # Verify data was loaded correctly
-            self.assertEqual(index.get_next_id(), "5")
             self.assertEqual(index.get_record_location("3"), {"offset": 100, "size": 200})
             self.assertEqual(index.get_deleted_locations(), [{"offset": 50, "size": 75}])
         finally:
             # Clean up
             if test_path.exists():
                 os.unlink(test_path)
-
-    def test_get_next_id(self):
-        """Test getting and incrementing next_id."""
-        # Get initial next_id
-        id1 = self.index.get_next_id()
-        self.assertEqual(id1, "0")
-
-        # Get next_id again, should be incremented
-        id2 = self.index.get_next_id()
-        self.assertEqual(id2, "1")
-
-        # Verify stored next_id is updated correctly
-        config = json.loads(self.temp_path.read_text())
-        self.assertEqual(config["next_id"], 2)
 
     def test_add_record(self):
         """Test adding a record."""

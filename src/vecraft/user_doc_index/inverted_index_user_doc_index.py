@@ -40,7 +40,8 @@ class InvertedIndexDocIndex(DocIndexInterface):
         # Index document for efficient searching
         self._index_document(item.record_id, content)
 
-    def _get_content(self, document):
+    @staticmethod
+    def _get_content(document):
         """Extract and normalize content from a document"""
         if document is None:
             return None
@@ -106,7 +107,8 @@ class InvertedIndexDocIndex(DocIndexInterface):
             self._field_index[field][value_str].add(record_id)
             self._doc_fields[record_id][field] = value_str
 
-    def _extract_terms(self, content):
+    @staticmethod
+    def _extract_terms(content):
         """Extract searchable terms from document content"""
         # Simple implementation - split on non-alphanumeric chars and convert to lowercase
         return set(re.findall(r'\w+', content.lower()))

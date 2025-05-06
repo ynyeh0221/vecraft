@@ -71,16 +71,6 @@ class RecordLocationIndex(ABC):
     """
 
     @abstractmethod
-    def get_next_id(self) -> str:
-        """
-        Allocate and return the next unique record ID.
-
-        Returns:
-            A string identifier guaranteed to be unique within this index
-        """
-        ...
-
-    @abstractmethod
     def get_record_location(self, record_id: str) -> Optional[Dict[str, int]]:
         """
         Retrieve the location information for a specific record.
