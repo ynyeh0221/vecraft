@@ -19,8 +19,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Login GitHub cr
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Login with PAT
+        run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: BuildImage
         run: |
