@@ -1,6 +1,7 @@
 import os
 import pickle
 import threading
+import time
 import unittest
 from typing import List, Dict, Tuple, Optional, Set, Any, Callable
 from unittest.mock import patch, MagicMock
@@ -227,7 +228,14 @@ class TestCollectionService(unittest.TestCase):
     def setUp(self):
         # Clean up any existing test files
         for file in os.listdir():
-            if file.endswith(('.wal', '.idxsnap', '.metasnap', '_storage.json', '_location_index.json')):
+            if file.endswith((
+                    '.wal',
+                    '.idxsnap',
+                    '.metasnap',
+                    '.docsnap',  # ← add this
+                    '_storage.json',
+                    '_location_index.json'
+            )):
                 os.remove(file)
 
         # Set up factories
@@ -423,12 +431,24 @@ class TestCollectionService(unittest.TestCase):
         # Wait for inserter to complete
         t.join()
 
-        # Verify final count
+        # If your service supports a flush/commit, call it here:
+        if hasattr(self.collection_service, "flush"):
+            self.collection_service.flush()
+
+        # Now poll until we see all inserts (or timeout)
         final_query = QueryPacket(
             query_vector=np.array([0, 0, 0], dtype=np.float32),
             k=insert_count
         )
-        final = self.collection_service.search(self.collection_name, final_query)
+
+        deadline = time.time() + 1.0  # wait up to 1 second
+        final = []
+        while time.time() < deadline:
+            final = self.collection_service.search(self.collection_name, final_query)
+            if len(final) == insert_count:
+                break
+            time.sleep(0.01)
+
         self.assertEqual(insert_count, len(final))
 
     def test_concurrent_deletes(self):

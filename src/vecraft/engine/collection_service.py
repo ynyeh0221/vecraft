@@ -16,10 +16,10 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, validate_checksum, \
-    DocItem
-from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException
-from src.vecraft.engine.locks import ReentrantRWLock, write_locked_attr, read_locked_attr
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem
+from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
+    ChecksumValidationFailureError
+from src.vecraft.engine.locks import ReentrantRWLock
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -213,12 +213,13 @@ class CollectionService:
         meta = data_packet.metadata
         logger.debug(f"Applying insert for record {record_id} to collection {name}")
 
+        rid_b = record_id.encode('utf-8')
         doc = json.dumps(orig)
         orig_b = doc.encode('utf-8')
         vec_b = vec.tobytes()
         meta_b = json.dumps(meta).encode('utf-8')
         header = struct.pack('<4I', len(record_id), len(orig_b), len(vec_b), len(meta_b))
-        rec_bytes = header + orig_b + vec_b + meta_b
+        rec_bytes = header + rid_b + orig_b + vec_b + meta_b
         size = len(rec_bytes)
         logger.debug(
             f"Record size: {size} bytes (original: {len(orig_b)}, vector: {len(vec_b)}, metadata: {len(meta_b)})")
@@ -369,171 +370,183 @@ class CollectionService:
             logger.error(f"Rollback complete for record {record_id}")
             raise
 
-    @validate_checksum
-    @write_locked_attr('_rwlock')
     def insert(self, collection: str, data_packet: DataPacket) -> str:
-        self._init_collection(collection)
+        with self._rwlock.write_lock():
+            self._init_collection(collection)
 
-        logger.info(f"Inserting {data_packet.record_id} to {collection} started")
-        start_time = time.time()
-
-        schema: CollectionSchema = self._collections[collection]['schema']
-        # Check vector dim and reject mismatch
-        if len(data_packet.vector) != schema.field.dim:
-            err_msg = f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}"
-            logger.error(err_msg)
-            raise VectorDimensionMismatchException(err_msg)
-
-        # Add to WAL first for durability
-        logger.debug(f"Appending insert operation to WAL for record {data_packet.record_id}")
-        self._collections[collection]['wal'].append(data_packet)
-
-        # Apply the insert operation
-        self._apply_insert(collection, data_packet)
-
-        elapsed = time.time() - start_time
-        logger.info(f"Inserting {data_packet.record_id} to {collection} completed in {elapsed:.3f}s")
-
-        return data_packet.record_id
-
-    @validate_checksum
-    @write_locked_attr('_rwlock')
-    def delete(self, collection: str, data_packet: DataPacket) -> bool:
-        self._init_collection(collection)
-
-        logger.info(f"Deleting {data_packet.record_id} from {collection} started")
-        start_time = time.time()
-
-        # Add to WAL first for durability
-        logger.debug(f"Appending delete operation to WAL for record {data_packet.record_id}")
-        self._collections[collection]['wal'].append(data_packet)
-
-        # Apply the delete operation
-        self._apply_delete(collection, data_packet)
-
-        elapsed = time.time() - start_time
-        logger.info(f"Deleting {data_packet.record_id} from {collection} completed in {elapsed:.3f}s")
-
-        return True
-
-    @validate_checksum
-    @read_locked_attr('_rwlock')
-    def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
-        self._init_collection(collection)
-
-        logger.info(f"Searching from {collection} started")
-        start_time = time.time()
-
-        schema: CollectionSchema = self._collections[collection]['schema']
-        if len(query_packet.query_vector) != schema.field.dim:
-            err_msg = f"Query dimension mismatch: expected {schema.field.dim}, got {len(query_packet.query_vector)}"
-            logger.error(err_msg)
-            raise VectorDimensionMismatchException(err_msg)
-
-        allowed_ids: Optional[Set[str]] = None
-
-        # 1) user metadata index
-        if query_packet.where:
-            logger.debug(f"Applying metadata filter: {query_packet.where}")
-            metadata_ids = self._collections[collection]['meta_index'].get_matching_ids(query_packet.where)
-            if metadata_ids is not None:
-                allowed_ids = metadata_ids
-                logger.debug(f"Metadata filter matched {len(allowed_ids) if allowed_ids else 0} records")
-                if not allowed_ids:
-                    logger.info(f"Metadata filter returned empty result set, short-circuiting search")
-                    return []
-
-        # 2) user document index
-        if query_packet.where_document:
-            logger.debug(f"Applying document filter")
-            doc_ids = self._collections[collection]['doc_index'].get_matching_ids(allowed_ids, query_packet.where)
-            if doc_ids is not None:
-                allowed_ids = doc_ids
-                logger.debug(f"Document filter matched {len(allowed_ids) if allowed_ids else 0} records")
-                if not allowed_ids:
-                    logger.info(f"Document filter returned empty result set, short-circuiting search")
-                    return []
-
-        # 3) vector index
-        logger.debug(f"Performing vector search with k={query_packet.k}")
-        vector_search_start = time.time()
-        raw_results = self._collections[collection]['vec_index'].search(
-            query_packet.query_vector,
-            query_packet.k,
-            allowed_ids=allowed_ids
-        )
-        logger.debug(f"Vector search returned {len(raw_results)} results in {time.time() - vector_search_start:.3f}s")
-
-        # 4) storage
-        logger.debug(f"Fetching full records for search results")
-        results: List[Dict[str, Any]] = []
-        for rec_id, dist in raw_results:
-            rec = self.get(collection, rec_id)
-            if not rec:
-                logger.warning(f"Record {rec_id} found in index but not in storage")
-                continue
-            rec['distance'] = dist
-            results.append(rec)
-
-        elapsed = time.time() - start_time
-        logger.info(f"Searching from {collection} completed in {elapsed:.3f}s, returned {len(results)} results")
-
-        return results
-
-    @read_locked_attr('_rwlock')
-    def get(self, collection: str, record_id: str) -> dict:
-        self._init_collection(collection)
-
-        logger.info(f"Getting {record_id} from {collection} started")
-        start_time = time.time()
-
-        loc = self._collections[collection]['storage'].get_record_location(record_id)
-        if not loc:
-            logger.warning(f"Record {record_id} not found in collection {collection}")
-            return {}
-
-        data = self._collections[collection]['storage'].read(loc['offset'], loc['size'])
-        header_size = 4 * 4
-        rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
-            '<4I',
-            data[:header_size]
-        )
-        pos = header_size
-        orig_bytes = data[pos:pos+original_data_size]
-        pos += original_data_size
-        vec_bytes = data[pos:pos+vector_size]
-        pos += vector_size
-        meta_bytes = data[pos:pos+metadata_size]
-
-        elapsed = time.time() - start_time
-        logger.info(f"Getting {record_id} from {collection} completed in {elapsed:.3f}s")
-
-        return {
-            'id': record_id,
-            'original_data': json.loads(orig_bytes.decode('utf-8')),
-            'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-            'metadata': json.loads(meta_bytes.decode('utf-8'))
-        }
-
-    @write_locked_attr('_rwlock')
-    def flush(self):
-        collections = list(self._collections.keys())
-        logger.info(f"Flushing {len(collections)} collections: {collections}")
-
-        for name in collections:
-            logger.info(f"Flushing {name} started")
+            logger.info(f"Inserting {data_packet.record_id} to {collection} started")
             start_time = time.time()
 
-            logger.debug(f"Flushing storage for collection {name}")
-            self._collections[name]['storage'].flush()
+            data_packet.validate_checksum()
+            schema: CollectionSchema = self._collections[collection]['schema']
+            # Check vector dim and reject mismatch
+            if len(data_packet.vector) != schema.field.dim:
+                err_msg = f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}"
+                logger.error(err_msg)
+                raise VectorDimensionMismatchException(err_msg)
 
-            logger.debug(f"Saving snapshots for collection {name}")
-            self._save_snapshots(name)
+            # Add to WAL first for durability
+            logger.debug(f"Appending insert operation to WAL for record {data_packet.record_id}")
+            self._collections[collection]['wal'].append(data_packet)
+
+            # Apply the insert operation
+            self._apply_insert(collection, data_packet)
+            data_packet.validate_checksum()
 
             elapsed = time.time() - start_time
-            logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+            logger.info(f"Inserting {data_packet.record_id} to {collection} completed in {elapsed:.3f}s")
 
-    @read_locked_attr('_rwlock')
+            return data_packet.record_id
+
+    def delete(self, collection: str, data_packet: DataPacket) -> bool:
+        with self._rwlock.write_lock():
+            self._init_collection(collection)
+
+            logger.info(f"Deleting {data_packet.record_id} from {collection} started")
+            start_time = time.time()
+
+            data_packet.validate_checksum()
+            # Add to WAL first for durability
+            logger.debug(f"Appending delete operation to WAL for record {data_packet.record_id}")
+            self._collections[collection]['wal'].append(data_packet)
+
+            # Apply the delete operation
+            self._apply_delete(collection, data_packet)
+            data_packet.validate_checksum()
+
+            elapsed = time.time() - start_time
+            logger.info(f"Deleting {data_packet.record_id} from {collection} completed in {elapsed:.3f}s")
+
+            return True
+
+    def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
+        with self._rwlock.read_lock():
+            self._init_collection(collection)
+
+            logger.info(f"Searching from {collection} started")
+            start_time = time.time()
+
+            query_packet.validate_checksum()
+            schema: CollectionSchema = self._collections[collection]['schema']
+            if len(query_packet.query_vector) != schema.field.dim:
+                err_msg = f"Query dimension mismatch: expected {schema.field.dim}, got {len(query_packet.query_vector)}"
+                logger.error(err_msg)
+                raise VectorDimensionMismatchException(err_msg)
+
+            allowed_ids: Optional[Set[str]] = None
+
+            # 1) user metadata index
+            if query_packet.where:
+                logger.debug(f"Applying metadata filter: {query_packet.where}")
+                metadata_ids = self._collections[collection]['meta_index'].get_matching_ids(query_packet.where)
+                if metadata_ids is not None:
+                    allowed_ids = metadata_ids
+                    logger.debug(f"Metadata filter matched {len(allowed_ids) if allowed_ids else 0} records")
+                    if not allowed_ids:
+                        logger.info(f"Metadata filter returned empty result set, short-circuiting search")
+                        return []
+
+            # 2) user document index
+            if query_packet.where_document:
+                logger.debug(f"Applying document filter")
+                doc_ids = self._collections[collection]['doc_index'].get_matching_ids(allowed_ids, query_packet.where)
+                if doc_ids is not None:
+                    allowed_ids = doc_ids
+                    logger.debug(f"Document filter matched {len(allowed_ids) if allowed_ids else 0} records")
+                    if not allowed_ids:
+                        logger.info(f"Document filter returned empty result set, short-circuiting search")
+                        return []
+
+            # 3) vector index
+            logger.debug(f"Performing vector search with k={query_packet.k}")
+            vector_search_start = time.time()
+            raw_results = self._collections[collection]['vec_index'].search(
+                query_packet.query_vector,
+                query_packet.k,
+                allowed_ids=allowed_ids
+            )
+            logger.debug(f"Vector search returned {len(raw_results)} results in {time.time() - vector_search_start:.3f}s")
+
+            # 4) storage
+            logger.debug(f"Fetching full records for search results")
+            results: List[Dict[str, Any]] = []
+            for rec_id, dist in raw_results:
+                rec = self.get(collection, rec_id)
+                if not rec:
+                    logger.warning(f"Record {rec_id} found in index but not in storage")
+                    continue
+                rec['distance'] = dist
+                results.append(rec)
+
+            query_packet.validate_checksum()
+
+            elapsed = time.time() - start_time
+            logger.info(f"Searching from {collection} completed in {elapsed:.3f}s, returned {len(results)} results")
+
+            return results
+
+    def get(self, collection: str, record_id: str) -> dict:
+        with self._rwlock.read_lock():
+            self._init_collection(collection)
+
+            logger.info(f"Getting {record_id} from {collection} started")
+            start_time = time.time()
+
+            loc = self._collections[collection]['storage'].get_record_location(record_id)
+            if not loc:
+                logger.warning(f"Record {record_id} not found in collection {collection}")
+                return {}
+
+            data = self._collections[collection]['storage'].read(loc['offset'], loc['size'])
+            header_size = 4 * 4
+            rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
+                '<4I',
+                data[:header_size]
+            )
+            pos = header_size
+            returned_record_id_bytes = data[pos:pos+rid_len]
+            returned_record_id = str(returned_record_id_bytes, 'utf-8')
+            pos += rid_len
+            orig_bytes = data[pos:pos+original_data_size]
+            pos += original_data_size
+            vec_bytes = data[pos:pos+vector_size]
+            pos += vector_size
+            meta_bytes = data[pos:pos+metadata_size]
+
+            # Verify that the returned record is the one which we request
+            if returned_record_id != record_id:
+                error_message = f"Returned record {returned_record_id} does not match expected record {record_id}"
+                logger.error(error_message)
+                raise ChecksumValidationFailureError(error_message)
+
+            elapsed = time.time() - start_time
+            logger.info(f"Getting {record_id} from {collection} completed in {elapsed:.3f}s")
+
+            return {
+                'id': record_id,
+                'original_data': json.loads(orig_bytes.decode('utf-8')),
+                'vector': np.frombuffer(vec_bytes, dtype=np.float32),
+                'metadata': json.loads(meta_bytes.decode('utf-8'))
+            }
+
+    def flush(self):
+        with self._rwlock.write_lock():
+            collections = list(self._collections.keys())
+            logger.info(f"Flushing {len(collections)} collections: {collections}")
+
+            for name in collections:
+                logger.info(f"Flushing {name} started")
+                start_time = time.time()
+
+                logger.debug(f"Flushing storage for collection {name}")
+                self._collections[name]['storage'].flush()
+
+                logger.debug(f"Saving snapshots for collection {name}")
+                self._save_snapshots(name)
+
+                elapsed = time.time() - start_time
+                logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+
     def generate_tsne_plot(
             self,
             name: str,
@@ -555,44 +568,45 @@ class CollectionService:
         Returns:
             Path to the saved t-SNE plot image.
         """
-        logger.info(f"Generating t-SNE plot for collection {name}")
-        start_time = time.time()
+        with self._rwlock.write_lock():
+            logger.info(f"Generating t-SNE plot for collection {name}")
+            start_time = time.time()
 
-        # Determine which IDs to plot
-        if record_ids is None:
-            record_ids = list(self._collections[name]['storage'].get_all_record_locations().keys())
-            logger.debug(f"Using all {len(record_ids)} records in collection")
-        else:
-            logger.debug(f"Using {len(record_ids)} specified record IDs")
+            # Determine which IDs to plot
+            if record_ids is None:
+                record_ids = list(self._collections[name]['storage'].get_all_record_locations().keys())
+                logger.debug(f"Using all {len(record_ids)} records in collection")
+            else:
+                logger.debug(f"Using {len(record_ids)} specified record IDs")
 
-        vectors = []
-        labels = []
-        for rid in record_ids:
-            rec = self.get(name, rid)
-            if not rec:
-                logger.warning(f"Record {rid} not found, skipping for t-SNE")
-                continue
-            vectors.append(rec['vector'])
-            labels.append(rid)
+            vectors = []
+            labels = []
+            for rid in record_ids:
+                rec = self.get(name, rid)
+                if not rec:
+                    logger.warning(f"Record {rid} not found, skipping for t-SNE")
+                    continue
+                vectors.append(rec['vector'])
+                labels.append(rid)
 
-        if not vectors:
-            err_msg = "No vectors available for t-SNE visualization"
-            logger.error(err_msg)
-            raise NullOrZeroVectorException(err_msg)
+            if not vectors:
+                err_msg = "No vectors available for t-SNE visualization"
+                logger.error(err_msg)
+                raise NullOrZeroVectorException(err_msg)
 
-        # Stack into a 2D array
-        data = np.vstack(vectors)
-        logger.debug(f"Processing {len(vectors)} vectors of dimension {vectors[0].shape[0]}")
+            # Stack into a 2D array
+            data = np.vstack(vectors)
+            logger.debug(f"Processing {len(vectors)} vectors of dimension {vectors[0].shape[0]}")
 
-        # Log the parameters
-        logger.debug(f"t-SNE parameters: perplexity={perplexity}, random_state={random_state}")
-        logger.debug(f"Output file: {outfile}")
+            # Log the parameters
+            logger.debug(f"t-SNE parameters: perplexity={perplexity}, random_state={random_state}")
+            logger.debug(f"Output file: {outfile}")
 
-        # Call the helper to generate and save the plot
-        return generate_tsne(
-            vectors=data,
-            labels=labels,
-            outfile=outfile,
-            perplexity=perplexity,
-            random_state=random_state
-        )
+            # Call the helper to generate and save the plot
+            return generate_tsne(
+                vectors=data,
+                labels=labels,
+                outfile=outfile,
+                perplexity=perplexity,
+                random_state=random_state
+            )
