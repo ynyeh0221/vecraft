@@ -14,5 +14,9 @@ dependencies = [
     "hnswlib~=0.8.0"
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
+
 [project.scripts]
 vecraft = "src.vecraft.cli:entry_point"
