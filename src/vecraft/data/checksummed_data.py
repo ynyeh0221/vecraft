@@ -353,7 +353,7 @@ class DocItem:
 
         parts.append(self.record_id.encode('utf-8'))
 
-        parts.append(self.document.encode('utf-8'))
+        parts.append(_prepare_field_bytes(self.document))
 
         return _concat_bytes(parts)
 

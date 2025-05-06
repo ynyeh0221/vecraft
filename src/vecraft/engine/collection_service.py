@@ -284,7 +284,8 @@ class CollectionService:
         old_loc = res['storage'].get_record_location(record_id)
         if old_loc:
             logger.debug(f"Record {record_id} already exists, performing update")
-            old = self.get(name, record_id)
+            # During WAL replay, use _get_internal directly to avoid reentrant initialization
+            old = self._get_internal(name, record_id, res['storage'])
             old_vec = old.get('vector')
             old_meta = old.get('metadata', {})
             old_doc = old.get('original_data', {})
