@@ -28,16 +28,17 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          # Install the package in development mode, which installs all dependencies from pyproject.toml
+          # Install the package in development mode
           pip install -e .
           # Install test dependencies
           pip install pytest pytest-timeout
+          # Ensure hnswlib is properly built
+          pip install --force-reinstall --no-deps hnswlib
 
       - name: Run unit tests
         timeout-minutes: 15
         run: |
           source .venv/bin/activate
-          # Run tests in series to avoid file conflicts
           pytest tests -v --timeout=60
 
       - name: Login with PAT
@@ -57,10 +58,16 @@ jobs:
               && rm -rf /var/lib/apt/lists/*
 
           # Copy your project files
-          COPY . .
+          COPY . /app/
 
-          # Install your package with all dependencies
-          RUN pip install --no-cache-dir -e .
+          # Fix for src layout packages - install in a way that makes imports work
+          RUN pip install --no-cache-dir .
+          
+          # Create a simple wrapper script that fixes the import issue
+          RUN echo '#!/usr/bin/env python3' > /usr/local/bin/vecraft && \
+              echo 'from vecraft.cli import entry_point' >> /usr/local/bin/vecraft && \
+              echo 'entry_point()' >> /usr/local/bin/vecraft && \
+              chmod +x /usr/local/bin/vecraft
 
           # Create a volume for data persistence
           VOLUME /data
