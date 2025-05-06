@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import struct
 import zlib
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -178,6 +179,84 @@ class DataPacket:
         # restore the original checksum (skip re‐hashing)
         packet.checksum = d['checksum']
         return packet
+
+    def to_storage_bytes(self) -> bytes:
+        record_id = self.record_id
+        orig = self.original_data
+        vec = self.vector
+        meta = self.metadata
+        checksum = self.checksum
+
+        rid_b = record_id.encode('utf-8')
+        doc = json.dumps(orig)
+        orig_b = doc.encode('utf-8')
+        vec_b = vec.tobytes()
+        meta_b = json.dumps(meta).encode('utf-8')
+        checksum_b = checksum.encode('utf-8')
+
+        header = struct.pack('<5I', len(record_id), len(orig_b), len(vec_b), len(meta_b), len(checksum_b))
+        return header + rid_b + orig_b + vec_b + meta_b + checksum_b
+
+    @staticmethod
+    def from_storage_bytes(data: bytes) -> 'DataPacket':
+        # Update header size to account for 5 integers instead of 4
+        header_size = 5 * 4
+        rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
+            '<5I',
+            data[:header_size]
+        )
+
+        pos = header_size
+        returned_record_id_bytes = data[pos:pos + rid_len]
+        returned_record_id = str(returned_record_id_bytes, 'utf-8')
+        pos += rid_len
+        orig_bytes = data[pos:pos + original_data_size]
+        pos += original_data_size
+        vec_bytes = data[pos:pos + vector_size]
+        pos += vector_size
+        meta_bytes = data[pos:pos + metadata_size]
+        pos += metadata_size
+        checksum_bytes = data[pos:pos + checksum_size]
+        stored_checksum = str(checksum_bytes, 'utf-8')
+
+        data_packet = DataPacket(type=DataPacketType.RECORD,
+                                 record_id=returned_record_id,
+                                 original_data=json.loads(orig_bytes.decode('utf-8')),
+                                 vector=np.frombuffer(vec_bytes, dtype=np.float32),
+                                 metadata=json.loads(meta_bytes.decode('utf-8')))
+
+        if stored_checksum != data_packet.checksum:
+            error_message = f"Record id {data_packet.record_id}'s stored checksum {stored_checksum} does not match reconstructed checksum {data_packet.checksum}"
+            raise ChecksumValidationFailureError(error_message)
+
+        return data_packet
+
+    def to_index_item(self) -> 'IndexItem':
+        index_item = IndexItem(record_id=self.record_id, vector=self.vector)
+        self.validate_checksum()
+        reconstructed = DataPacket(type=self.type, record_id=index_item.record_id, original_data=self.original_data, vector=index_item.vector, metadata=self.metadata)
+        if reconstructed.checksum != self.checksum:
+            raise ChecksumValidationFailureError("Reconstruct checksum validation failed")
+        index_item.validate_checksum()
+        return index_item
+
+    def to_doc_item(self) -> 'DocItem':
+        doc_item = DocItem(record_id=self.record_id, document=self.original_data)
+        self.validate_checksum()
+        reconstructed = DataPacket(type=self.type, record_id=doc_item.record_id, original_data=doc_item.document, vector=self.vector, metadata=self.metadata)
+        if reconstructed.checksum != self.checksum:
+            raise ChecksumValidationFailureError("Reconstruct checksum validation failed")
+        doc_item.validate_checksum()
+        return doc_item
+
+    def to_metadata_item(self) -> 'MetadataItem':
+        meta_item = MetadataItem(record_id=self.record_id, metadata=self.metadata)
+        self.validate_checksum()
+        reconstructed = DataPacket(type=self.type, record_id=meta_item.record_id, original_data=self.original_data, vector=self.vector, metadata=meta_item.metadata)
+        if reconstructed.checksum != self.checksum:
+            raise ChecksumValidationFailureError("Reconstruct checksum validation failed")
+        meta_item.validate_checksum()
+        return meta_item
 
     def __eq__(self, other):
         if not isinstance(other, type(self)):

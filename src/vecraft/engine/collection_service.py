@@ -1,4 +1,3 @@
-import json
 import logging
 import pickle
 import struct
@@ -264,42 +263,17 @@ class CollectionService:
 
     def _apply_insert(self, name: str, data_packet: DataPacket) -> None:
         res = self._collections[name]
-        record_id = data_packet.record_id
-        orig = data_packet.original_data
-        vec = data_packet.vector
-        meta = data_packet.metadata
-        checksum = data_packet.checksum
-        logger.debug(f"Applying insert for record {record_id} to collection {name}")
-
-        rid_b = record_id.encode('utf-8')
-        doc = json.dumps(orig)
-        orig_b = doc.encode('utf-8')
-        vec_b = vec.tobytes()
-        meta_b = json.dumps(meta).encode('utf-8')
-        checksum_b = checksum.encode('utf-8')
-
-        header = struct.pack('<5I', len(record_id), len(orig_b), len(vec_b), len(meta_b), len(checksum_b))
-        rec_bytes = header + rid_b + orig_b + vec_b + meta_b + checksum_b
+        rec_bytes = data_packet.to_storage_bytes()
         size = len(rec_bytes)
-        logger.debug(
-            f"Record size: {size} bytes (original: {len(orig_b)}, vector: {len(vec_b)}, "
-            f"metadata: {len(meta_b)}, checksum: {len(checksum_b)})")
 
-        old_loc = res['storage'].get_record_location(record_id)
+        old_loc = res['storage'].get_record_location(data_packet.record_id)
         if old_loc:
-            logger.debug(f"Record {record_id} already exists, performing update")
+            logger.debug(f"Record {data_packet.record_id} already exists, performing update")
             # During WAL replay, use _get_internal directly to avoid reentrant initialization
-            old = self._get_internal(name, record_id, res['storage'])
-            old_vec = old.vector
-            old_meta = old.metadata
-            old_doc = old.original_data
-            try:
-                old_doc = json.dumps(old_doc)
-            except:
-                old_doc = str(old_doc)
+            old = self._get_internal(name, data_packet.record_id, res['storage'])
         else:
-            logger.debug(f"Record {record_id} is new")
-            old_vec = old_meta = old_doc = None
+            logger.debug(f"Record {data_packet.record_id} is new")
+            old = DataPacket(type=DataPacketType.NONEXISTENT, record_id=data_packet.record_id)
 
         updated_storage = updated_meta = updated_vec = updated_doc = False
 
@@ -307,77 +281,77 @@ class CollectionService:
             # A) storage
             all_locs = res['storage'].get_all_record_locations()
             new_offset = max((l['offset'] + l['size'] for l in all_locs.values()), default=0)
-            logger.debug(f"Writing record {record_id} to storage at offset {new_offset}")
+            logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
             actual_offset = res['storage'].write(rec_bytes, new_offset)
 
             if old_loc:
                 logger.debug(f"Marking old record location as deleted")
-                res['storage'].mark_deleted(record_id)
-                res['storage'].delete_record(record_id)
-            res['storage'].add_record(record_id, new_offset, size)
+                res['storage'].mark_deleted(data_packet.record_id)
+                res['storage'].delete_record(data_packet.record_id)
+            res['storage'].add_record(data_packet.record_id, new_offset, size)
             updated_storage = True
-            logger.debug(f"Storage updated for record {record_id}")
+            logger.debug(f"Storage updated for record {data_packet.record_id}")
 
             # B) user metadata index
-            if old_meta is not None:
-                logger.debug(f"Updating metadata index for record {record_id}")
+            if old.type != DataPacketType.NONEXISTENT:
+                logger.debug(f"Updating metadata index for record {data_packet.record_id}")
                 res['meta_index'].update(
-                    MetadataItem(record_id=record_id, metadata=old_meta),
-                    MetadataItem(record_id=record_id, metadata=meta)
+                    old.to_metadata_item(),
+                    data_packet.to_metadata_item()
                 )
             else:
-                logger.debug(f"Adding new entry to metadata index for record {record_id}")
-                res['meta_index'].add(MetadataItem(record_id=record_id, metadata=meta))
+                logger.debug(f"Adding new entry to metadata index for record {data_packet.record_id}")
+                res['meta_index'].add(data_packet.to_metadata_item())
             updated_meta = True
 
             # C) user document index
-            if old_doc is not None:
-                logger.debug(f"Updating document index for record {record_id}")
+            if old.type != DataPacketType.NONEXISTENT:
+                logger.debug(f"Updating document index for record {data_packet.record_id}")
                 res['doc_index'].update(
-                    DocItem(record_id=record_id, document=old_doc),
-                    DocItem(record_id=record_id, document=doc)
+                    old.to_doc_item(),
+                    data_packet.to_doc_item()
                 )
             else:
-                logger.debug(f"Adding new entry to document index for record {record_id}")
-                res['doc_index'].add(DocItem(record_id=record_id, document=doc))
+                logger.debug(f"Adding new entry to document index for record {data_packet.record_id}")
+                res['doc_index'].add(data_packet.to_doc_item())
             updated_doc = True
 
             # D) vector index
-            logger.debug(f"Updating vector index for record {record_id}")
-            res['vec_index'].add(IndexItem(record_id=record_id, vector=vec))
+            logger.debug(f"Updating vector index for record {data_packet.record_id}")
+            res['vec_index'].add(data_packet.to_index_item())
             updated_vec = True
-            logger.debug(f"All indices updated for record {record_id}")
+            logger.debug(f"All indices updated for record {data_packet.record_id}")
 
         except Exception as e:
-            logger.error(f"Error applying insert for record {record_id}, rolling back: {str(e)}", exc_info=True)
+            logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}", exc_info=True)
 
             # rollback
             if updated_vec:
                 logger.debug(f"Rolling back vector index changes")
-                res['vec_index'].delete(record_id=record_id)
-                if old_vec is not None:
-                    res['vec_index'].add(IndexItem(record_id=record_id, vector=old_vec))
+                res['vec_index'].delete(record_id=data_packet.record_id)
+                if old.type != DataPacketType.NONEXISTENT:
+                    res['vec_index'].add(old.to_index_item())
 
             if updated_doc:
                 logger.debug(f"Rolling back document index changes")
-                res['doc_index'].delete(DocItem(record_id=record_id, document=doc))
-                if old_doc is not None:
-                    res['doc_index'].add(DocItem(record_id=record_id, document=old_doc))
+                res['doc_index'].delete(data_packet.to_doc_item())
+                if old.type != DataPacketType.NONEXISTENT:
+                    res['doc_index'].add(old.to_doc_item())
 
             if updated_meta:
                 logger.debug(f"Rolling back metadata index changes")
-                res['meta_index'].delete(MetadataItem(record_id=record_id, metadata=meta))
-                if old_meta is not None:
-                    res['meta_index'].add(MetadataItem(record_id=record_id, metadata=old_meta))
+                res['meta_index'].delete(data_packet.to_metadata_item())
+                if old.type != DataPacketType.NONEXISTENT:
+                    res['meta_index'].add(old.to_metadata_item())
 
             if updated_storage:
                 logger.debug(f"Rolling back storage changes")
-                res['storage'].mark_deleted(record_id)
-                res['storage'].delete_record(record_id)
+                res['storage'].mark_deleted(data_packet.record_id)
+                res['storage'].delete_record(data_packet.record_id)
                 if old_loc is not None:
-                    res['storage'].add_record(record_id, old_loc['offset'], old_loc['size'])
+                    res['storage'].add_record(data_packet.record_id, old_loc['offset'], old_loc['size'])
 
-            logger.error(f"Rollback complete for record {record_id}")
+            logger.error(f"Rollback complete for record {data_packet.record_id}")
             raise
 
     def _apply_delete(self, name: str, data_packet: DataPacket) -> None:
@@ -390,11 +364,9 @@ class CollectionService:
             logger.warning(f"Attempted to delete non-existent record {record_id}")
             return
 
-        rec = self.get(name, record_id)
-        old_vec = rec.vector
-        old_meta = rec.metadata
+        old = self.get(name, record_id)
 
-        removed_storage = removed_meta = removed_vec = False
+        removed_storage = removed_meta = removed_doc = removed_vec = False
 
         try:
             logger.debug(f"Marking record {record_id} as deleted in storage")
@@ -405,8 +377,12 @@ class CollectionService:
             res['storage'].delete_record(record_id)
 
             logger.debug(f"Removing record {record_id} from metadata index")
-            res['meta_index'].delete(MetadataItem(record_id=record_id, metadata=old_meta))
+            res['meta_index'].delete(old.to_metadata_item())
             removed_meta = True
+
+            logger.debug(f"Removing record {record_id} from doc index")
+            res['doc_index'].delete(old.to_doc_item())
+            removed_doc = True
 
             logger.debug(f"Removing record {record_id} from vector index")
             res['vec_index'].delete(record_id=record_id)
@@ -419,11 +395,15 @@ class CollectionService:
 
             if removed_vec:
                 logger.debug(f"Rolling back vector index deletion")
-                res['vec_index'].add(IndexItem(record_id=record_id, vector=old_vec))
+                res['vec_index'].add(old.to_index_item())
+
+            if removed_doc:
+                logger.debug(f"Rolling back doc index deletion")
+                res['doc_index'].add(old.to_doc_item())
 
             if removed_meta:
                 logger.debug(f"Rolling back metadata index deletion")
-                res['meta_index'].add(MetadataItem(record_id=record_id, metadata=old_meta))
+                res['meta_index'].add(old.to_metadata_item())
 
             if removed_storage:
                 logger.debug(f"Rolling back storage deletion")
@@ -581,40 +561,11 @@ class CollectionService:
             return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
 
         data = storage.read(loc['offset'], loc['size'])
-        # Update header size to account for 5 integers instead of 4
-        header_size = 5 * 4
-        rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
-            '<5I',
-            data[:header_size]
-        )
-
-        pos = header_size
-        returned_record_id_bytes = data[pos:pos + rid_len]
-        returned_record_id = str(returned_record_id_bytes, 'utf-8')
-        pos += rid_len
-        orig_bytes = data[pos:pos + original_data_size]
-        pos += original_data_size
-        vec_bytes = data[pos:pos + vector_size]
-        pos += vector_size
-        meta_bytes = data[pos:pos + metadata_size]
-        pos += metadata_size
-        checksum_bytes = data[pos:pos + checksum_size]
-        stored_checksum = str(checksum_bytes, 'utf-8')
-
-        data_packet = DataPacket(type=DataPacketType.RECORD,
-                                 record_id=returned_record_id,
-                                 original_data=json.loads(orig_bytes.decode('utf-8')),
-                                 vector=np.frombuffer(vec_bytes, dtype=np.float32),
-                                 metadata=json.loads(meta_bytes.decode('utf-8')))
-
-        if stored_checksum != data_packet.checksum:
-            error_message = f"Record id {record_id}'s stored checksum {stored_checksum} does not match reconstructed checksum {data_packet.checksum}"
-            logger.error(error_message)
-            raise ChecksumValidationFailureError(error_message)
+        data_packet = DataPacket.from_storage_bytes(data)
 
         # Verify that the returned record is the one which we request
-        if returned_record_id != record_id:
-            error_message = f"Returned record {returned_record_id} does not match expected record {record_id}"
+        if data_packet.record_id != record_id:
+            error_message = f"Returned record {data_packet.record_id} does not match expected record {record_id}"
             logger.error(error_message)
             raise ChecksumValidationFailureError(error_message)
 
