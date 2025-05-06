@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, SearchDataPacket
 
 
 class PlanNode(ABC):
@@ -45,6 +45,6 @@ class SearchNode(PlanNode):
         self.collection = collection
         self.query_packet = query_packet
 
-    def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def execute(self, context: Dict[str, Any]) -> List[SearchDataPacket]:
         db = context['vector_db']
         return db.search(self.collection, self.query_packet)

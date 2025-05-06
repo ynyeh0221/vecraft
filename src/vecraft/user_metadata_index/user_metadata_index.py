@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
-from src.vecraft.data.checksummed_data import MetadataItem, validate_checksum
+from src.vecraft.data.checksummed_data import MetadataItem
 
 
 class InvertedIndexMetadataIndex(MetadataIndexInterface):
@@ -18,11 +18,11 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
         self._eq_index: Dict[str, Dict[Any, Set[str]]] = defaultdict(lambda: defaultdict(set))
         self._range_index: Dict[str, list] = defaultdict(list)
 
-    @validate_checksum
     def add(self, item: MetadataItem) -> None:
         """
         Index a record's metadata.
         """
+        item.validate_checksum()
         rid = item.record_id
         for field, value in item.metadata.items():
             if isinstance(value, (list, set, tuple)):
@@ -38,20 +38,24 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
                     insort(self._range_index[field], (value, rid))
                 except TypeError:
                     pass
+        item.validate_checksum()
 
-    @validate_checksum
     def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
         """
         Update a record's metadata by removing old and adding new.
         """
+        old_item.validate_checksum()
+        new_item.validate_checksum()
         self.delete(old_item)
         self.add(new_item)
+        old_item.validate_checksum()
+        new_item.validate_checksum()
 
-    @validate_checksum
     def delete(self, item: MetadataItem) -> None:
         """
         Remove a record's metadata from the record_vector.
         """
+        item.validate_checksum()
         rid = item.record_id
         for field, value in item.metadata.items():
             if isinstance(value, (list, set, tuple)):
@@ -61,6 +65,7 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
             else:
                 self._eq_index[field][value].discard(rid)
                 self._remove_from_range(field, value, rid)
+        item.validate_checksum()
 
     def _remove_from_range(self, field: str, value: Any, rid: str) -> None:
         lst = self._range_index[field]

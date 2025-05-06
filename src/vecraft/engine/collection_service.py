@@ -17,7 +17,8 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem, DataPacketType
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem, DataPacketType, \
+    SearchDataPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError
 from src.vecraft.engine.locks import ReentrantRWLock
@@ -159,8 +160,8 @@ class CollectionService:
                 for rid in storage.get_all_record_locations().keys():
                     rec_data = self._get_internal(name, rid, storage)
                     if rec_data:
-                        meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
-                        doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
+                        meta_index.add(MetadataItem(record_id=rid, metadata=rec_data.metadata))
+                        doc_index.add(DocItem(record_id=rid, document=rec_data.original_data))
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
 
@@ -486,7 +487,7 @@ class CollectionService:
 
             return True
 
-    def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
+    def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
         # Initialize collection with global lock if needed
         self._get_or_init_collection(collection)
 
@@ -539,14 +540,13 @@ class CollectionService:
 
             # 4) storage
             logger.debug(f"Fetching full records for search results")
-            results: List[Dict[str, Any]] = []
+            results: List[SearchDataPacket] = []
             for rec_id, dist in raw_results:
-                rec = self.get(collection, rec_id).to_dict()
+                rec = self.get(collection, rec_id)
                 if not rec:
                     logger.warning(f"Record {rec_id} found in index but not in storage")
                     continue
-                rec['distance'] = dist
-                results.append(rec)
+                results.append(SearchDataPacket(data_packet=rec, distance=dist))
 
             query_packet.validate_checksum()
 

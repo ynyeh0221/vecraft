@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Optional, Set, Dict, Any
 
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
-from src.vecraft.data.checksummed_data import DocItem, validate_checksum
+from src.vecraft.data.checksummed_data import DocItem
 from src.vecraft.user_doc_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
@@ -28,8 +28,8 @@ class InvertedIndexDocIndex(DocIndexInterface):
         self._doc_fields = defaultdict(dict)
         self._doc_terms = defaultdict(set)
 
-    @validate_checksum
     def add(self, item: DocItem):
+        item.validate_checksum()
         self._doc_index[item.record_id] = item.document
 
         # Get document content
@@ -39,6 +39,7 @@ class InvertedIndexDocIndex(DocIndexInterface):
 
         # Index document for efficient searching
         self._index_document(item.record_id, content)
+        item.validate_checksum()
 
     @staticmethod
     def _get_content(document):
@@ -113,13 +114,16 @@ class InvertedIndexDocIndex(DocIndexInterface):
         # Simple implementation - split on non-alphanumeric chars and convert to lowercase
         return set(re.findall(r'\w+', content.lower()))
 
-    @validate_checksum
     def update(self, old_item: DocItem, new_item: DocItem):
+        old_item.validate_checksum()
+        new_item.validate_checksum()
         self.delete(old_item)
         self.add(new_item)
+        old_item.validate_checksum()
+        new_item.validate_checksum()
 
-    @validate_checksum
     def delete(self, item: DocItem):
+        item.validate_checksum()
         record_id = item.record_id
         if record_id not in self._doc_index:
             return
@@ -129,6 +133,7 @@ class InvertedIndexDocIndex(DocIndexInterface):
 
         # Remove from indices
         self._remove_from_indices(record_id)
+        item.validate_checksum()
 
     def _remove_from_indices(self, record_id):
         """Remove document from all indices"""

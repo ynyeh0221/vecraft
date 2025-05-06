@@ -4,7 +4,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import IndexItem, validate_checksum
+from src.vecraft.data.checksummed_data import IndexItem
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException
 from src.vecraft.vector_index.id_mapper import IdMapper
 
@@ -232,7 +232,6 @@ class HNSW:
         self._index.add_items(data, ids)
         self._current_elements = len(items)
 
-    @validate_checksum
     def add(self, item: IndexItem) -> None:
         """
         Add a single IndexItem to the record_vector.
@@ -240,6 +239,8 @@ class HNSW:
         Args:
             item: IndexItem containing record_id and vector
         """
+        item.validate_checksum()
+
         vec = item.vector
         record_id = item.record_id
 
@@ -278,6 +279,8 @@ class HNSW:
         # Add the vector
         self._index.add_items(np.array([np_vec]), np.array([internal_id], dtype=np.int32))
         self._current_elements += 1
+
+        item.validate_checksum()
 
     def add_batch(self, items: List[IndexItem]) -> None:
         """

@@ -113,7 +113,8 @@ def execute_command(client, args):
                 where=where,
                 where_document=where_document
             )
-            print(json.dumps(results, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
+            results_dict = [result.to_dict() for result in results]
+            print(json.dumps(results_dict, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
         else:
             return False
         return True

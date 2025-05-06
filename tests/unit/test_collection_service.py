@@ -354,7 +354,7 @@ class TestCollectionService(unittest.TestCase):
             k=2
         )
         results = self.collection_service.search(self.collection_name, query)
-        ids = {r['record_id'] for r in results}
+        ids = {r.data_packet.record_id for r in results}
         self.assertSetEqual(ids, {r1, r2})
 
         # Search with metadata filter
@@ -365,7 +365,7 @@ class TestCollectionService(unittest.TestCase):
         )
         results2 = self.collection_service.search(self.collection_name, query_with_filter)
         self.assertEqual(1, len(results2))
-        self.assertEqual(r1, results2[0]['record_id'])
+        self.assertEqual(r1, results2[0].data_packet.record_id)
 
     def test_concurrent_inserts(self):
         def insert_item(val):

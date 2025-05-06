@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Optional, Set, Dict, Any
 
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
-from src.vecraft.data.checksummed_data import DocItem, validate_checksum
+from src.vecraft.data.checksummed_data import DocItem
 from src.vecraft.user_doc_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
@@ -13,18 +13,23 @@ class BruteForceDocIndex(DocIndexInterface):
     def __init__(self):
         self._doc_index = dict()
 
-    @validate_checksum
     def add(self, item: DocItem):
+        item.validate_checksum()
         self._doc_index[item.record_id] = item.document
+        item.validate_checksum()
 
-    @validate_checksum
     def update(self, old_item: DocItem, new_item: DocItem):
+        old_item.validate_checksum()
+        new_item.validate_checksum()
         self.delete(old_item)
         self.add(new_item)
+        old_item.validate_checksum()
+        new_item.validate_checksum()
 
-    @validate_checksum
     def delete(self, item: DocItem):
+        item.validate_checksum()
         self._doc_index.pop(item.record_id, None)
+        item.validate_checksum()
 
     def get_matching_ids(self,
                          allowed_ids: Optional[Set[str]] = None,

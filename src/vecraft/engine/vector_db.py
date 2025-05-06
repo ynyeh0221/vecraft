@@ -1,7 +1,7 @@
-from typing import Dict, Any, List, Callable
+from typing import List, Callable
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, validate_checksum, DataPacketType
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.engine.collection_service import CollectionService
 
@@ -21,7 +21,6 @@ class VectorDB:
                                                      metadata_index_factory=metadata_index_factory,
                                                      doc_index_factory=doc_index_factory)
 
-    @validate_checksum
     def insert(self, collection: str, data_packet: DataPacket) -> str:
         """
         Insert or update a record in the vector_index.
@@ -33,10 +32,12 @@ class VectorDB:
         Returns:
             The record ID
         """
-        return self._collection_service.insert(collection, data_packet)
+        data_packet.validate_checksum()
+        result = self._collection_service.insert(collection, data_packet)
+        data_packet.validate_checksum()
+        return result
 
-    @validate_checksum
-    def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
+    def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
         """
         Search for similar vectors with filtering.
 
@@ -46,7 +47,12 @@ class VectorDB:
         Returns:
             List of matching records with similarity scores
         """
-        return self._collection_service.search(collection, query_packet)
+        results = self._collection_service.search(collection, query_packet)
+
+        # Verify checksum
+        [result.validate_checksum() for result in results]
+
+        return results
 
     def get(self, collection: str, record_id: str) -> DataPacket:
         """Retrieve a record by ID."""
@@ -65,11 +71,13 @@ class VectorDB:
 
         return result
 
-    @validate_checksum
     def delete(self, collection: str, data_packet: DataPacket) -> bool:
         """Delete a record by ID."""
-        return self._collection_service.delete(collection, data_packet)
+        data_packet.validate_checksum()
+        result = self._collection_service.delete(collection, data_packet)
+        data_packet.validate_checksum()
+        return result
 
     def flush(self):
-        """Flush collection service' data and indices to disk."""
+        """Flush collection service's data and indices to disk."""
         self._collection_service.flush()

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
@@ -106,7 +106,7 @@ class VecraftClient:
             k: int,
             where: Optional[Dict[str, Any]] = None,
             where_document: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[SearchDataPacket]:
         packet = QueryPacket(
             query_vector=query_vector,
             k=k,

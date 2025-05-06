@@ -55,7 +55,7 @@ class TestVecraftClient(unittest.TestCase):
                 k=20,
                 where={"tags": data["tags"]}
             )
-            self.assertTrue(any(res["record_id"] == rec_id for res in results))
+            self.assertTrue(any(res.data_packet.record_id == rec_id for res in results))
 
             # Fetch
             rec = self.client.get(collection, rec_id)
@@ -67,8 +67,8 @@ class TestVecraftClient(unittest.TestCase):
                 query_vector=vec,
                 k=1
             )[0]
-            self.assertEqual(top["record_id"], rec_id)
-            self.assertTrue(np.isclose(top["distance"], 0.0))
+            self.assertEqual(top.data_packet.record_id, rec_id)
+            self.assertTrue(np.isclose(top.distance, 0.0))
             return rec_id
 
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -99,7 +99,7 @@ class TestVecraftClient(unittest.TestCase):
                 query_vector=vec,
                 k=1
             )
-            self.assertTrue(pre and pre[0]["record_id"] == rec_id)
+            self.assertTrue(pre and pre[0].data_packet.record_id == rec_id)
 
             # Delete
             self.client.delete(collection=collection, record_id=str(idx))
@@ -149,7 +149,7 @@ class TestVecraftClient(unittest.TestCase):
             k=5,
             where={"tags": original_data["tags"]}
         )
-        self.assertTrue(any(res["record_id"] == record_id for res in results))
+        self.assertTrue(any(res.data_packet.record_id == record_id for res in results))
         rec = self.client.get(collection, record_id)
         self.assertEqual(rec.original_data, original_data)
 
@@ -182,7 +182,7 @@ class TestVecraftClient(unittest.TestCase):
             k=5,
             where={"tags": updated_data["tags"]}
         )
-        self.assertTrue(any(res["record_id"] == record_id for res in new_results))
+        self.assertTrue(any(res.data_packet.record_id == record_id for res in new_results))
 
         # Verify the updated record can be fetched
         updated_rec = self.client.get(collection, record_id)
@@ -194,8 +194,8 @@ class TestVecraftClient(unittest.TestCase):
             query_vector=updated_vector,
             k=1
         )[0]
-        self.assertEqual(top["record_id"], record_id)
-        self.assertTrue(np.isclose(top["distance"], 0.0))
+        self.assertEqual(top.data_packet.record_id, record_id)
+        self.assertTrue(np.isclose(top.distance, 0.0))
 
     def test_batch_operations_consistency(self):
         """Test bulk operations (insert, search, delete) for consistency."""
@@ -459,7 +459,7 @@ class TestVecraftClient(unittest.TestCase):
             where={"key_50": "value_50"}
         )
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["record_id"], record_id)
+        self.assertEqual(results[0].data_packet.record_id, record_id)
 
     def test_scalability(self):
         """Test database performance with a larger number of records."""
@@ -535,9 +535,9 @@ class TestVecraftClient(unittest.TestCase):
 
         # Assertions to verify functionality
         self.assertTrue(len(results) <= 10)
-        self.assertTrue(all(r["metadata"]["category"] == "electronics" for r in filtered_results))
-        self.assertTrue(all(r["metadata"]["category"] == "electronics" and
-                            r["metadata"]["price_range"] == "high" for r in complex_results))
+        self.assertTrue(all(r.data_packet.metadata["category"] == "electronics" for r in filtered_results))
+        self.assertTrue(all(r.data_packet.metadata["category"] == "electronics" and
+                            r.data_packet.metadata["price_range"] == "high" for r in complex_results))
 
     def test_validate_checksum_decorator(self):
         """Test that the validate_checksum decorator catches and enriches exceptions."""
