@@ -1,6 +1,5 @@
 import logging
 import pickle
-import struct
 import threading
 import time
 from pathlib import Path
@@ -16,8 +15,7 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem, DataPacketType, \
-    SearchDataPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError
 from src.vecraft.engine.locks import ReentrantRWLock
@@ -145,22 +143,14 @@ class CollectionService:
                 start_time = time.time()
                 record_count = 0
 
-                # Vector index rebuild
-                logger.debug(f"Rebuilding vector index for collection {name}")
-                for rid, loc in storage.get_all_record_locations().items():
-                    data = storage.read(loc['offset'], loc['size'])
-                    _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
-                    vec_start = 16 + orig_size
-                    vec = np.frombuffer(data[vec_start:vec_start + vec_size], dtype=np.float32)
-                    vector_index.add(IndexItem(record_id=str(rid), vector=vec))
-
-                # Metadata and document index rebuild
-                logger.debug(f"Rebuilding metadata and document indices for collection {name}")
+                # Vector, Metadata and document index rebuild
+                logger.debug(f"Rebuilding vector index, metadata and document indices for collection {name}")
                 for rid in storage.get_all_record_locations().keys():
                     rec_data = self._get_internal(name, rid, storage)
                     if rec_data:
-                        meta_index.add(MetadataItem(record_id=rid, metadata=rec_data.metadata))
-                        doc_index.add(DocItem(record_id=rid, document=rec_data.original_data))
+                        vector_index.add(rec_data.to_index_item())
+                        meta_index.add(rec_data.to_metadata_item())
+                        doc_index.add(rec_data.to_doc_item())
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
 

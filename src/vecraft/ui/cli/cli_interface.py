@@ -17,7 +17,6 @@ def parse_vector(vector_str):
       "[0.1, 0.2, 0.3]"
     """
     try:
-        vec = None
         s = vector_str.strip()
         # JSON list syntax
         if s.startswith("[") and s.endswith("]"):
