@@ -55,11 +55,11 @@ class TestVecraftClient(unittest.TestCase):
                 k=20,
                 where={"tags": data["tags"]}
             )
-            self.assertTrue(any(res["id"] == rec_id for res in results))
+            self.assertTrue(any(res["record_id"] == rec_id for res in results))
 
             # Fetch
             rec = self.client.get(collection, rec_id)
-            self.assertEqual(rec["original_data"], data)
+            self.assertEqual(rec.original_data, data)
 
             # Zero-distance check
             top = self.client.search(
@@ -67,7 +67,7 @@ class TestVecraftClient(unittest.TestCase):
                 query_vector=vec,
                 k=1
             )[0]
-            self.assertEqual(top["id"], rec_id)
+            self.assertEqual(top["record_id"], rec_id)
             self.assertTrue(np.isclose(top["distance"], 0.0))
             return rec_id
 
@@ -99,7 +99,7 @@ class TestVecraftClient(unittest.TestCase):
                 query_vector=vec,
                 k=1
             )
-            self.assertTrue(pre and pre[0]["id"] == rec_id)
+            self.assertTrue(pre and pre[0]["record_id"] == rec_id)
 
             # Delete
             self.client.delete(collection=collection, record_id=str(idx))
@@ -110,7 +110,7 @@ class TestVecraftClient(unittest.TestCase):
                 query_vector=vec,
                 k=1
             )
-            self.assertTrue(all(r["id"] != rec_id for r in post))
+            self.assertTrue(all(r["record_id"] != rec_id for r in post))
 
             # Fetch must fail
             with self.assertRaises(Exception):
@@ -149,9 +149,9 @@ class TestVecraftClient(unittest.TestCase):
             k=5,
             where={"tags": original_data["tags"]}
         )
-        self.assertTrue(any(res["id"] == record_id for res in results))
+        self.assertTrue(any(res["record_id"] == record_id for res in results))
         rec = self.client.get(collection, record_id)
-        self.assertEqual(rec["original_data"], original_data)
+        self.assertEqual(rec.original_data, original_data)
 
         # Update the record with new data and vector
         updated_data = {"text": "updated", "tags": ["new"]}
@@ -173,7 +173,7 @@ class TestVecraftClient(unittest.TestCase):
             k=5,
             where={"tags": original_data["tags"]}
         )
-        self.assertTrue(all(res["id"] != record_id for res in old_results))
+        self.assertTrue(all(res["record_id"] != record_id for res in old_results))
 
         # Verify new metadata returns the record
         new_results = self.client.search(
@@ -182,11 +182,11 @@ class TestVecraftClient(unittest.TestCase):
             k=5,
             where={"tags": updated_data["tags"]}
         )
-        self.assertTrue(any(res["id"] == record_id for res in new_results))
+        self.assertTrue(any(res["record_id"] == record_id for res in new_results))
 
         # Verify the updated record can be fetched
         updated_rec = self.client.get(collection, record_id)
-        self.assertEqual(updated_rec["original_data"], updated_data)
+        self.assertEqual(updated_rec.original_data, updated_data)
 
         # Verify zero-distance search with updated vector works
         top = self.client.search(
@@ -194,7 +194,7 @@ class TestVecraftClient(unittest.TestCase):
             query_vector=updated_vector,
             k=1
         )[0]
-        self.assertEqual(top["id"], record_id)
+        self.assertEqual(top["record_id"], record_id)
         self.assertTrue(np.isclose(top["distance"], 0.0))
 
     def test_batch_operations_consistency(self):
@@ -230,7 +230,7 @@ class TestVecraftClient(unittest.TestCase):
         # Verify all records can be fetched
         for i, rec_id in enumerate(record_ids):
             rec = self.client.get(collection, rec_id)
-            self.assertEqual(rec["original_data"], records[i])
+            self.assertEqual(rec.original_data, records[i])
 
         # Verify filtering by tag works
         even_results = self.client.search(
@@ -261,7 +261,7 @@ class TestVecraftClient(unittest.TestCase):
                     self.client.get(collection, rec_id)
             else:  # Odd records should still be there
                 rec = self.client.get(collection, rec_id)
-                self.assertEqual(rec["original_data"], records[i])
+                self.assertEqual(rec.original_data, records[i])
 
         # Verify searching by "even" tag returns no results
         empty_results = self.client.search(
@@ -393,10 +393,10 @@ class TestVecraftClient(unittest.TestCase):
         # Verify record exists and has been updated
         final_record = self.client.get(collection, record_id)
         self.assertIsNotNone(final_record)
-        self.assertTrue(final_record["original_data"]["version"] > 0)
+        self.assertTrue(final_record.original_data["version"] > 0)
 
         # The final version should be from one of our updates
-        self.assertTrue(any(final_record["original_data"]["version"] == i for i in range(1, num_updates + 1)))
+        self.assertTrue(any(final_record.original_data["version"] == i for i in range(1, num_updates + 1)))
 
     def test_special_characters(self):
         """Test with special characters in data."""
@@ -426,8 +426,8 @@ class TestVecraftClient(unittest.TestCase):
 
         # Verify complex data is preserved
         result = self.client.get(collection=collection, record_id=record_id)
-        self.assertEqual(result["original_data"]["nested"]["emoji"], "😀🚀🌍")
-        self.assertEqual(result["original_data"]["nested"]["quotes"], "\"quoted text\"")
+        self.assertEqual(result.original_data["nested"]["emoji"], "😀🚀🌍")
+        self.assertEqual(result.original_data["nested"]["quotes"], "\"quoted text\"")
 
     def test_large_metadata(self):
         """Test with a large metadata object."""
@@ -459,7 +459,7 @@ class TestVecraftClient(unittest.TestCase):
             where={"key_50": "value_50"}
         )
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["id"], record_id)
+        self.assertEqual(results[0]["record_id"], record_id)
 
     def test_scalability(self):
         """Test database performance with a larger number of records."""

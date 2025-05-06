@@ -36,7 +36,7 @@ class GetNode(PlanNode):
         self.collection = collection
         self.record_id = record_id
 
-    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, context: Dict[str, Any]) -> DataPacket:
         db = context['vector_db']
         return db.get(self.collection, self.record_id)
 

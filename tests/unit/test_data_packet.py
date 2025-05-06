@@ -2,14 +2,14 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType
 
 
 class TestPackets(unittest.TestCase):
 
     def test_data_packet(self):
         data_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="packet_1",
             original_data={"x": 1, "y": "abc"},
             vector=np.array([1, 2, 3], dtype=np.float32),

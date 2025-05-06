@@ -17,7 +17,7 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, IndexItem, MetadataItem, DocItem, DataPacketType
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError
 from src.vecraft.engine.locks import ReentrantRWLock
@@ -158,9 +158,8 @@ class CollectionService:
                 logger.debug(f"Rebuilding metadata and document indices for collection {name}")
                 for rid in storage.get_all_record_locations().keys():
                     rec_data = self._get_internal(name, rid, storage)
-                    if rec_data and 'metadata' in rec_data:
+                    if rec_data:
                         meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
-                    if rec_data and 'original_data' in rec_data:
                         doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
@@ -268,6 +267,7 @@ class CollectionService:
         orig = data_packet.original_data
         vec = data_packet.vector
         meta = data_packet.metadata
+        checksum = data_packet.checksum
         logger.debug(f"Applying insert for record {record_id} to collection {name}")
 
         rid_b = record_id.encode('utf-8')
@@ -275,20 +275,23 @@ class CollectionService:
         orig_b = doc.encode('utf-8')
         vec_b = vec.tobytes()
         meta_b = json.dumps(meta).encode('utf-8')
-        header = struct.pack('<4I', len(record_id), len(orig_b), len(vec_b), len(meta_b))
-        rec_bytes = header + rid_b + orig_b + vec_b + meta_b
+        checksum_b = checksum.encode('utf-8')
+
+        header = struct.pack('<5I', len(record_id), len(orig_b), len(vec_b), len(meta_b), len(checksum_b))
+        rec_bytes = header + rid_b + orig_b + vec_b + meta_b + checksum_b
         size = len(rec_bytes)
         logger.debug(
-            f"Record size: {size} bytes (original: {len(orig_b)}, vector: {len(vec_b)}, metadata: {len(meta_b)})")
+            f"Record size: {size} bytes (original: {len(orig_b)}, vector: {len(vec_b)}, "
+            f"metadata: {len(meta_b)}, checksum: {len(checksum_b)})")
 
         old_loc = res['storage'].get_record_location(record_id)
         if old_loc:
             logger.debug(f"Record {record_id} already exists, performing update")
             # During WAL replay, use _get_internal directly to avoid reentrant initialization
             old = self._get_internal(name, record_id, res['storage'])
-            old_vec = old.get('vector')
-            old_meta = old.get('metadata', {})
-            old_doc = old.get('original_data', {})
+            old_vec = old.vector
+            old_meta = old.metadata
+            old_doc = old.original_data
             try:
                 old_doc = json.dumps(old_doc)
             except:
@@ -387,8 +390,8 @@ class CollectionService:
             return
 
         rec = self.get(name, record_id)
-        old_vec = rec.get('vector')
-        old_meta = rec.get('metadata', {})
+        old_vec = rec.vector
+        old_meta = rec.metadata
 
         removed_storage = removed_meta = removed_vec = False
 
@@ -538,7 +541,7 @@ class CollectionService:
             logger.debug(f"Fetching full records for search results")
             results: List[Dict[str, Any]] = []
             for rec_id, dist in raw_results:
-                rec = self.get(collection, rec_id)
+                rec = self.get(collection, rec_id).to_dict()
                 if not rec:
                     logger.warning(f"Record {rec_id} found in index but not in storage")
                     continue
@@ -552,7 +555,7 @@ class CollectionService:
 
             return results
 
-    def get(self, collection: str, record_id: str) -> dict:
+    def get(self, collection: str, record_id: str) -> DataPacket:
         # Initialize collection with global lock if needed
         self._get_or_init_collection(collection)
 
@@ -569,20 +572,22 @@ class CollectionService:
             return result
 
     # Helper method to get a record without external locking
-    def _get_internal(self, collection: str, record_id: str, storage=None) -> dict:
+    def _get_internal(self, collection: str, record_id: str, storage=None) -> DataPacket:
         if storage is None:
             storage = self._collections[collection]['storage']
 
         loc = storage.get_record_location(record_id)
         if not loc:
-            return {}
+            return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
 
         data = storage.read(loc['offset'], loc['size'])
-        header_size = 4 * 4
-        rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
-            '<4I',
+        # Update header size to account for 5 integers instead of 4
+        header_size = 5 * 4
+        rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
+            '<5I',
             data[:header_size]
         )
+
         pos = header_size
         returned_record_id_bytes = data[pos:pos + rid_len]
         returned_record_id = str(returned_record_id_bytes, 'utf-8')
@@ -592,6 +597,20 @@ class CollectionService:
         vec_bytes = data[pos:pos + vector_size]
         pos += vector_size
         meta_bytes = data[pos:pos + metadata_size]
+        pos += metadata_size
+        checksum_bytes = data[pos:pos + checksum_size]
+        stored_checksum = str(checksum_bytes, 'utf-8')
+
+        data_packet = DataPacket(type=DataPacketType.RECORD,
+                                 record_id=returned_record_id,
+                                 original_data=json.loads(orig_bytes.decode('utf-8')),
+                                 vector=np.frombuffer(vec_bytes, dtype=np.float32),
+                                 metadata=json.loads(meta_bytes.decode('utf-8')))
+
+        if stored_checksum != data_packet.checksum:
+            error_message = f"Record id {record_id}'s stored checksum {stored_checksum} does not match reconstructed checksum {data_packet.checksum}"
+            logger.error(error_message)
+            raise ChecksumValidationFailureError(error_message)
 
         # Verify that the returned record is the one which we request
         if returned_record_id != record_id:
@@ -599,12 +618,7 @@ class CollectionService:
             logger.error(error_message)
             raise ChecksumValidationFailureError(error_message)
 
-        return {
-            'id': record_id,
-            'original_data': json.loads(orig_bytes.decode('utf-8')),
-            'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-            'metadata': json.loads(meta_bytes.decode('utf-8'))
-        }
+        return data_packet
 
     def flush(self):
         # Use global lock only to get a consistent snapshot of collection names
@@ -673,7 +687,7 @@ class CollectionService:
                 if not rec:
                     logger.warning(f"Record {rid} not found, skipping for t-SNE")
                     continue
-                vectors.append(rec['vector'])
+                vectors.append(rec.vector)
                 labels.append(rid)
 
             if not vectors:

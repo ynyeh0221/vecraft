@@ -3,6 +3,7 @@ import hashlib
 import json
 import zlib
 from dataclasses import dataclass, field, asdict
+from enum import Enum
 from typing import Any, Dict, Optional, Callable, Union, List
 
 import numpy as np
@@ -62,10 +63,14 @@ def _concat_bytes(components: List[bytes]) -> bytes:
     """
     return b"".join(components)
 
+class DataPacketType(Enum):
+    RECORD = 1
+    TOMBSTONE = 2
+    NONEXISTENT = 3
 
 @dataclass
 class DataPacket:
-    type: str
+    type: DataPacketType
     record_id: str
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
     original_data: Any = None
@@ -86,7 +91,7 @@ class DataPacket:
         """
         parts: List[bytes] = []
 
-        parts.append(self.type.encode('utf-8'))
+        parts.append(self.type.name.encode('utf-8'))
         parts.append(self.record_id.encode('utf-8'))
 
         # Handle fields which might be None
@@ -125,6 +130,11 @@ class DataPacket:
         """
         d = asdict(self)
 
+        # Handle enum fields by converting them to their names
+        for key, value in d.items():
+            if isinstance(value, Enum):
+                d[key] = value.name
+
         # encode vector bytes, dtype and shape
         if self.vector is not None:
             v_bytes = self.vector.tobytes()
@@ -154,8 +164,11 @@ class DataPacket:
         else:
             vector = None
 
+        # Convert string back to enum for the 'type' field
+        packet_type = DataPacketType[d['type']] if isinstance(d['type'], str) else d['type']
+
         packet = cls(
-            type=d['type'],
+            type=packet_type,
             record_id=d['record_id'],
             checksum_algorithm=d.get('checksum_algorithm', 'sha256'),
             original_data=d.get('original_data'),

@@ -1,9 +1,9 @@
 from typing import Dict, Any, List, Callable
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, validate_checksum
-from src.vecraft.data.exception import RecordNotFoundError
-from src.vecraft.engine.collection_service import CollectionService
 from src.vecraft.catalog.json_catalog import JsonCatalog
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, validate_checksum, DataPacketType
+from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft.engine.collection_service import CollectionService
 
 
 class VectorDB:
@@ -48,11 +48,21 @@ class VectorDB:
         """
         return self._collection_service.search(collection, query_packet)
 
-    def get(self, collection: str, record_id: str) -> dict:
+    def get(self, collection: str, record_id: str) -> DataPacket:
         """Retrieve a record by ID."""
         result = self._collection_service.get(collection, record_id)
-        if not result:
+
+        if result.type == DataPacketType.NONEXISTENT:
             raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
+
+        # Verify that the returned record is the one which we request
+        if result.record_id != record_id:
+            error_message = f"Returned record {result.record_id} does not match expected record {record_id}"
+            raise ChecksumValidationFailureError(error_message)
+
+        # Verify checksum
+        result.validate_checksum()
+
         return result
 
     @validate_checksum

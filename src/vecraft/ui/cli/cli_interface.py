@@ -99,7 +99,7 @@ def execute_command(client, args):
             print(rec_id)
         elif args.command == "get":
             rec = client.get(args.collection, args.id)
-            print(json.dumps(rec, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
+            print(json.dumps(rec.to_dict(), indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
         elif args.command == "delete":
             client.delete(args.collection, args.id)
             print(f"Deleted record '{args.id}'")

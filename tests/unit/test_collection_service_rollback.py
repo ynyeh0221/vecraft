@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket
+from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
 from src.vecraft.engine.collection_service import CollectionService
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
@@ -89,7 +89,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
         data_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="test1",
             original_data={"foo": "bar"},
             vector=vec,
@@ -122,7 +122,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
         data_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="test2",
             original_data={"foo": "bar"},
             vector=vec,
@@ -155,7 +155,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
         data_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="test3",
             original_data={"foo": "bar"},
             vector=vec,
@@ -184,7 +184,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         record_id = "test_delete_meta"
 
         insert_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data={"x": 1},
             vector=vec,
@@ -201,7 +201,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # Attempt to delete, which should fail
         delete_packet = DataPacket(
-            type="delete",
+            type=DataPacketType.TOMBSTONE,
             record_id=record_id
         )
 
@@ -226,7 +226,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         record_id = "test_delete_vec"
 
         insert_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data={"x": 2},
             vector=vec,
@@ -243,7 +243,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # Attempt to delete, which should fail
         delete_packet = DataPacket(
-            type="delete",
+            type=DataPacketType.TOMBSTONE,
             record_id=record_id
         )
 
@@ -270,7 +270,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         record_id = "test_overwrite_meta"
 
         insert_packet1 = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data=orig1,
             vector=vec1,
@@ -294,7 +294,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         meta2 = {"tag": "new"}
 
         insert_packet2 = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data=orig2,
             vector=vec2,
@@ -306,9 +306,9 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # 4) After failure, the record should be exactly the original
         rec = self.collection_service.get(self.collection_name, record_id)
-        self.assertEqual(orig1, rec["original_data"])
-        np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["metadata"])
+        self.assertEqual(orig1, rec.original_data)
+        np.testing.assert_array_almost_equal(vec1, rec.vector)
+        self.assertEqual(meta1, rec.metadata)
 
     def test_overwrite_vector_failure_restores_original(self):
         """Overwriting vector fails → original record remains untouched."""
@@ -325,7 +325,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         record_id = "test_overwrite_vec"
 
         insert_packet1 = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data=orig1,
             vector=vec1,
@@ -353,7 +353,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         meta2 = {"flag": "new"}
 
         insert_packet2 = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id=record_id,
             original_data=orig2,
             vector=vec2,
@@ -365,9 +365,9 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # 4) After failure, the record should be exactly the original
         rec = self.collection_service.get(self.collection_name, record_id)
-        self.assertEqual(orig1, rec["original_data"])
-        np.testing.assert_array_almost_equal(vec1, rec["vector"])
-        self.assertEqual(meta1, rec["metadata"])
+        self.assertEqual(orig1, rec.original_data)
+        np.testing.assert_array_almost_equal(vec1, rec.vector)
+        self.assertEqual(meta1, rec.metadata)
 
 
 if __name__ == '__main__':

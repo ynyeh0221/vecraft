@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.vecraft.data.checksummed_data import DataPacket
+from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
 from src.vecraft.wal.wal_manager import WALManager
 
 
@@ -28,14 +28,14 @@ class TestWALManager(unittest.TestCase):
         """Test appending entries to the WAL file."""
         test_entries = [
             DataPacket(
-                type="insert",
+                type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=None,
                 metadata={}
             ),
             DataPacket(
-                type="insert",
+                type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John Doe"},
                 vector=None,
@@ -64,14 +64,14 @@ class TestWALManager(unittest.TestCase):
         """Test replaying entries from the WAL file."""
         test_entries = [
             DataPacket(
-                type="insert",
+                type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=None,
                 metadata={}
             ),
             DataPacket(
-                type="insert",
+                type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John Doe"},
                 vector=None,
@@ -102,7 +102,7 @@ class TestWALManager(unittest.TestCase):
         """Test clearing the WAL file."""
         # Append an entry to create the file
         test_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="test",
             original_data={},
             vector=None,
@@ -149,7 +149,7 @@ class TestWALManager(unittest.TestCase):
         mock_open.return_value.__enter__.return_value = mock_file
 
         test_packet = DataPacket(
-            type="insert",
+            type=DataPacketType.RECORD,
             record_id="test",
             original_data={},
             vector=None,
