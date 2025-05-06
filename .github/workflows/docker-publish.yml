@@ -33,10 +33,11 @@ jobs:
           pip install pytest-xdist pytest-timeout
 
       - name: Run unit tests
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: |
           source .venv/bin/activate
-          pytest tests -v -xvs -n auto --timeout=60
+          # Run tests in series (without -n) to avoid file conflicts
+          pytest tests -v --timeout=60
 
       - name: Login with PAT
         run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin

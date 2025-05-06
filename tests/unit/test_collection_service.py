@@ -232,7 +232,7 @@ class TestCollectionService(unittest.TestCase):
                     '.wal',
                     '.idxsnap',
                     '.metasnap',
-                    '.docsnap',  # ← add this
+                    '.docsnap',
                     '_storage.json',
                     '_location_index.json'
             )):
