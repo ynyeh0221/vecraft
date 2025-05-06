@@ -2,6 +2,7 @@ import json
 import logging
 import pickle
 import struct
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
@@ -55,14 +56,19 @@ class CollectionService:
         # First, try to access the collection without locking
         # This is safe for reading since Python's dict access is atomic
         if name in self._collections:
-            return self._collections[name]
+            res = self._collections[name]
+            # wait until someone does res['init_event'].set()
+            res['init_event'].wait()
+            return res
 
         # If we reach here, the collection doesn't exist (or at least didn't when we checked)
         # We need to acquire the global lock to either create it or get it if another thread created it
         with self._global_lock.write_lock():
             # Double-check if the collection was created by another thread while we were waiting
             if name in self._collections:
-                return self._collections[name]
+                res = self._collections[name]
+                res['init_event'].wait()
+                return res
 
             logger.info(f"Initializing collection {name}")
             schema: CollectionSchema = self._catalog.get_schema(name)
@@ -78,6 +84,7 @@ class CollectionService:
 
             # Create a collection-specific lock
             collection_lock = ReentrantRWLock()
+            init_event = threading.Event()
 
             # load or rebuild
             if vec_snap.exists() and meta_snap.exists():
@@ -128,6 +135,7 @@ class CollectionService:
                 'meta_snap': meta_snap,
                 'doc_snap': doc_snap,
                 'lock': collection_lock,  # Add the collection-specific lock
+                'init_event': init_event,
                 'initialized': False  # Mark as not fully initialized yet
             }
             self._collections[name] = collection_resources
@@ -140,27 +148,31 @@ class CollectionService:
         if collection_resources.get('initialized', False):
             return collection_resources
 
-        # Otherwise, acquire collection lock and initialize if needed
-        with collection_resources['lock'].write_lock():
-            # Double-check if another thread already initialized it
-            if collection_resources.get('initialized', False):
-                return collection_resources
+        # Outside global lock: replay WAL under per-collection write-lock
+        res = self._collections[name]
+        with res['lock'].write_lock():
+            # If another thread already replayed
+            if res['initialized']:
+                # ensure waiters aren’t stuck
+                res['init_event'].set()
+                return res
 
             logger.info(f"Replaying WAL for collection {name}")
             wal_start = time.time()
             try:
-                replay_count = collection_resources['wal'].replay(lambda entry: self._replay_entry(name, entry))
-                collection_resources['wal'].clear()
-                logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
-            except Exception as e:
-                logger.error(f"Error replaying WAL for collection {name}: {str(e)}", exc_info=True)
-                raise
+                replay_count = res['wal'].replay(lambda e: self._replay_entry(name, e))
+                res['wal'].clear()
+                logger.info(f"Replayed and cleared {replay_count} entries in {time.time() - wal_start:.2f}s")
 
-            # Mark as fully initialized
-            collection_resources['initialized'] = True
+                # Mark as fully initialized
+                res['initialized'] = True
+
+            finally:
+                # ALWAYS wake up anyone waiting, even if replay throws
+                res['init_event'].set()
+
             logger.info(f"Collection {name} initialized successfully")
-
-        return collection_resources
+        return res
 
     def _load_snapshots(self, name: str) -> bool:
         """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
