@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Test, Build and Push Docker Image
 
 on:
   push:
@@ -12,22 +12,39 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  build_and_publish:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: |
+          source .venv/bin/activate
+          pytest tests
+
       - name: Login with PAT
         run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: BuildImage
+      - name: Build Docker image
         run: |
           docker build . -t ghcr.io/${{ github.repository }}:latest
           docker tag ghcr.io/${{ github.repository }}:latest ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
-      - name: PublishImage
+      - name: Push Docker image
         run: |
           docker push ghcr.io/${{ github.repository }}:latest
           docker push ghcr.io/${{ github.repository }}:${{ github.ref_name }}
