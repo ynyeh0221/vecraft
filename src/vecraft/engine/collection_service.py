@@ -47,19 +47,22 @@ class CollectionService:
         self._collections: Dict[str, Dict[str, Any]] = {}
         logger.info("CollectionService initialized")
 
-    def _init_collection(self, name: str):
-        # Use global lock to check if collection exists
-        with self._global_lock.read_lock():
-            if name in self._collections:
-                logger.debug(f"Collection {name} already initialized")
-                return
+    def _get_or_init_collection(self, name: str):
+        """
+        Optimized method to get or initialize a collection without always acquiring the global lock.
+        Uses optimistic concurrency control to minimize lock contention.
+        """
+        # First, try to access the collection without locking
+        # This is safe for reading since Python's dict access is atomic
+        if name in self._collections:
+            return self._collections[name]
 
-        # Collection doesn't exist, acquire global write lock to create it
+        # If we reach here, the collection doesn't exist (or at least didn't when we checked)
+        # We need to acquire the global lock to either create it or get it if another thread created it
         with self._global_lock.write_lock():
-            # Double-check in case another thread created it while we were waiting
+            # Double-check if the collection was created by another thread while we were waiting
             if name in self._collections:
-                logger.debug(f"Collection {name} already initialized by another thread")
-                return
+                return self._collections[name]
 
             logger.info(f"Initializing collection {name}")
             schema: CollectionSchema = self._catalog.get_schema(name)
@@ -114,7 +117,7 @@ class CollectionService:
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
 
             # Store the collection with basic resources first, before WAL replay
-            self._collections[name] = {
+            collection_resources = {
                 'schema': schema,
                 'wal': wal,
                 'storage': storage,
@@ -124,23 +127,40 @@ class CollectionService:
                 'vec_snap': vec_snap,
                 'meta_snap': meta_snap,
                 'doc_snap': doc_snap,
-                'lock': collection_lock  # Add the collection-specific lock
+                'lock': collection_lock,  # Add the collection-specific lock
+                'initialized': False  # Mark as not fully initialized yet
             }
+            self._collections[name] = collection_resources
 
-        # Release the global lock and replay WAL with collection-specific lock
-        logger.info(f"Replaying WAL for collection {name}")
-        wal_start = time.time()
-        try:
-            # Use collection-specific lock for WAL replay
-            with self._collections[name]['lock'].write_lock():
-                replay_count = self._collections[name]['wal'].replay(lambda entry: self._replay_entry(name, entry))
-                self._collections[name]['wal'].clear()
+        # Collection is now in the dictionary, but WAL replay needs to happen
+        # Release the global lock and use collection-specific lock for WAL replay
+        collection_resources = self._collections[name]
+
+        # If already initialized by another thread, just return
+        if collection_resources.get('initialized', False):
+            return collection_resources
+
+        # Otherwise, acquire collection lock and initialize if needed
+        with collection_resources['lock'].write_lock():
+            # Double-check if another thread already initialized it
+            if collection_resources.get('initialized', False):
+                return collection_resources
+
+            logger.info(f"Replaying WAL for collection {name}")
+            wal_start = time.time()
+            try:
+                replay_count = collection_resources['wal'].replay(lambda entry: self._replay_entry(name, entry))
+                collection_resources['wal'].clear()
                 logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
-        except Exception as e:
-            logger.error(f"Error replaying WAL for collection {name}: {str(e)}", exc_info=True)
-            raise
+            except Exception as e:
+                logger.error(f"Error replaying WAL for collection {name}: {str(e)}", exc_info=True)
+                raise
 
-        logger.info(f"Collection {name} initialized successfully")
+            # Mark as fully initialized
+            collection_resources['initialized'] = True
+            logger.info(f"Collection {name} initialized successfully")
+
+        return collection_resources
 
     def _load_snapshots(self, name: str) -> bool:
         """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
@@ -385,7 +405,7 @@ class CollectionService:
 
     def insert(self, collection: str, data_packet: DataPacket) -> str:
         # Initialize collection with global lock if needed
-        self._init_collection(collection)
+        self._get_or_init_collection(collection)
 
         # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].write_lock():
@@ -416,7 +436,7 @@ class CollectionService:
 
     def delete(self, collection: str, data_packet: DataPacket) -> bool:
         # Initialize collection with global lock if needed
-        self._init_collection(collection)
+        self._get_or_init_collection(collection)
 
         # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].write_lock():
@@ -440,7 +460,7 @@ class CollectionService:
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
         # Initialize collection with global lock if needed
-        self._init_collection(collection)
+        self._get_or_init_collection(collection)
 
         # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].read_lock():
@@ -509,7 +529,7 @@ class CollectionService:
 
     def get(self, collection: str, record_id: str) -> dict:
         # Initialize collection with global lock if needed
-        self._init_collection(collection)
+        self._get_or_init_collection(collection)
 
         # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].read_lock():

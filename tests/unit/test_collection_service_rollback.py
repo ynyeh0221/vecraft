@@ -75,7 +75,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_storage_failure(self):
         """If storage.write fails, nothing is persisted."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -108,7 +108,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_metadata_failure(self):
         """If metadata.add fails, storage+location must roll back."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -141,7 +141,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_insert_vector_failure(self):
         """If vector.add fails, metadata+location must roll back."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -174,7 +174,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_delete_metadata_failure(self):
         """If metadata.delete fails, nothing should be removed."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -216,7 +216,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_delete_vector_failure(self):
         """If vector.delete fails, nothing should be removed."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -258,7 +258,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_overwrite_metadata_failure_restores_original(self):
         """Overwriting metadata fails → original record remains untouched."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
@@ -313,7 +313,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
     def test_overwrite_vector_failure_restores_original(self):
         """Overwriting vector fails → original record remains untouched."""
         # Initialize the collection
-        self.collection_service._init_collection(self.collection_name)
+        self.collection_service._get_or_init_collection(self.collection_name)
 
         # Get the collection resources
         collection = self.collection_service._collections[self.collection_name]
