@@ -28,24 +28,63 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-          pip install pytest-xdist pytest-timeout
+          # Install the package in development mode, which installs all dependencies from pyproject.toml
+          pip install -e .
+          # Install test dependencies
+          pip install pytest pytest-timeout
 
       - name: Run unit tests
         timeout-minutes: 15
         run: |
           source .venv/bin/activate
-          # Run tests in series (without -n) to avoid file conflicts
+          # Run tests in series to avoid file conflicts
           pytest tests -v --timeout=60
 
       - name: Login with PAT
         run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Create Dockerfile
+        run: |
+          cat > Dockerfile << 'EOF'
+          FROM python:3.11-slim
+
+          WORKDIR /app
+
+          # Install required system dependencies
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              build-essential \
+              && apt-get clean \
+              && rm -rf /var/lib/apt/lists/*
+
+          # Copy your project files
+          COPY . .
+
+          # Install your package with all dependencies
+          RUN pip install --no-cache-dir -e .
+
+          # Create a volume for data persistence
+          VOLUME /data
+
+          # Set the working directory to /data by default
+          WORKDIR /data
+
+          # Set environment variable for data location
+          ENV VCRAFT_ROOT=/data
+
+          # Default command: show help
+          ENTRYPOINT ["vecraft"]
+          CMD ["--help"]
+          EOF
+
       - name: Build Docker image
         run: |
           docker build . -t ghcr.io/${{ github.repository }}:latest
           docker tag ghcr.io/${{ github.repository }}:latest ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+
+      - name: Verify Docker image
+        run: |
+          # Test that the CLI is accessible in the image
+          docker run --rm ghcr.io/${{ github.repository }}:latest --help
 
       - name: Push Docker image
         run: |

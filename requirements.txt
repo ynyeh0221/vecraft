@@ -1,6 +1,0 @@
-numpy~=2.0.2
-typer~=0.15.2
-matplotlib~=3.9.4
-scikit-learn~=1.6.1
-pydantic~=2.11.3
-hnswlib~=0.8.0
