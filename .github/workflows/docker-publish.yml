@@ -46,6 +46,9 @@ jobs:
 
       - name: Create Dockerfile
         run: |
+          # First, check your pyproject.toml configuration
+          cat pyproject.toml
+          
           cat > Dockerfile << 'EOF'
           FROM python:3.11-slim
 
@@ -60,15 +63,9 @@ jobs:
           # Copy your project files
           COPY . /app/
 
-          # Fix for src layout packages - install in a way that makes imports work
+          # Install your package in standard mode
           RUN pip install --no-cache-dir .
           
-          # Create a simple wrapper script that fixes the import issue
-          RUN echo '#!/usr/bin/env python3' > /usr/local/bin/vecraft && \
-              echo 'from vecraft.cli import entry_point' >> /usr/local/bin/vecraft && \
-              echo 'entry_point()' >> /usr/local/bin/vecraft && \
-              chmod +x /usr/local/bin/vecraft
-
           # Create a volume for data persistence
           VOLUME /data
 
@@ -79,7 +76,8 @@ jobs:
           ENV VCRAFT_ROOT=/data
 
           # Default command: show help
-          ENTRYPOINT ["vecraft"]
+          # Use explicitly the full path to the installed script 
+          ENTRYPOINT ["/usr/local/bin/vecraft"]
           CMD ["--help"]
           EOF
 
