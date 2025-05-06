@@ -63,7 +63,6 @@ class CollectionService:
 
         # If we reach here, the collection doesn't exist (or at least didn't when we checked)
         # We need to acquire the global lock to either create it or get it if another thread created it
-        collection_resources = None
         with self._global_lock.write_lock():
             # Double-check if the collection was created by another thread while we were waiting
             if name in self._collections:
