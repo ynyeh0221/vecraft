@@ -112,7 +112,7 @@ class CollectionService:
 
             # Now create the heavyweight resources under the collection lock
             wal = self._wal_factory(f"{name}.wal")
-            storage = self._storage_factory(f"{name}_storage.json", f"{name}_location_index.json")
+            storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
             vector_index = self._vector_index_factory("hnsw", schema.field.dim)
             meta_index = self._metadata_index_factory()
             doc_index = self._doc_index_factory()
