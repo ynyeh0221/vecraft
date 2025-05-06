@@ -34,7 +34,8 @@ class CollectionService:
         metadata_index_factory: Callable[[], MetadataIndexInterface],
         doc_index_factory: Callable[[], DocIndexInterface]
     ):
-        self._rwlock = ReentrantRWLock()
+        # Global lock for operations that affect the overall service state
+        self._global_lock = ReentrantRWLock()
         self._catalog = catalog
         self._wal_factory = wal_factory
         self._storage_factory = storage_factory
@@ -47,86 +48,98 @@ class CollectionService:
         logger.info("CollectionService initialized")
 
     def _init_collection(self, name: str):
-        # create on-demand
-        if name in self._collections:
-            logger.debug(f"Collection {name} already initialized")
-            return
+        # Use global lock to check if collection exists
+        with self._global_lock.read_lock():
+            if name in self._collections:
+                logger.debug(f"Collection {name} already initialized")
+                return
 
-        logger.info(f"Initializing collection {name}")
-        schema: CollectionSchema = self._catalog.get_schema(name)
-        logger.debug(f"Retrieved schema for collection {name} with dimension {schema.field.dim}")
-        wal = self._wal_factory(f"{name}.wal")
-        vec_snap = Path(f"{name}.idxsnap")
-        meta_snap = Path(f"{name}.metasnap")
-        doc_snap = Path(f"{name}.docsnap")
-        storage = self._storage_factory(f"{name}_storage.json", f"{name}_location_index.json")
-        vector_index = self._vector_index_factory("hnsw", schema.field.dim)
-        meta_index = self._metadata_index_factory()
-        doc_index = self._doc_index_factory()
+        # Collection doesn't exist, acquire global write lock to create it
+        with self._global_lock.write_lock():
+            # Double-check in case another thread created it while we were waiting
+            if name in self._collections:
+                logger.debug(f"Collection {name} already initialized by another thread")
+                return
 
-        # load or rebuild
-        if vec_snap.exists() and meta_snap.exists():
-            logger.info(f"Loading collection {name} from snapshots")
-            start_time = time.time()
-            vec_data = pickle.loads(vec_snap.read_bytes())
-            vector_index.deserialize(vec_data)
-            meta_data = meta_snap.read_bytes()
-            meta_index.deserialize(meta_data)
-            doc_data = doc_snap.read_bytes()
-            doc_index.deserialize(doc_data)
-            logger.info(f"Loaded collection {name} from snapshots in {time.time() - start_time:.2f}s")
-        else:
-            # full rebuild loops
-            logger.info(f"No snapshots found for collection {name}, performing full rebuild")
-            start_time = time.time()
-            record_count = 0
+            logger.info(f"Initializing collection {name}")
+            schema: CollectionSchema = self._catalog.get_schema(name)
+            logger.debug(f"Retrieved schema for collection {name} with dimension {schema.field.dim}")
+            wal = self._wal_factory(f"{name}.wal")
+            vec_snap = Path(f"{name}.idxsnap")
+            meta_snap = Path(f"{name}.metasnap")
+            doc_snap = Path(f"{name}.docsnap")
+            storage = self._storage_factory(f"{name}_storage.json", f"{name}_location_index.json")
+            vector_index = self._vector_index_factory("hnsw", schema.field.dim)
+            meta_index = self._metadata_index_factory()
+            doc_index = self._doc_index_factory()
 
-            # Vector index rebuild
-            logger.debug(f"Rebuilding vector index for collection {name}")
-            for rid, loc in storage.get_all_record_locations().items():
-                data = storage.read(loc['offset'], loc['size'])
-                _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
-                vec_start = 16 + orig_size
-                vec = np.frombuffer(data[vec_start:vec_start+vec_size], dtype=np.float32)
-                vector_index.add(IndexItem(record_id=str(rid), vector=vec))
+            # Create a collection-specific lock
+            collection_lock = ReentrantRWLock()
 
-            # Metadata and document index rebuild
-            logger.debug(f"Rebuilding metadata and document indices for collection {name}")
-            for rid in storage.get_all_record_locations().keys():
-                rec_data = self.get(name, rid)
-                if rec_data and 'metadata' in rec_data:
-                    meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
-                if rec_data and 'original_data' in rec_data:
-                    doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
+            # load or rebuild
+            if vec_snap.exists() and meta_snap.exists():
+                logger.info(f"Loading collection {name} from snapshots")
+                start_time = time.time()
+                vec_data = pickle.loads(vec_snap.read_bytes())
+                vector_index.deserialize(vec_data)
+                meta_data = meta_snap.read_bytes()
+                meta_index.deserialize(meta_data)
+                doc_data = doc_snap.read_bytes()
+                doc_index.deserialize(doc_data)
+                logger.info(f"Loaded collection {name} from snapshots in {time.time() - start_time:.2f}s")
+            else:
+                # full rebuild loops
+                logger.info(f"No snapshots found for collection {name}, performing full rebuild")
+                start_time = time.time()
+                record_count = 0
 
-            logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
+                # Vector index rebuild
+                logger.debug(f"Rebuilding vector index for collection {name}")
+                for rid, loc in storage.get_all_record_locations().items():
+                    data = storage.read(loc['offset'], loc['size'])
+                    _, orig_size, vec_size, _ = struct.unpack('<4I', data[:16])
+                    vec_start = 16 + orig_size
+                    vec = np.frombuffer(data[vec_start:vec_start + vec_size], dtype=np.float32)
+                    vector_index.add(IndexItem(record_id=str(rid), vector=vec))
 
-        # replay WAL
+                # Metadata and document index rebuild
+                logger.debug(f"Rebuilding metadata and document indices for collection {name}")
+                for rid in storage.get_all_record_locations().keys():
+                    rec_data = self._get_internal(name, rid, storage)
+                    if rec_data and 'metadata' in rec_data:
+                        meta_index.add(MetadataItem(record_id=rid, metadata=rec_data['metadata']))
+                    if rec_data and 'original_data' in rec_data:
+                        doc_index.add(DocItem(record_id=rid, document=rec_data['original_data']))
+
+                logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
+
+            # Store the collection with basic resources first, before WAL replay
+            self._collections[name] = {
+                'schema': schema,
+                'wal': wal,
+                'storage': storage,
+                'vec_index': vector_index,
+                'meta_index': meta_index,
+                'doc_index': doc_index,
+                'vec_snap': vec_snap,
+                'meta_snap': meta_snap,
+                'doc_snap': doc_snap,
+                'lock': collection_lock  # Add the collection-specific lock
+            }
+
+        # Release the global lock and replay WAL with collection-specific lock
         logger.info(f"Replaying WAL for collection {name}")
         wal_start = time.time()
-        self._rwlock.acquire_write()
         try:
-            replay_count = wal.replay(lambda entry: self._replay_entry(name, entry))
-            wal.clear()
-            logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
+            # Use collection-specific lock for WAL replay
+            with self._collections[name]['lock'].write_lock():
+                replay_count = self._collections[name]['wal'].replay(lambda entry: self._replay_entry(name, entry))
+                self._collections[name]['wal'].clear()
+                logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
         except Exception as e:
             logger.error(f"Error replaying WAL for collection {name}: {str(e)}", exc_info=True)
             raise
-        finally:
-            self._rwlock.release_write()
 
-        # store resources
-        self._collections[name] = {
-            'schema': schema,
-            'wal': wal,
-            'storage': storage,
-            'vec_index': vector_index,
-            'meta_index': meta_index,
-            'doc_index': doc_index,
-            'vec_snap': vec_snap,
-            'meta_snap': meta_snap,
-            'doc_snap': doc_snap
-        }
         logger.info(f"Collection {name} initialized successfully")
 
     def _load_snapshots(self, name: str) -> bool:
@@ -371,8 +384,11 @@ class CollectionService:
             raise
 
     def insert(self, collection: str, data_packet: DataPacket) -> str:
-        with self._rwlock.write_lock():
-            self._init_collection(collection)
+        # Initialize collection with global lock if needed
+        self._init_collection(collection)
+
+        # Use collection-specific lock for the operation
+        with self._collections[collection]['lock'].write_lock():
 
             logger.info(f"Inserting {data_packet.record_id} to {collection} started")
             start_time = time.time()
@@ -399,8 +415,11 @@ class CollectionService:
             return data_packet.record_id
 
     def delete(self, collection: str, data_packet: DataPacket) -> bool:
-        with self._rwlock.write_lock():
-            self._init_collection(collection)
+        # Initialize collection with global lock if needed
+        self._init_collection(collection)
+
+        # Use collection-specific lock for the operation
+        with self._collections[collection]['lock'].write_lock():
 
             logger.info(f"Deleting {data_packet.record_id} from {collection} started")
             start_time = time.time()
@@ -420,8 +439,11 @@ class CollectionService:
             return True
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[Dict[str, Any]]:
-        with self._rwlock.read_lock():
-            self._init_collection(collection)
+        # Initialize collection with global lock if needed
+        self._init_collection(collection)
+
+        # Use collection-specific lock for the operation
+        with self._collections[collection]['lock'].read_lock():
 
             logger.info(f"Searching from {collection} started")
             start_time = time.time()
@@ -486,55 +508,75 @@ class CollectionService:
             return results
 
     def get(self, collection: str, record_id: str) -> dict:
-        with self._rwlock.read_lock():
-            self._init_collection(collection)
+        # Initialize collection with global lock if needed
+        self._init_collection(collection)
 
+        # Use collection-specific lock for the operation
+        with self._collections[collection]['lock'].read_lock():
             logger.info(f"Getting {record_id} from {collection} started")
             start_time = time.time()
 
-            loc = self._collections[collection]['storage'].get_record_location(record_id)
-            if not loc:
-                logger.warning(f"Record {record_id} not found in collection {collection}")
-                return {}
-
-            data = self._collections[collection]['storage'].read(loc['offset'], loc['size'])
-            header_size = 4 * 4
-            rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
-                '<4I',
-                data[:header_size]
-            )
-            pos = header_size
-            returned_record_id_bytes = data[pos:pos+rid_len]
-            returned_record_id = str(returned_record_id_bytes, 'utf-8')
-            pos += rid_len
-            orig_bytes = data[pos:pos+original_data_size]
-            pos += original_data_size
-            vec_bytes = data[pos:pos+vector_size]
-            pos += vector_size
-            meta_bytes = data[pos:pos+metadata_size]
-
-            # Verify that the returned record is the one which we request
-            if returned_record_id != record_id:
-                error_message = f"Returned record {returned_record_id} does not match expected record {record_id}"
-                logger.error(error_message)
-                raise ChecksumValidationFailureError(error_message)
+            result = self._get_internal(collection, record_id)
 
             elapsed = time.time() - start_time
             logger.info(f"Getting {record_id} from {collection} completed in {elapsed:.3f}s")
 
-            return {
-                'id': record_id,
-                'original_data': json.loads(orig_bytes.decode('utf-8')),
-                'vector': np.frombuffer(vec_bytes, dtype=np.float32),
-                'metadata': json.loads(meta_bytes.decode('utf-8'))
-            }
+            return result
+
+    # Helper method to get a record without external locking
+    def _get_internal(self, collection: str, record_id: str, storage=None) -> dict:
+        if storage is None:
+            storage = self._collections[collection]['storage']
+
+        loc = storage.get_record_location(record_id)
+        if not loc:
+            return {}
+
+        data = storage.read(loc['offset'], loc['size'])
+        header_size = 4 * 4
+        rid_len, original_data_size, vector_size, metadata_size = struct.unpack(
+            '<4I',
+            data[:header_size]
+        )
+        pos = header_size
+        returned_record_id_bytes = data[pos:pos + rid_len]
+        returned_record_id = str(returned_record_id_bytes, 'utf-8')
+        pos += rid_len
+        orig_bytes = data[pos:pos + original_data_size]
+        pos += original_data_size
+        vec_bytes = data[pos:pos + vector_size]
+        pos += vector_size
+        meta_bytes = data[pos:pos + metadata_size]
+
+        # Verify that the returned record is the one which we request
+        if returned_record_id != record_id:
+            error_message = f"Returned record {returned_record_id} does not match expected record {record_id}"
+            logger.error(error_message)
+            raise ChecksumValidationFailureError(error_message)
+
+        return {
+            'id': record_id,
+            'original_data': json.loads(orig_bytes.decode('utf-8')),
+            'vector': np.frombuffer(vec_bytes, dtype=np.float32),
+            'metadata': json.loads(meta_bytes.decode('utf-8'))
+        }
 
     def flush(self):
-        with self._rwlock.write_lock():
+        # Use global lock only to get a consistent snapshot of collection names
+        with self._global_lock.read_lock():
             collections = list(self._collections.keys())
-            logger.info(f"Flushing {len(collections)} collections: {collections}")
 
-            for name in collections:
+        logger.info(f"Flushing {len(collections)} collections: {collections}")
+
+        # Flush each collection with its own lock, without holding the global lock
+        for name in collections:
+            # Skip if collection is removed between listing and flushing
+            if name not in self._collections:
+                logger.warning(f"Collection {name} no longer exists, skipping flush")
+                continue
+
+            # Use collection-specific lock for flushing
+            with self._collections[name]['lock'].write_lock():
                 logger.info(f"Flushing {name} started")
                 start_time = time.time()
 
@@ -568,7 +610,7 @@ class CollectionService:
         Returns:
             Path to the saved t-SNE plot image.
         """
-        with self._rwlock.write_lock():
+        with self._collections[name]['lock'].read_lock():
             logger.info(f"Generating t-SNE plot for collection {name}")
             start_time = time.time()
 
