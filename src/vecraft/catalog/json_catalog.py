@@ -7,6 +7,30 @@ from src.vecraft.data.exception import CollectionNotExistedException
 
 
 class JsonCatalog(Catalog):
+    """
+    A JSON-based implementation of the Catalog interface that stores collection metadata in a JSON file.
+
+    This class provides functionality to manage vector collection schemas, storing configuration
+    information such as dimension and vector type in a persistent JSON file.
+
+    Attributes:
+        _path (Path): Path to the JSON catalog file.
+        _collections (Dict[str, CollectionSchema]): Dictionary of collection schemas indexed by name.
+
+    Examples:
+        >>> # Create a new catalog
+        >>> catalog = JsonCatalog('my_catalog.json')
+        >>>
+        >>> # Create a collection with 128-dimensional float vectors
+        >>> catalog.create_collection('products', 128, 'float')
+        >>>
+        >>> # List all collections
+        >>> collections = catalog.list_collections()
+        >>> print(collections)  # ['products']
+        >>>
+        >>> # Get schema for a collection
+        >>> schema = catalog.get_schema('products')
+    """
     def __init__(self, path: str = 'catalog.json'):
         self._path = Path(path)
         self._collections: Dict[str, CollectionSchema] = {}
