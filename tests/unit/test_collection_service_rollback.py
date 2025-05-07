@@ -7,6 +7,8 @@ import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
+from src.vecraft.data.exception import MetadataIndexBuildingException, VectorIndexBuildingException, \
+    StorageFailureException
 from src.vecraft.engine.collection_service import CollectionService
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
@@ -97,7 +99,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         )
 
         # Attempt insert, which should fail
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(StorageFailureException):
             self.collection_service.insert(self.collection_name, data_packet)
 
         # Verify nothing was persisted
@@ -130,7 +132,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         )
 
         # Attempt insert, which should fail
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(MetadataIndexBuildingException):
             self.collection_service.insert(self.collection_name, data_packet)
 
         # Verify nothing was persisted
@@ -163,7 +165,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         )
 
         # Attempt insert, which should fail
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(VectorIndexBuildingException):
             self.collection_service.insert(self.collection_name, data_packet)
 
         # Verify nothing was persisted
@@ -205,7 +207,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             record_id=record_id
         )
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(MetadataIndexBuildingException):
             self.collection_service.delete(self.collection_name, delete_packet)
 
         # Verify record is still present
@@ -247,7 +249,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             record_id=record_id
         )
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(VectorIndexBuildingException):
             self.collection_service.delete(self.collection_name, delete_packet)
 
         # Verify record is still present
@@ -301,7 +303,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             metadata=meta2
         )
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(MetadataIndexBuildingException):
             self.collection_service.insert(self.collection_name, insert_packet2)
 
         # 4) After failure, the record should be exactly the original
@@ -360,7 +362,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             metadata=meta2
         )
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(VectorIndexBuildingException):
             self.collection_service.insert(self.collection_name, insert_packet2)
 
         # 4) After failure, the record should be exactly the original

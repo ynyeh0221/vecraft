@@ -1,9 +1,0 @@
-{
-  "collection1": {
-    "field": {
-      "name": "collection1",
-      "dim": 3,
-      "vector_type": "float32"
-    }
-  }
-}

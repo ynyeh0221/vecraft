@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
+
 from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
 from src.vecraft.wal.wal_manager import WALManager
 
@@ -31,14 +33,14 @@ class TestWALManager(unittest.TestCase):
                 type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John"},
-                vector=None,
+                vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             ),
             DataPacket(
                 type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John Doe"},
-                vector=None,
+                vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             )
         ]
@@ -67,14 +69,14 @@ class TestWALManager(unittest.TestCase):
                 type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John"},
-                vector=None,
+                vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             ),
             DataPacket(
                 type=DataPacketType.RECORD,
                 record_id="user:123",
                 original_data={"name": "John Doe"},
-                vector=None,
+                vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             )
         ]
@@ -105,7 +107,7 @@ class TestWALManager(unittest.TestCase):
             type=DataPacketType.RECORD,
             record_id="test",
             original_data={},
-            vector=None,
+            vector=np.array([0, 0, 0], dtype=np.float32),
             metadata={}
         )
         self.wal_manager.append(test_packet)
@@ -152,7 +154,7 @@ class TestWALManager(unittest.TestCase):
             type=DataPacketType.RECORD,
             record_id="test",
             original_data={},
-            vector=None,
+            vector=np.array([0, 0, 0], dtype=np.float32),
             metadata={}
         )
         self.wal_manager.append(test_packet)

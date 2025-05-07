@@ -17,7 +17,8 @@ from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
-    ChecksumValidationFailureError
+    ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
+    DocumentIndexBuildingException, VectorIndexBuildingException
 from src.vecraft.engine.locks import ReentrantRWLock
 
 # Set up logger for this module
@@ -269,48 +270,68 @@ class CollectionService:
 
         try:
             # A) storage
-            all_locs = res['storage'].get_all_record_locations()
-            new_offset = max((l['offset'] + l['size'] for l in all_locs.values()), default=0)
-            logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
-            actual_offset = res['storage'].write(rec_bytes, new_offset)
+            try:
+                all_locs = res['storage'].get_all_record_locations()
+                new_offset = max((l['offset'] + l['size'] for l in all_locs.values()), default=0)
+                logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
+                actual_offset = res['storage'].write(rec_bytes, new_offset)
 
-            if old_loc:
-                logger.debug(f"Marking old record location as deleted")
-                res['storage'].mark_deleted(data_packet.record_id)
-                res['storage'].delete_record(data_packet.record_id)
-            res['storage'].add_record(data_packet.record_id, new_offset, size)
-            updated_storage = True
-            logger.debug(f"Storage updated for record {data_packet.record_id}")
+                if old_loc:
+                    logger.debug(f"Marking old record location as deleted")
+                    res['storage'].mark_deleted(data_packet.record_id)
+                    res['storage'].delete_record(data_packet.record_id)
+                res['storage'].add_record(data_packet.record_id, new_offset, size)
+                updated_storage = True
+                logger.debug(f"Storage updated for record {data_packet.record_id}")
+            except Exception as e:
+                error_message = f"Storage update failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise StorageFailureException(error_message, e)
 
             # B) user metadata index
-            if old.type != DataPacketType.NONEXISTENT:
-                logger.debug(f"Updating metadata index for record {data_packet.record_id}")
-                res['meta_index'].update(
-                    old.to_metadata_item(),
-                    data_packet.to_metadata_item()
-                )
-            else:
-                logger.debug(f"Adding new entry to metadata index for record {data_packet.record_id}")
-                res['meta_index'].add(data_packet.to_metadata_item())
-            updated_meta = True
+            try:
+                if old.type != DataPacketType.NONEXISTENT:
+                    logger.debug(f"Updating metadata index for record {data_packet.record_id}")
+                    res['meta_index'].update(
+                        old.to_metadata_item(),
+                        data_packet.to_metadata_item()
+                    )
+                else:
+                    logger.debug(f"Adding new entry to metadata index for record {data_packet.record_id}")
+                    res['meta_index'].add(data_packet.to_metadata_item())
+                updated_meta = True
+            except Exception as e:
+                error_message = f"Metadata index update failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise MetadataIndexBuildingException(error_message, e)
 
             # C) user document index
-            if old.type != DataPacketType.NONEXISTENT:
-                logger.debug(f"Updating document index for record {data_packet.record_id}")
-                res['doc_index'].update(
-                    old.to_doc_item(),
-                    data_packet.to_doc_item()
-                )
-            else:
-                logger.debug(f"Adding new entry to document index for record {data_packet.record_id}")
-                res['doc_index'].add(data_packet.to_doc_item())
-            updated_doc = True
+            try:
+                if old.type != DataPacketType.NONEXISTENT:
+                    logger.debug(f"Updating document index for record {data_packet.record_id}")
+                    res['doc_index'].update(
+                        old.to_doc_item(),
+                        data_packet.to_doc_item()
+                    )
+                else:
+                    logger.debug(f"Adding new entry to document index for record {data_packet.record_id}")
+                    res['doc_index'].add(data_packet.to_doc_item())
+                updated_doc = True
+            except Exception as e:
+                error_message = f"Document index update failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise DocumentIndexBuildingException(error_message, e)
 
             # D) vector index
-            logger.debug(f"Updating vector index for record {data_packet.record_id}")
-            res['vec_index'].add(data_packet.to_index_item())
-            updated_vec = True
-            logger.debug(f"All indices updated for record {data_packet.record_id}")
+            try:
+                logger.debug(f"Updating vector index for record {data_packet.record_id}")
+                res['vec_index'].add(data_packet.to_index_item())
+                updated_vec = True
+                logger.debug(f"All indices updated for record {data_packet.record_id}")
+            except Exception as e:
+                error_message = f"Vector index update failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise VectorIndexBuildingException(error_message, e)
 
         except Exception as e:
             logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}", exc_info=True)
@@ -359,24 +380,48 @@ class CollectionService:
         removed_storage = removed_meta = removed_doc = removed_vec = False
 
         try:
-            logger.debug(f"Marking record {record_id} as deleted in storage")
-            res['storage'].mark_deleted(record_id)
-            removed_storage = True
+            # A) storage
+            try:
+                logger.debug(f"Marking record {record_id} as deleted in storage")
+                res['storage'].mark_deleted(record_id)
+                removed_storage = True
 
-            logger.debug(f"Removing record {record_id} from storage index")
-            res['storage'].delete_record(record_id)
+                logger.debug(f"Removing record {record_id} from storage index")
+                res['storage'].delete_record(record_id)
+            except Exception as e:
+                error_message = f"Storage removal failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise StorageFailureException(error_message, e)
 
-            logger.debug(f"Removing record {record_id} from metadata index")
-            res['meta_index'].delete(old.to_metadata_item())
-            removed_meta = True
+            # B) user metadata index
+            try:
+                logger.debug(f"Removing record {record_id} from metadata index")
+                res['meta_index'].delete(old.to_metadata_item())
+                removed_meta = True
+            except Exception as e:
+                error_message = f"Metadata index removal failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise MetadataIndexBuildingException(error_message, e)
 
-            logger.debug(f"Removing record {record_id} from doc index")
-            res['doc_index'].delete(old.to_doc_item())
-            removed_doc = True
+            # C) user document index
+            try:
+                logger.debug(f"Removing record {record_id} from doc index")
+                res['doc_index'].delete(old.to_doc_item())
+                removed_doc = True
+            except Exception as e:
+                error_message = f"Document index removal failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise DocumentIndexBuildingException(error_message, e)
 
-            logger.debug(f"Removing record {record_id} from vector index")
-            res['vec_index'].delete(record_id=record_id)
-            removed_vec = True
+            # D) vector index
+            try:
+                logger.debug(f"Removing record {record_id} from vector index")
+                res['vec_index'].delete(record_id=record_id)
+                removed_vec = True
+            except Exception as e:
+                error_message = f"Vector index removal failed for record {data_packet.record_id}"
+                logger.debug(error_message)
+                raise VectorIndexBuildingException(error_message, e)
 
             logger.debug(f"Successfully deleted record {record_id} from all indices")
 

@@ -40,8 +40,6 @@ class ChecksumValidationFailureError(Exception):
         return self.message
 
 
-# Key Exception Types to Surface to Users
-
 class AuthenticationException(Exception):
     """
     Exception raised when credentials are missing, invalid, or lack necessary permissions.
@@ -116,6 +114,31 @@ class InvalidQueryException(Exception):
     def __str__(self):
         if self.query is not None:
             return f"{self.message} (query={self.query})"
+        return self.message
+
+
+class InvalidDataException(Exception):
+    """
+    Exception raised when a DataPacket cannot be validated.
+    """
+    def __init__(self, message, collection=None, record_id=None, cause: Exception = None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
         return self.message
 
 
@@ -273,51 +296,101 @@ class StorageFailureException(Exception):
     Exception raised when disk full, write I/O error, or underlying storage
     layer fault during persistence.
     """
-
-    def __init__(self, message, storage_path=None, error_code=None):
-        self.storage_path = storage_path
-        self.error_code = error_code
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.storage_path is not None:
-            details.append(f"storage_path={self.storage_path}")
-        if self.error_code is not None:
-            details.append(f"error_code={self.error_code}")
-
-        if details:
-            return f"{self.message} ({', '.join(details)})"
-        return self.message
-
-
-class IndexBuildingException(Exception):
-    """
-    Exception raised when there's an internal error while constructing
-    or optimizing the ANN index.
-    """
-
-    def __init__(self, message, index_name=None, collection=None, phase=None):
-        self.index_name = index_name
+    def __init__(self, message, collection=None, record_id=None, cause: Exception = None):
         self.collection = collection
-        self.phase = phase
+        self.record_id = record_id
         self.message = message
+        self.cause = cause
         super().__init__(self.message)
 
     def __str__(self):
         details = []
-        if self.index_name is not None:
-            details.append(f"index_name={self.index_name}")
         if self.collection is not None:
             details.append(f"collection={self.collection}")
-        if self.phase is not None:
-            details.append(f"phase={self.phase}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
 
         if details:
             return f"{self.message} ({', '.join(details)})"
         return self.message
 
+
+class VectorIndexBuildingException(Exception):
+    """
+    Exception raised when there's an internal error while constructing
+    or optimizing the ANN vector index.
+    """
+    def __init__(self, message, collection=None, record_id=None, cause:Exception=None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
+
+class MetadataIndexBuildingException(Exception):
+    """
+    Exception raised when there's an internal error while constructing
+    or optimizing the user metadata index.
+    """
+    def __init__(self, message, collection=None, record_id=None, cause:Exception=None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
+
+class DocumentIndexBuildingException(Exception):
+    """
+    Exception raised when there's an internal error while constructing
+    or optimizing the user document index.
+    """
+    def __init__(self, message, collection=None, record_id=None, cause: Exception = None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
 
 class PermissionDeniedException(Exception):
     """
@@ -344,35 +417,3 @@ class PermissionDeniedException(Exception):
         if details:
             return f"{self.message} ({', '.join(details)})"
         return self.message
-
-
-class PartialFailureException(Exception):
-    """
-    Exception raised in bulk operations, some items succeeded while
-    others failed—contains per-item sub-errors.
-    """
-
-    def __init__(self, message, success_count=None, failure_count=None, errors=None):
-        self.success_count = success_count
-        self.failure_count = failure_count
-        self.errors = errors if errors is not None else []
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.success_count is not None:
-            details.append(f"success_count={self.success_count}")
-        if self.failure_count is not None:
-            details.append(f"failure_count={self.failure_count}")
-
-        result = self.message
-        if details:
-            result += f" ({', '.join(details)})"
-
-        if self.errors:
-            result += "\nErrors:"
-            for i, error in enumerate(self.errors):
-                result += f"\n  {i + 1}. {str(error)}"
-
-        return result

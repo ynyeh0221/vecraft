@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Callable, Union, List
 
 import numpy as np
 
-from src.vecraft.data.exception import ChecksumValidationFailureError
+from src.vecraft.data.exception import ChecksumValidationFailureError, InvalidDataException
 
 # Type for checksum function: takes bytes -> hex string
 ChecksumFunc = Callable[[bytes], str]
@@ -100,10 +100,36 @@ class DataPacket:
     def __post_init__(self):
         """
         Automatically calculates the checksum after initialization.
+        Also validates field combinations based on packet type.
 
-        Process: Uses the specified checksum algorithm to process the serialized field data.
+        Process:
+        1. Validates that required fields are present for the packet type
+        2. Uses the specified checksum algorithm to process the serialized field data
+
+        Raises:
+            ValueError: If the field combination doesn't match the packet type requirements
         """
-        # compute checksum from serialized fields
+        # Validate field combinations based on type
+        if self.type == DataPacketType.RECORD:
+            # For RECORD type: vector must be non-null, and at least one of metadata/document must be non-null
+            if self.vector is None:
+                raise InvalidDataException("RECORD type DataPacket must have a non-null vector")
+
+            if self.original_data is None and self.metadata is None:
+                raise InvalidDataException("RECORD type DataPacket must have at least one of original_data or metadata")
+
+        elif self.type in (DataPacketType.TOMBSTONE, DataPacketType.NONEXISTENT):
+            # For TOMBSTONE or NONEXISTENT: vector, metadata, and document must all be null
+            if self.vector is not None:
+                raise InvalidDataException(f"{self.type.name} type DataPacket must have a null vector")
+
+            if self.original_data is not None:
+                raise InvalidDataException(f"{self.type.name} type DataPacket must have a null original_data")
+
+            if self.metadata is not None:
+                raise InvalidDataException(f"{self.type.name} type DataPacket must have a null metadata")
+
+        # Compute checksum from serialized fields (original functionality)
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
@@ -164,7 +190,7 @@ class DataPacket:
             d['vector'] = {
                 'b64': base64.b64encode(v_bytes).decode('ascii'),
                 'dtype': str(self.vector.dtype),
-                'shape': self.vector.shape
+                'shape': list(self.vector.shape)  # Convert tuple to list for JSON compatibility
             }
         else:
             d['vector'] = None
@@ -182,7 +208,11 @@ class DataPacket:
             # decode the exact bytes back into a ndarray
             raw = base64.b64decode(vec_info['b64'].encode('ascii'))
             dtype = np.dtype(vec_info['dtype'])
-            shape = tuple(vec_info['shape'])
+
+            # Handle both list and tuple for shape
+            shape_data = vec_info['shape']
+            shape = tuple(shape_data) if isinstance(shape_data, list) else shape_data
+
             vector = np.frombuffer(raw, dtype=dtype).reshape(shape)
         else:
             vector = None
@@ -338,6 +368,18 @@ class DataPacket:
         return meta_item
 
     def __eq__(self, other):
+        """
+        Compares two DataPacket instances for equality.
+
+        Handles the case where shape might be represented as a list in one instance
+        and a tuple in another (due to JSON serialization and deserialization).
+
+        Args:
+            other: Another object to compare with.
+
+        Returns:
+            bool: True if the instances are equal, False otherwise.
+        """
         if not isinstance(other, type(self)):
             return False
 
@@ -346,6 +388,7 @@ class DataPacket:
                          (self.vector is not None and other.vector is not None and
                           np.array_equal(self.vector, other.vector)))
 
+        # Check all other fields
         return (self.type == other.type and
                 self.record_id == other.record_id and
                 self.checksum_algorithm == other.checksum_algorithm and
