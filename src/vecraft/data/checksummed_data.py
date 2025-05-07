@@ -71,6 +71,23 @@ class DataPacketType(Enum):
 
 @dataclass
 class DataPacket:
+    """
+    A class representing a data packet for storing, serializing, and deserializing data records.
+
+    DataPacket provides data integrity validation, supports multiple serialization methods, and
+    can be converted to other data structures. Each DataPacket instance contains an automatically
+    calculated checksum to verify data integrity.
+
+    Attributes:
+        type (DataPacketType): The type of data packet, which can be RECORD, TOMBSTONE, or NONEXISTENT.
+        record_id (str): The unique identifier for the record.
+        checksum_algorithm (Union[str, ChecksumFunc]): The algorithm used to calculate the checksum,
+                                                       default is 'sha256'.
+        original_data (Any): The original data, which can be of any type.
+        vector (Optional[np.ndarray]): Vector data, an optional numpy array.
+        metadata (Optional[Dict[str, Any]]): Metadata associated with the record.
+        checksum (str): Automatically calculated checksum for validating data integrity.
+    """
     type: DataPacketType
     record_id: str
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
@@ -81,6 +98,11 @@ class DataPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
+        """
+        Automatically calculates the checksum after initialization.
+
+        Process: Uses the specified checksum algorithm to process the serialized field data.
+        """
         # compute checksum from serialized fields
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
@@ -180,7 +202,16 @@ class DataPacket:
         packet.checksum = d['checksum']
         return packet
 
-    def to_storage_bytes(self) -> bytes:
+    def to_bytes(self) -> bytes:
+        """
+        Converts the DataPacket to bytes.
+
+        Serializes the DataPacket into a compact binary format suitable for persistent storage
+        or network transmission.
+
+        Returns:
+            bytes: The serialized binary data.
+        """
         record_id = self.record_id
         orig = self.original_data
         vec = self.vector
@@ -198,8 +229,21 @@ class DataPacket:
         return header + rid_b + orig_b + vec_b + meta_b + checksum_b
 
     @staticmethod
-    def from_storage_bytes(data: bytes) -> 'DataPacket':
-        # Update header size to account for 5 integers instead of 4
+    def from_bytes(data: bytes) -> 'DataPacket':
+        """
+        Reconstructs a DataPacket from bytes.
+
+        Deserializes from a binary format to a DataPacket instance and verifies the checksum.
+
+        Args:
+            data (bytes): Binary format DataPacket data.
+
+        Returns:
+            DataPacket: The reconstructed DataPacket instance.
+
+        Raises:
+            ChecksumValidationFailureError: If the stored checksum doesn't match the recalculated checksum.
+        """
         header_size = 5 * 4
         rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
             '<5I',
@@ -232,6 +276,17 @@ class DataPacket:
         return data_packet
 
     def to_index_item(self) -> 'IndexItem':
+        """
+        Converts the DataPacket to an IndexItem.
+
+        Creates an IndexItem instance containing the record_id and vector, and verifies its integrity.
+
+        Returns:
+            IndexItem: IndexItem instance created from the DataPacket.
+
+        Raises:
+            ChecksumValidationFailureError: If the converted data fails checksum validation.
+        """
         index_item = IndexItem(record_id=self.record_id, vector=self.vector)
         self.validate_checksum()
         reconstructed = DataPacket(type=self.type, record_id=index_item.record_id, original_data=self.original_data, vector=index_item.vector, metadata=self.metadata)
@@ -241,6 +296,18 @@ class DataPacket:
         return index_item
 
     def to_doc_item(self) -> 'DocItem':
+        """
+        Converts the DataPacket to a DocItem.
+
+        Creates a DocItem instance containing the record_id and document (original_data),
+        and verifies its integrity.
+
+        Returns:
+            DocItem: DocItem instance created from the DataPacket.
+
+        Raises:
+            ChecksumValidationFailureError: If the converted data fails checksum validation.
+        """
         doc_item = DocItem(record_id=self.record_id, document=self.original_data)
         self.validate_checksum()
         reconstructed = DataPacket(type=self.type, record_id=doc_item.record_id, original_data=doc_item.document, vector=self.vector, metadata=self.metadata)
@@ -250,6 +317,18 @@ class DataPacket:
         return doc_item
 
     def to_metadata_item(self) -> 'MetadataItem':
+        """
+        Converts the DataPacket to a MetadataItem.
+
+        Creates a MetadataItem instance containing the record_id and metadata,
+        and verifies its integrity.
+
+        Returns:
+            MetadataItem: MetadataItem instance created from the DataPacket.
+
+        Raises:
+            ChecksumValidationFailureError: If the converted data fails checksum validation.
+        """
         meta_item = MetadataItem(record_id=self.record_id, metadata=self.metadata)
         self.validate_checksum()
         reconstructed = DataPacket(type=self.type, record_id=meta_item.record_id, original_data=self.original_data, vector=self.vector, metadata=meta_item.metadata)

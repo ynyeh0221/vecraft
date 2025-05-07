@@ -253,7 +253,7 @@ class CollectionService:
 
     def _apply_insert(self, name: str, data_packet: DataPacket) -> None:
         res = self._collections[name]
-        rec_bytes = data_packet.to_storage_bytes()
+        rec_bytes = data_packet.to_bytes()
         size = len(rec_bytes)
 
         old_loc = res['storage'].get_record_location(data_packet.record_id)
@@ -551,7 +551,7 @@ class CollectionService:
             return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
 
         data = storage.read(loc['offset'], loc['size'])
-        data_packet = DataPacket.from_storage_bytes(data)
+        data_packet = DataPacket.from_bytes(data)
 
         # Verify that the returned record is the one which we request
         if data_packet.record_id != record_id:
