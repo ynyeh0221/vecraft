@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from src.vecraft.core.storage_engine_interface import StorageEngine
+from src.vecraft.data.checksummed_data import LocationItem
 
 
 class MMapStorage(StorageEngine):
@@ -52,27 +53,31 @@ class MMapStorage(StorageEngine):
             self._mmap.close()
         self._mmap = mmap.mmap(self._file.fileno(), 0)  # Map the entire file
 
-    def write(self, data: bytes, offset: int) -> int:
+    def write(self, data: bytes, location_item: LocationItem) -> int:
         """
         Write at the specified offset, not just at EOF.
         Returns the actual offset where data was written.
         """
+        location_item.validate_checksum()
         # Ensure file is large enough
-        required_size = offset + len(data)
+        required_size = location_item.offset + len(data)
         current_size = self._file.seek(0, os.SEEK_END)
         if current_size < required_size:
             self._resize_file(required_size)
 
         # Write data at the specified offset
-        self._mmap[offset:offset + len(data)] = data
+        self._mmap[location_item.offset:location_item.offset + len(data)] = data
         self._mmap.flush()
+        location_item.validate_checksum()
 
-        return offset  # Return the offset that was passed in
+        return location_item.offset  # Return the offset that was passed in
 
-    def read(self, offset: int, size: int) -> bytes:
-        if offset < 0 or offset + size > len(self._mmap):
-            raise ValueError(f"Read range {offset}:{offset + size} exceeds file size {len(self._mmap)}")
-        result = self._mmap[offset:offset + size]
+    def read(self, location_item: LocationItem) -> bytes:
+        location_item.validate_checksum()
+        if location_item.offset < 0 or location_item.offset + location_item.size > len(self._mmap):
+            raise ValueError(f"Read range {location_item.offset}:{location_item.offset + location_item.size} exceeds file size {len(self._mmap)}")
+        result = self._mmap[location_item.offset:location_item.offset + location_item.size]
+        location_item.validate_checksum()
         return result
 
     def flush(self) -> None:

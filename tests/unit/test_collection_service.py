@@ -15,7 +15,8 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import IndexItem, Vector, Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem, DataPacketType
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem, DataPacketType, \
+    LocationItem
 from src.vecraft.engine.collection_service import CollectionService
 
 
@@ -27,35 +28,35 @@ class DummyStorage(StorageIndexEngine):
         self._locs = {}
         self._next_id = 1
 
-    def get_deleted_locations(self) -> List[Dict[str, int]]:
+    def get_deleted_locations(self) -> List[LocationItem]:
         pass
 
-    def write(self, data: bytes, offset: int):
-        end = offset + len(data)
+    def write(self,  data: bytes, location_item: LocationItem) -> int:
+        end = location_item.offset + len(data)
         if len(self._buffer) < end:
             self._buffer.extend(b"\x00" * (end - len(self._buffer)))
-        self._buffer[offset:end] = data
-        return offset
+        self._buffer[location_item.offset:end] = data
+        return location_item.offset
 
-    def read(self, offset: int, size: int) -> bytes:
-        return bytes(self._buffer[offset:offset + size])
+    def read(self, location_item: LocationItem) -> bytes:
+        return bytes(self._buffer[location_item.offset:location_item.offset + location_item.size])
 
-    def flush(self):
+    def flush(self) -> None:
         pass
 
-    def get_record_location(self, record_id):
+    def get_record_location(self, record_id) -> Optional[LocationItem]:
         return self._locs.get(record_id)
 
-    def get_all_record_locations(self):
+    def get_all_record_locations(self) -> Dict[str, LocationItem]:
         return self._locs.copy()
 
-    def add_record(self, record_id, offset, size):
-        self._locs[record_id] = {'offset': offset, 'size': size}
+    def add_record(self, location_item: LocationItem) -> None:
+        self._locs[location_item.record_id] = location_item
 
-    def delete_record(self, record_id):
+    def delete_record(self, record_id) -> None:
         self._locs.pop(record_id, None)
 
-    def mark_deleted(self, record_id):
+    def mark_deleted(self, record_id) -> None:
         pass
 
 class DummyVectorIndex(Index):

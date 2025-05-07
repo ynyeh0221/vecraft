@@ -15,7 +15,7 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, LocationItem
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
     DocumentIndexBuildingException, VectorIndexBuildingException
@@ -272,15 +272,17 @@ class CollectionService:
             # A) storage
             try:
                 all_locs = res['storage'].get_all_record_locations()
-                new_offset = max((l['offset'] + l['size'] for l in all_locs.values()), default=0)
+                [loc.validate_checksum() for loc in all_locs.values()] # validate checksum
+                new_offset = max((l.offset + l.size for l in all_locs.values()), default=0)
                 logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
-                actual_offset = res['storage'].write(rec_bytes, new_offset)
+                actual_offset = res['storage'].write(rec_bytes, LocationItem(record_id=data_packet.record_id, offset=new_offset, size=size))
 
                 if old_loc:
                     logger.debug(f"Marking old record location as deleted")
                     res['storage'].mark_deleted(data_packet.record_id)
                     res['storage'].delete_record(data_packet.record_id)
-                res['storage'].add_record(data_packet.record_id, new_offset, size)
+                res['storage'].add_record(LocationItem(record_id=data_packet.record_id, offset=new_offset, size=size))
+                [loc.validate_checksum() for loc in all_locs.values()] # validate checksum
                 updated_storage = True
                 logger.debug(f"Storage updated for record {data_packet.record_id}")
             except Exception as e:
@@ -360,7 +362,9 @@ class CollectionService:
                 res['storage'].mark_deleted(data_packet.record_id)
                 res['storage'].delete_record(data_packet.record_id)
                 if old_loc is not None:
-                    res['storage'].add_record(data_packet.record_id, old_loc['offset'], old_loc['size'])
+                    old_loc.validate_checksum()
+                    res['storage'].add_record(old_loc)
+                    old_loc.validate_checksum()
 
             logger.error(f"Rollback complete for record {data_packet.record_id}")
             raise
@@ -442,7 +446,7 @@ class CollectionService:
 
             if removed_storage:
                 logger.debug(f"Rolling back storage deletion")
-                res['storage'].add_record(record_id, old_loc['offset'], old_loc['size'])
+                res['storage'].add_record(LocationItem(record_id=record_id, offset=old_loc.offset, size=old_loc.size))
 
             logger.error(f"Rollback complete for record {record_id}")
             raise
@@ -595,7 +599,7 @@ class CollectionService:
         if not loc:
             return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
 
-        data = storage.read(loc['offset'], loc['size'])
+        data = storage.read(LocationItem(record_id=record_id, offset=loc.offset, size=loc.size))
         data_packet = DataPacket.from_bytes(data)
 
         # Verify that the returned record is the one which we request

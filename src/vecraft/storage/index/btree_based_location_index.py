@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from src.vecraft.core.storage_engine_interface import RecordLocationIndex
+from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.exception import ChecksumValidationFailureError
 
 
 class SQLiteRecordLocationIndex(RecordLocationIndex):
@@ -44,48 +46,59 @@ class SQLiteRecordLocationIndex(RecordLocationIndex):
             CREATE TABLE IF NOT EXISTS records (
                 record_id TEXT PRIMARY KEY,
                 offset INTEGER NOT NULL,
-                size INTEGER NOT NULL
+                size INTEGER NOT NULL,
+                checksum INTEGER NOT NULL
             )
         """)
 
         # Table for deleted/tombstone slots
         cur.execute("""
             CREATE TABLE IF NOT EXISTS deleted_records (
+                record_id TEXT PRIMARY KEY,
                 offset INTEGER NOT NULL,
-                size INTEGER NOT NULL
+                size INTEGER NOT NULL,
+                checksum INTEGER NOT NULL
             )
         """)
         conn.commit()
 
-    def get_record_location(self, record_id: str) -> Optional[Dict[str, int]]:
+    def get_record_location(self, record_id: str) -> Optional[LocationItem]:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT offset, size FROM records WHERE record_id = ?", (record_id,)
+            "SELECT offset, size, checksum FROM records WHERE record_id = ?", (record_id,)
         )
         row = cur.fetchone()
-        return {'offset': row[0], 'size': row[1]} if row else None
+        location_item = LocationItem(record_id=record_id, offset=row[0], size=row[1]) if row else None
+        if location_item is not None and row[2] != location_item.checksum:
+            raise ChecksumValidationFailureError(
+                f"Checksum mismatch for record {record_id}: {location_item.checksum}")
+        return location_item
 
-    def get_all_record_locations(self) -> Dict[str, Dict[str, int]]:
+    def get_all_record_locations(self) -> Dict[str, LocationItem]:
         conn = self._get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT record_id, offset, size FROM records")
-        return {rid: {'offset': off, 'size': sz} for rid, off, sz in cur.fetchall()}
+        cur.execute("SELECT record_id, offset, size, checksum FROM records")
+        return {rid: location_item for rid, off, sz, checksum in cur.fetchall()
+                if (location_item := LocationItem(record_id=rid, offset=off, size=sz)).checksum == checksum}
 
-    def get_deleted_locations(self) -> List[Dict[str, int]]:
+    def get_deleted_locations(self) -> List[LocationItem]:
         conn = self._get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT offset, size FROM deleted_records")
-        return [{'offset': off, 'size': sz} for off, sz in cur.fetchall()]
+        cur.execute("SELECT record_id, offset, size, checksum FROM deleted_records")
+        return [location_item for rid, off, sz, checksum in cur.fetchall()
+                if (location_item := LocationItem(record_id=rid, offset=off, size=sz)).checksum == checksum]
 
-    def add_record(self, record_id: str, offset: int, size: int) -> None:
+    def add_record(self, location_item: LocationItem) -> None:
+        location_item.validate_checksum()
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT OR REPLACE INTO records(record_id, offset, size) VALUES (?, ?, ?)",
-            (record_id, offset, size)
+            "INSERT OR REPLACE INTO records(record_id, offset, size, checksum) VALUES (?, ?, ?, ?)",
+            (location_item.record_id, location_item.offset, location_item.size, location_item.checksum)
         )
         conn.commit()
+        location_item.validate_checksum()
 
     def delete_record(self, record_id: str) -> None:
         conn = self._get_connection()
@@ -99,8 +112,8 @@ class SQLiteRecordLocationIndex(RecordLocationIndex):
             conn = self._get_connection()
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO deleted_records(offset, size) VALUES (?, ?)",
-                (loc['offset'], loc['size'])
+                "INSERT INTO deleted_records(record_id, offset, size, checksum) VALUES (?, ?, ?, ?)",
+                (record_id, loc.offset, loc.size, loc.checksum)
             )
             conn.commit()
 
