@@ -261,10 +261,10 @@ class CollectionService:
         if old_loc:
             logger.debug(f"Record {data_packet.record_id} already exists, performing update")
             # During WAL replay, use _get_internal directly to avoid reentrant initialization
-            old = self._get_internal(name, data_packet.record_id, res['storage'])
+            preimage = self._get_internal(name, data_packet.record_id, res['storage'])
         else:
             logger.debug(f"Record {data_packet.record_id} is new")
-            old = DataPacket(type=DataPacketType.NONEXISTENT, record_id=data_packet.record_id)
+            preimage = DataPacket(type=DataPacketType.NONEXISTENT, record_id=data_packet.record_id)
 
         updated_storage = updated_meta = updated_vec = updated_doc = False
 
@@ -292,10 +292,10 @@ class CollectionService:
 
             # B) user metadata index
             try:
-                if old.type != DataPacketType.NONEXISTENT:
+                if preimage.type != DataPacketType.NONEXISTENT:
                     logger.debug(f"Updating metadata index for record {data_packet.record_id}")
                     res['meta_index'].update(
-                        old.to_metadata_item(),
+                        preimage.to_metadata_item(),
                         data_packet.to_metadata_item()
                     )
                 else:
@@ -309,10 +309,10 @@ class CollectionService:
 
             # C) user document index
             try:
-                if old.type != DataPacketType.NONEXISTENT:
+                if preimage.type != DataPacketType.NONEXISTENT:
                     logger.debug(f"Updating document index for record {data_packet.record_id}")
                     res['doc_index'].update(
-                        old.to_doc_item(),
+                        preimage.to_doc_item(),
                         data_packet.to_doc_item()
                     )
                 else:
@@ -336,7 +336,7 @@ class CollectionService:
                 raise VectorIndexBuildingException(error_message, e)
 
             # Return pre-image
-            return old
+            return preimage
 
         except Exception as e:
             logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}", exc_info=True)
@@ -345,20 +345,20 @@ class CollectionService:
             if updated_vec:
                 logger.debug(f"Rolling back vector index changes")
                 res['vec_index'].delete(record_id=data_packet.record_id)
-                if old.type != DataPacketType.NONEXISTENT:
-                    res['vec_index'].add(old.to_index_item())
+                if preimage.type != DataPacketType.NONEXISTENT:
+                    res['vec_index'].add(preimage.to_index_item())
 
             if updated_doc:
                 logger.debug(f"Rolling back document index changes")
                 res['doc_index'].delete(data_packet.to_doc_item())
-                if old.type != DataPacketType.NONEXISTENT:
-                    res['doc_index'].add(old.to_doc_item())
+                if preimage.type != DataPacketType.NONEXISTENT:
+                    res['doc_index'].add(preimage.to_doc_item())
 
             if updated_meta:
                 logger.debug(f"Rolling back metadata index changes")
                 res['meta_index'].delete(data_packet.to_metadata_item())
-                if old.type != DataPacketType.NONEXISTENT:
-                    res['meta_index'].add(old.to_metadata_item())
+                if preimage.type != DataPacketType.NONEXISTENT:
+                    res['meta_index'].add(preimage.to_metadata_item())
 
             if updated_storage:
                 logger.debug(f"Rolling back storage changes")
@@ -380,9 +380,9 @@ class CollectionService:
         old_loc = res['storage'].get_record_location(record_id)
         if not old_loc:
             logger.warning(f"Attempted to delete non-existent record {record_id}")
-            return
+            return DataPacket(DataPacketType.NONEXISTENT, data_packet.record_id)
 
-        old = self.get(name, record_id)
+        preimage = self.get(name, record_id)
 
         removed_storage = removed_meta = removed_doc = removed_vec = False
 
@@ -403,7 +403,7 @@ class CollectionService:
             # B) user metadata index
             try:
                 logger.debug(f"Removing record {record_id} from metadata index")
-                res['meta_index'].delete(old.to_metadata_item())
+                res['meta_index'].delete(preimage.to_metadata_item())
                 removed_meta = True
             except Exception as e:
                 error_message = f"Metadata index removal failed for record {data_packet.record_id}"
@@ -413,7 +413,7 @@ class CollectionService:
             # C) user document index
             try:
                 logger.debug(f"Removing record {record_id} from doc index")
-                res['doc_index'].delete(old.to_doc_item())
+                res['doc_index'].delete(preimage.to_doc_item())
                 removed_doc = True
             except Exception as e:
                 error_message = f"Document index removal failed for record {data_packet.record_id}"
@@ -433,22 +433,22 @@ class CollectionService:
             logger.debug(f"Successfully deleted record {record_id} from all indices")
 
             # return preimage
-            return old
+            return preimage
 
         except Exception as e:
             logger.error(f"Error applying delete for record {record_id}, rolling back: {str(e)}", exc_info=True)
 
             if removed_vec:
                 logger.debug(f"Rolling back vector index deletion")
-                res['vec_index'].add(old.to_index_item())
+                res['vec_index'].add(preimage.to_index_item())
 
             if removed_doc:
                 logger.debug(f"Rolling back doc index deletion")
-                res['doc_index'].add(old.to_doc_item())
+                res['doc_index'].add(preimage.to_doc_item())
 
             if removed_meta:
                 logger.debug(f"Rolling back metadata index deletion")
-                res['meta_index'].add(old.to_metadata_item())
+                res['meta_index'].add(preimage.to_metadata_item())
 
             if removed_storage:
                 logger.debug(f"Rolling back storage deletion")
