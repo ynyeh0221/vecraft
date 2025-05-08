@@ -69,6 +69,10 @@ class DataPacketType(Enum):
     TOMBSTONE = 2
     NONEXISTENT = 3
 
+# Add constants at module level
+MAGIC_BYTES = b'VCRD'  # VeCraft Record Data
+FORMAT_VERSION = 1
+
 @dataclass
 class DataPacket:
     """
@@ -234,13 +238,12 @@ class DataPacket:
 
     def to_bytes(self) -> bytes:
         """
-        Converts the DataPacket to bytes.
+        Converts the DataPacket to bytes with magic header and version.
 
-        Serializes the DataPacket into a compact binary format suitable for persistent storage
-        or network transmission.
-
-        Returns:
-            bytes: The serialized binary data.
+        Format:
+        - 4 bytes: magic bytes ('VCRD')
+        - 1 byte: format version
+        - Original format continues...
         """
         record_id = self.record_id
         orig = self.original_data
@@ -255,30 +258,35 @@ class DataPacket:
         meta_b = json.dumps(meta).encode('utf-8')
         checksum_b = checksum.encode('utf-8')
 
-        header = struct.pack('<5I', len(record_id), len(orig_b), len(vec_b), len(meta_b), len(checksum_b))
+        header = struct.pack('<4s B 5I',
+                             MAGIC_BYTES,
+                             FORMAT_VERSION,
+                             len(record_id),
+                             len(orig_b),
+                             len(vec_b),
+                             len(meta_b),
+                             len(checksum_b))
         return header + rid_b + orig_b + vec_b + meta_b + checksum_b
 
     @staticmethod
     def from_bytes(data: bytes) -> 'DataPacket':
         """
-        Reconstructs a DataPacket from bytes.
-
-        Deserializes from a binary format to a DataPacket instance and verifies the checksum.
-
-        Args:
-            data (bytes): Binary format DataPacket data.
-
-        Returns:
-            DataPacket: The reconstructed DataPacket instance.
-
-        Raises:
-            ChecksumValidationFailureError: If the stored checksum doesn't match the recalculated checksum.
+        Reconstructs a DataPacket from bytes, validating magic header and version.
         """
-        header_size = 5 * 4
-        rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
-            '<5I',
+        header_size = 4 + 1 + 5 * 4  # magic + version + 5 integers
+        if len(data) < header_size:
+            raise ValueError("Invalid data packet: too short")
+
+        magic, version, rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
+            '<4s B 5I',
             data[:header_size]
         )
+
+        if magic != MAGIC_BYTES:
+            raise ValueError(f"Invalid magic bytes: expected {MAGIC_BYTES}, got {magic}")
+
+        if version != FORMAT_VERSION:
+            raise ValueError(f"Unsupported format version: {version}")
 
         pos = header_size
         returned_record_id_bytes = data[pos:pos + rid_len]
