@@ -2,10 +2,10 @@ import fcntl
 import json
 import os
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
-from src.vecraft.data.checksummed_data import DataPacket
 from src.vecraft.core.wal_interface import WALInterface
+from src.vecraft.data.checksummed_data import DataPacket
 
 
 class WALManager(WALInterface):
@@ -54,8 +54,8 @@ class WALManager(WALInterface):
         replay_file = self._file.with_suffix(".replay")
         self._file.rename(replay_file)
 
-        committed_records = []  # Changed from set to list to preserve order
-        pending_operations = {}
+        committed_records = []  # List to preserve order
+        pending_operations = {}  # Change to list of operations per record_id
         count = 0
 
         try:
@@ -67,21 +67,24 @@ class WALManager(WALInterface):
 
                         if phase == "commit":
                             record_id = entry["record_id"]
-                            # Only add if not already committed (in case of duplicate commits)
                             if record_id not in committed_records:
                                 committed_records.append(record_id)
                         else:
-                            # Store pending operations
-                            pending_operations[entry.get("record_id")] = entry
+                            # Store all prepare operations in order
+                            record_id = entry.get("record_id")
+                            if record_id not in pending_operations:
+                                pending_operations[record_id] = []
+                            pending_operations[record_id].append(entry)
                     except json.JSONDecodeError:
-                        # Corrupted line, stop replay and preserve WAL
                         raise Exception(f"Corrupted WAL entry detected")
 
-            # Replay only committed operations in the order they were committed
+            # Replay all operations for committed records in order
             for record_id in committed_records:
                 if record_id in pending_operations:
-                    handler(pending_operations[record_id])
-                    count += 1
+                    # Replay all prepare operations for this record
+                    for operation in pending_operations[record_id]:
+                        handler(operation)
+                        count += 1
 
             # Success - delete the replay file
             replay_file.unlink()

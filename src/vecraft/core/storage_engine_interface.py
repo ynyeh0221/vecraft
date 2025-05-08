@@ -23,7 +23,10 @@ class StorageEngine(ABC):
 
         Args:
             data: The byte array to write
-            offset: The position in the storage where writing should begin
+            location_item:
+                record_id: The unique identifier for the record
+                offset: The position in the storage where writing should begin
+                size: The number of bytes to read
 
         Returns:
             The actual offset after writing (may differ from requested offset
@@ -40,8 +43,10 @@ class StorageEngine(ABC):
         Read `size` bytes starting from `offset`.
 
         Args:
-            offset: The position in storage to begin reading from
-            size: The number of bytes to read
+            location_item:
+                record_id: The unique identifier for the record
+                offset: The position in storage to begin reading from
+                size: The number of bytes to read
 
         Returns:
             The bytes read from storage
@@ -119,9 +124,10 @@ class RecordLocationIndex(ABC):
         Add or update the storage location for a record.
 
         Args:
-            record_id: The unique identifier for the record
-            offset: The starting position of the record in storage
-            size: The size of the record in bytes
+            location_item:
+                record_id: The unique identifier for the record
+                offset: The starting position of the record in storage
+                size: The size of the record in bytes
 
         Raises:
             ValueError: If the record_id is invalid
@@ -174,4 +180,7 @@ class StorageIndexEngine(StorageEngine, RecordLocationIndex, ABC):
     collections, handling the physical storage details while presenting a
     record-oriented interface to higher layers.
     """
-    pass
+    ...
+
+    def verify_consistency(self):
+        ...

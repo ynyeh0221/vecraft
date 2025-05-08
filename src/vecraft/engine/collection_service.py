@@ -1,4 +1,5 @@
 import logging
+import os
 import pickle
 import threading
 import time
@@ -108,11 +109,10 @@ class CollectionService:
             })
 
             # Verify storage consistency before loading
-            if hasattr(storage, 'verify_consistency'):
-                logger.info(f"Verifying storage consistency for collection {name}")
-                orphaned = storage.verify_consistency()
-                if orphaned:
-                    logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
+            logger.info(f"Verifying storage consistency for collection {name}")
+            orphaned = storage.verify_consistency()
+            if orphaned:
+                logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
 
             # Load snapshots or rebuild (same as before)
             if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
@@ -195,27 +195,12 @@ class CollectionService:
         return False
 
     def _save_snapshots(self, name: str):
+        """Save snapshots to main files."""
         logger.info(f"Saving snapshots for collection {name}")
         start_time = time.time()
-        res = self._collections[name]
 
-        # Vector index snapshot
-        vec_data = res['vec_index'].serialize()
-        vec_size = len(vec_data)
-        res['vec_snap'].write_bytes(vec_data)
-        logger.debug(f"Saved vector index snapshot ({vec_size} bytes)")
-
-        # Metadata index snapshot
-        meta_data = res['meta_index'].serialize()
-        meta_size = len(meta_data)
-        res['meta_snap'].write_bytes(meta_data)
-        logger.debug(f"Saved metadata index snapshot ({meta_size} bytes)")
-
-        # Document index snapshot
-        doc_data = res['doc_index'].serialize()
-        doc_size = len(doc_data)
-        res['doc_snap'].write_bytes(doc_data)
-        logger.debug(f"Saved document index snapshot ({doc_size} bytes)")
+        # Use the consolidated method
+        self._flush_indexes(name, to_temp_files=False)
 
         logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
 
@@ -248,6 +233,7 @@ class CollectionService:
         """Apply insert with improved storage engine atomicity."""
         res = self._collections[name]
         rec_bytes = data_packet.to_bytes()
+        new_location = None
 
         old_loc = res['storage'].get_record_location(data_packet.record_id)
         if old_loc:
@@ -262,7 +248,7 @@ class CollectionService:
         try:
             # A) Atomic storage write with index update
             try:
-                # Allocate new offset
+                # Allocate new offset (includes space for status byte)
                 new_offset = res['storage'].allocate(len(rec_bytes))
                 new_location = LocationItem(
                     record_id=data_packet.record_id,
@@ -272,7 +258,7 @@ class CollectionService:
 
                 logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
 
-                # Use atomic write_and_index if available
+                # Use atomic write_and_index - writes with status=0 initially
                 res['storage'].write_and_index(rec_bytes, new_location)
 
                 updated_storage = True
@@ -282,7 +268,6 @@ class CollectionService:
                 logger.debug(error_message)
                 raise StorageFailureException(error_message, e)
 
-            # Rest of the index updates remain the same...
             # B) user metadata index
             try:
                 if preimage.type != DataPacketType.NONEXISTENT:
@@ -334,7 +319,7 @@ class CollectionService:
             logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}",
                          exc_info=True)
 
-            # Rollback logic remains the same but with improved storage handling
+            # Rollback logic - no need to zero out data since status=0 means uncommitted
             if updated_vec:
                 logger.debug(f"Rolling back vector index changes")
                 res['vec_index'].delete(record_id=data_packet.record_id)
@@ -353,10 +338,12 @@ class CollectionService:
                 if preimage.type != DataPacketType.NONEXISTENT:
                     res['meta_index'].add(preimage.to_metadata_item())
 
-            if updated_storage:
+            if updated_storage and new_location:
                 logger.debug(f"Rolling back storage changes")
+                # Just mark as deleted in index - the data remains with status=0
                 res['storage'].mark_deleted(data_packet.record_id)
                 res['storage'].delete_record(data_packet.record_id)
+
                 if old_loc is not None:
                     old_loc.validate_checksum()
                     res['storage'].add_record(old_loc)
@@ -476,6 +463,9 @@ class CollectionService:
                 # Apply the insert operation
                 preimage = self._apply_insert(collection, data_packet)
 
+                # Flush indexes to disk before committing
+                self._flush_indexes(collection)
+
                 # Phase 2: Commit to WAL
                 logger.debug(f"Committing insert operation for record {data_packet.record_id}")
                 wal.commit(data_packet.record_id)
@@ -510,6 +500,9 @@ class CollectionService:
             try:
                 # Apply the delete operation
                 preimage = self._apply_delete(collection, data_packet)
+
+                # Flush indexes to disk before committing
+                self._flush_indexes(collection)
 
                 # Phase 2: Commit to WAL
                 logger.debug(f"Committing delete operation for record {data_packet.record_id}")
@@ -630,6 +623,55 @@ class CollectionService:
             raise ChecksumValidationFailureError(error_message)
 
         return data_packet
+
+    def _flush_indexes(self, name: str, to_temp_files: bool = True):
+        """
+        Flush in-memory indexes to files.
+
+        Args:
+            name: Collection name
+            to_temp_files: If True, save to temporary files (.tempsnap),
+                          otherwise save to main snapshot files
+        """
+        res = self._collections[name]
+
+        if to_temp_files:
+            # Save to temporary files for transaction durability
+            vec_path = res['vec_snap'].with_suffix('.tempsnap')
+            meta_path = res['meta_snap'].with_suffix('.tempsnap')
+            doc_path = res['doc_snap'].with_suffix('.tempsnap')
+        else:
+            # Save to main snapshot files
+            vec_path = res['vec_snap']
+            meta_path = res['meta_snap']
+            doc_path = res['doc_snap']
+
+        try:
+            # Serialize and save indexes
+            vec_data = res['vec_index'].serialize()
+            vec_path.write_bytes(vec_data)
+
+            meta_data = res['meta_index'].serialize()
+            meta_path.write_bytes(meta_data)
+
+            doc_data = res['doc_index'].serialize()
+            doc_path.write_bytes(doc_data)
+
+            # Ensure data is written to disk
+            with open(vec_path, 'rb') as f:
+                os.fsync(f.fileno())
+            with open(meta_path, 'rb') as f:
+                os.fsync(f.fileno())
+            with open(doc_path, 'rb') as f:
+                os.fsync(f.fileno())
+
+        except Exception as e:
+            # Clean up temporary files on error
+            if to_temp_files:
+                for temp_file in [vec_path, meta_path, doc_path]:
+                    if temp_file.exists():
+                        temp_file.unlink()
+            raise e
 
     def flush(self):
         # Use global lock only to get a consistent snapshot of collection names
