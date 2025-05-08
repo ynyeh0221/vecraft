@@ -20,9 +20,10 @@ class MMapStorage(StorageEngine):
     file locking, and safe offset allocation.
     """
 
-    def __init__(self, path: str, page_size: int = 4096, initial_size: int = 4096):
+    def __init__(self, path: str, page_size: int = 4096, initial_size: int = 4096, read_only: bool = False):
         self._path = Path(path)
         self._page_size = page_size
+        self._read_only = read_only
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self._open_file()
         self._lock = threading.Lock()
@@ -33,16 +34,21 @@ class MMapStorage(StorageEngine):
         size = self._file.tell()
         self._next_offset = size
 
-        if size < initial_size:
+        if size < initial_size and not read_only:
             self._resize_file(initial_size)
         else:
-            self._mmap = mmap.mmap(self._file.fileno(), 0)
+            self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ if read_only else mmap.ACCESS_WRITE)
 
     def _open_file(self):
-        f = self._path.open('a+b')
-        f.seek(0)
-        # Acquire exclusive lock for this process
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self._read_only:
+            f = self._path.open('rb')
+            # Acquire shared lock for read-only access
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        else:
+            f = self._path.open('a+b')
+            f.seek(0)
+            # Acquire exclusive lock for write access
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return f
 
     def _resize_file(self, new_size: int):
