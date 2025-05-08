@@ -11,7 +11,7 @@ planned and then executed, with built-in checksum validation for data integrity.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.vecraft.catalog.json_catalog import JsonCatalog
+from src.vecraft.catalog.sqlite_catalog import SqliteCatalog
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, \
     CollectionSchema
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
@@ -51,8 +51,8 @@ class VecraftClient:
                 Defaults to {"M": 16, "ef_construction": 200} for HNSW index
         """
         self.root = Path(root)
-        catalog_path = self.root / "catalog.json"
-        self.catalog = JsonCatalog(str(catalog_path))
+        catalog_path = self.root / "catalog"
+        self.catalog = SqliteCatalog(str(catalog_path))
 
         # factories closed over root
         def wal_factory(wal_path: str):

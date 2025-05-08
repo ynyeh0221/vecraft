@@ -5,7 +5,8 @@ from typing import List, Tuple, Union, Optional, Any, Set
 import numpy as np
 
 from src.vecraft.data.checksummed_data import IndexItem
-from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException
+from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
+    UnsupportedMetricException
 from src.vecraft.vector_index.id_mapper import IdMapper
 
 
@@ -49,8 +50,18 @@ class HNSW:
                              by padding shorter vectors or truncating longer ones
             pad_value: Value to use for padding when auto_resize_dim is True
         """
+        # Convert metric to string value if it's an enum
+        metric_value = metric if isinstance(metric, str) else metric.value
+
+        # Get all supported metric values
+        supported_metrics = {m.value for m in DistanceMetric}
+
+        # Validate that the metric is supported
+        if metric_value not in supported_metrics:
+            raise UnsupportedMetricException("Metric value not supported.", metric_value, supported_metrics)
+
+        self._metric = metric_value
         self._dim = dim
-        self._metric = metric if isinstance(metric, str) else metric.value
         self._M = M
         self._ef_construction = ef_construction
         self._normalize_vectors = normalize_vectors

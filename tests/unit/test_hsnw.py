@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 from src.vecraft.core.vector_index_interface import IndexItem
-from src.vecraft.data.exception import VectorDimensionMismatchException
+from src.vecraft.data.exception import VectorDimensionMismatchException, UnsupportedMetricException
 from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
 from src.vecraft.vector_index.id_mapper import IdMapper
 
@@ -50,6 +50,12 @@ class TestHNSW(unittest.TestCase):
         # Verify record_vector initialization
         self.assertIsNotNone(hnsw1._index)
         self.assertIsNotNone(hnsw3._index)
+
+    def test_init_with_unsupported_metrics(self):
+        """Test initialization with unsupported metrics."""
+        with self.assertRaises(UnsupportedMetricException) as context:
+            HNSW(dim=10, metric="unsupported_metric")
+        self.assertIn("unsupported_metric", str(context.exception))
 
     def test_add_single(self):
         """Test adding a single item to the record_vector."""

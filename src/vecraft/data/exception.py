@@ -40,42 +40,6 @@ class ChecksumValidationFailureError(Exception):
         return self.message
 
 
-class AuthenticationException(Exception):
-    """
-    Exception raised when credentials are missing, invalid, or lack necessary permissions.
-    """
-
-    def __init__(self, message, user_id=None):
-        self.user_id = user_id
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        if self.user_id is not None:
-            return f"{self.message} (user_id={self.user_id})"
-        return self.message
-
-
-class ConnectionException(Exception):
-    """
-    Exception raised when there's a network-level failure (e.g. DNS lookup failure,
-    TCP timeout) between client and server.
-    """
-
-    def __init__(self, message, host=None, port=None):
-        self.host = host
-        self.port = port
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        if self.host is not None and self.port is not None:
-            return f"{self.message} (host={self.host}, port={self.port})"
-        elif self.host is not None:
-            return f"{self.message} (host={self.host})"
-        return self.message
-
-
 class TimeoutException(Exception):
     """
     Exception raised when an operation (e.g. index build, search) exceeded
@@ -100,23 +64,6 @@ class TimeoutException(Exception):
         return self.message
 
 
-class InvalidQueryException(Exception):
-    """
-    Exception raised when the user supplies a malformed query
-    (bad JSON, unsupported filter syntax, etc.).
-    """
-
-    def __init__(self, message, query=None):
-        self.query = query
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        if self.query is not None:
-            return f"{self.message} (query={self.query})"
-        return self.message
-
-
 class InvalidDataException(Exception):
     """
     Exception raised when a DataPacket cannot be validated.
@@ -136,33 +83,6 @@ class InvalidDataException(Exception):
             details.append(f"record id={self.record_id}")
         if self.cause is not None:
             details.append(f"cause={self.cause}")
-
-        if details:
-            return f"{self.message} ({', '.join(details)})"
-        return self.message
-
-
-class IndexNotFoundException(Exception):
-    """
-    Exception raised when referring to a non-existent namespace, collection
-    or index name.
-    """
-
-    def __init__(self, message, namespace=None, collection=None, index_name=None):
-        self.namespace = namespace
-        self.collection = collection
-        self.index_name = index_name
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.namespace is not None:
-            details.append(f"namespace={self.namespace}")
-        if self.collection is not None:
-            details.append(f"collection={self.collection}")
-        if self.index_name is not None:
-            details.append(f"index_name={self.index_name}")
 
         if details:
             return f"{self.message} ({', '.join(details)})"
@@ -238,33 +158,6 @@ class UnsupportedMetricException(Exception):
             details.append(f"metric={self.metric}")
         if self.supported_metrics is not None:
             details.append(f"supported_metrics={self.supported_metrics}")
-
-        if details:
-            return f"{self.message} ({', '.join(details)})"
-        return self.message
-
-
-class QuotaExceededException(Exception):
-    """
-    Exception raised when user has hit subscription or tenant limits
-    (max vectors, storage bytes, QPS).
-    """
-
-    def __init__(self, message, limit_type=None, current_usage=None, max_allowed=None):
-        self.limit_type = limit_type
-        self.current_usage = current_usage
-        self.max_allowed = max_allowed
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.limit_type is not None:
-            details.append(f"limit_type={self.limit_type}")
-        if self.current_usage is not None:
-            details.append(f"current_usage={self.current_usage}")
-        if self.max_allowed is not None:
-            details.append(f"max_allowed={self.max_allowed}")
 
         if details:
             return f"{self.message} ({', '.join(details)})"
@@ -407,32 +300,6 @@ class DocumentIndexBuildingException(Exception):
             details.append(f"record id={self.record_id}")
         if self.cause is not None:
             details.append(f"cause={self.cause}")
-
-        if details:
-            return f"{self.message} ({', '.join(details)})"
-        return self.message
-
-class PermissionDeniedException(Exception):
-    """
-    Exception raised when even if authenticated, the user isn't authorized
-    to perform this operation on the resource.
-    """
-
-    def __init__(self, message, user_id=None, resource=None, operation=None):
-        self.user_id = user_id
-        self.resource = resource
-        self.operation = operation
-        self.message = message
-        super().__init__(self.message)
-
-    def __str__(self):
-        details = []
-        if self.user_id is not None:
-            details.append(f"user_id={self.user_id}")
-        if self.resource is not None:
-            details.append(f"resource={self.resource}")
-        if self.operation is not None:
-            details.append(f"operation={self.operation}")
 
         if details:
             return f"{self.message} ({', '.join(details)})"
