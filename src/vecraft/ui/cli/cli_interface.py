@@ -7,7 +7,9 @@ import sys
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.index_packets import CollectionSchema, QueryPacket, DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket
+from src.vecraft.data.index_packets import CollectionSchema
+from src.vecraft.data.query_packet import QueryPacket
 
 
 def parse_vector(vector_str):
@@ -84,6 +86,10 @@ def get_parser():
     c_tsne.add_argument("--outfile", default="tsne.png", help="Output file path (default: tsne.png)")
 
     return parser
+
+
+class DataPacketType:
+    pass
 
 
 def execute_command(client, args):
