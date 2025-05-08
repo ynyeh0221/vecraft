@@ -52,24 +52,21 @@ class CollectionService:
 
     def _get_or_init_collection(self, name: str):
         """Initialize collection with consistency check on startup."""
-        # First, try to access the collection without locking
+        # Fast-path if already registered
         if name in self._collections:
             res = self._collections[name]
             res['init_event'].wait()
             return res
 
+        # 1) Register a placeholder so other threads block on init_event
         with self._global_lock.write_lock():
-            # Double-check
             if name in self._collections:
                 res = self._collections[name]
                 res['init_event'].wait()
                 return res
 
             logger.info(f"Registering collection {name}")
-            schema: CollectionSchema = self._catalog.get_schema(name)
-            logger.debug(f"Retrieved schema for collection {name} with dimension {schema.dim}")
-
-            # Create paths for snapshots
+            schema = self._catalog.get_schema(name)
             vec_snap = Path(f"{name}.idxsnap")
             meta_snap = Path(f"{name}.metasnap")
             doc_snap = Path(f"{name}.docsnap")
@@ -88,123 +85,116 @@ class CollectionService:
             }
             self._collections[name] = collection_resources
 
-        # Continue with collection-specific initialization
-        with collection_resources['lock'].write_lock():
-            if collection_resources.get('initialized', False):
-                return collection_resources
+        # 2) Do the real initialization under the per-collection lock
+        try:
+            with collection_resources['lock'].write_lock():
+                if collection_resources['initialized']:
+                    return collection_resources
 
-            logger.info(f"Initializing collection {name} resources")
+                logger.info(f"Initializing collection {name} resources")
 
-            # Create resources with improved factories
-            wal = self._wal_factory(f"{name}.wal")
-            storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
-            vector_index = self._vector_index_factory("hnsw", schema.dim)
-            meta_index = self._metadata_index_factory()
-            doc_index = self._doc_index_factory()
+                # create engines & indexes
+                wal = self._wal_factory(f"{name}.wal")
+                storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
+                vector_index = self._vector_index_factory("hnsw", schema.dim)
+                meta_index = self._metadata_index_factory()
+                doc_index = self._doc_index_factory()
 
-            collection_resources.update({
-                'wal': wal,
-                'storage': storage,
-                'vec_index': vector_index,
-                'meta_index': meta_index,
-                'doc_index': doc_index
-            })
+                collection_resources.update({
+                    'wal': wal,
+                    'storage': storage,
+                    'vec_index': vector_index,
+                    'meta_index': meta_index,
+                    'doc_index': doc_index
+                })
 
-            # Verify storage consistency before loading
-            logger.info(f"Verifying storage consistency for collection {name}")
-            orphaned = storage.verify_consistency()
-            if orphaned:
-                logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
+                # consistency check
+                logger.info(f"Verifying storage consistency for collection {name}")
+                orphaned = storage.verify_consistency()
+                if orphaned:
+                    logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
 
-            # Load snapshots or rebuild (same as before)
-            if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
-                logger.info(f"Loading collection {name} from snapshots")
-                start_time = time.time()
-                vec_data = pickle.loads(vec_snap.read_bytes())
-                vector_index.deserialize(vec_data)
-                meta_data = meta_snap.read_bytes()
-                meta_index.deserialize(meta_data)
-                doc_data = doc_snap.read_bytes()
-                doc_index.deserialize(doc_data)
-                logger.info(f"Loaded collection {name} from snapshots in {time.time() - start_time:.2f}s")
-            else:
-                # Full rebuild
-                logger.info(f"No snapshots found for collection {name}, performing full rebuild")
-                start_time = time.time()
-                record_count = 0
+                # 3) Consolidated snapshot logic
+                if self._load_snapshots(name):
+                    logger.info(f"Loaded collection {name} from snapshots")
+                else:
+                    logger.info(f"No snapshots for {name}, performing full rebuild")
+                    start_time = time.time()
+                    count = 0
+                    for rid in storage.get_all_record_locations().keys():
+                        pkt = self._get_internal(name, rid, storage)
+                        if pkt:
+                            vector_index.add(pkt.to_vector_packet())
+                            meta_index.add(pkt.to_metadata_packet())
+                            doc_index.add(pkt.to_document_packet())
+                            count += 1
+                    logger.info(f"Rebuilt {count} records in {time.time() - start_time:.2f}s")
 
-                for rid in storage.get_all_record_locations().keys():
-                    rec_data = self._get_internal(name, rid, storage)
-                    if rec_data:
-                        vector_index.add(rec_data.to_vector_packet())
-                        meta_index.add(rec_data.to_metadata_packet())
-                        doc_index.add(rec_data.to_document_packet())
-                        record_count += 1
+                # 4) Tightened WAL replay (only commit‐phase entries)
+                logger.info(f"Replaying WAL for collection {name}")
+                wal_start = time.time()
 
-                logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
+                def _apply_if_committed(entry: dict):
+                    if entry.get("_phase") == "commit":
+                        self._replay_entry(name, entry)
 
-            # Replay WAL with improved replay mechanism
-            logger.info(f"Replaying WAL for collection {name}")
-            wal_start = time.time()
-            try:
-                replay_count = wal.replay(
-                    lambda entry: self._replay_entry(name, entry)
-                )
-                # WAL is automatically cleared after successful replay
+                replay_count = wal.replay(_apply_if_committed)
                 logger.info(f"Replayed {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
 
+                # mark fully initialized & wake waiters
                 collection_resources['initialized'] = True
-
-            finally:
                 collection_resources['init_event'].set()
+                logger.info(f"Collection {name} initialized successfully")
 
-            logger.info(f"Collection {name} initialized successfully")
+            return collection_resources
 
-        return collection_resources
+        except Exception:
+            # on failure, remove placeholder so a future call will retry
+            with self._global_lock.write_lock():
+                del self._collections[name]
+            # wake any waiter so they see the error
+            collection_resources['init_event'].set()
+            raise
+
+    def _save_snapshots(self, name: str):
+        """Save snapshots to main files atomically via tempsnaps."""
+        logger.info(f"Saving snapshots for collection {name}")
+        start_time = time.time()
+
+        # write .tempsnap → main
+        self._flush_indexes(name, to_temp_files=True)
+
+        logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
 
     def _load_snapshots(self, name: str) -> bool:
-        """Load vector vector_index and metadata snapshots for the given collection, if they exist."""
+        """Load vector, metadata, and doc snapshots for the given collection, if they exist."""
         logger.info(f"Attempting to load snapshots for collection {name}")
         res = self._collections[name]
-        vec_snap = res['vec_snap']
-        meta_snap = res['meta_snap']
-        doc_snap = res['doc_snap']
+        vec_snap, meta_snap, doc_snap = res['vec_snap'], res['meta_snap'], res['doc_snap']
+
         if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
             start_time = time.time()
 
             # vector index
-            vec_data = pickle.loads(vec_snap.read_bytes())
-            vec_size = len(vec_data)
+            vec_data = vec_snap.read_bytes()
             res['vec_index'].deserialize(vec_data)
-            logger.debug(f"Loaded vector index snapshot ({vec_size} bytes)")
+            logger.debug(f"Loaded vector snapshot ({len(vec_data)} bytes)")
 
             # metadata index
             meta_data = meta_snap.read_bytes()
-            meta_size = len(meta_data)
             res['meta_index'].deserialize(meta_data)
-            logger.debug(f"Loaded metadata index snapshot ({meta_size} bytes)")
+            logger.debug(f"Loaded metadata snapshot ({len(meta_data)} bytes)")
 
-            # user_doc_index index
+            # document index
             doc_data = doc_snap.read_bytes()
-            doc_size = len(doc_data)
             res['doc_index'].deserialize(doc_data)
-            logger.debug(f"Loaded document index snapshot ({doc_size} bytes)")
+            logger.debug(f"Loaded document snapshot ({len(doc_data)} bytes)")
 
             logger.info(f"Successfully loaded all snapshots for collection {name} in {time.time() - start_time:.2f}s")
             return True
 
         logger.info(f"Snapshots not found for collection {name}")
         return False
-
-    def _save_snapshots(self, name: str):
-        """Save snapshots to main files."""
-        logger.info(f"Saving snapshots for collection {name}")
-        start_time = time.time()
-
-        # Use the consolidated method
-        self._flush_indexes(name, to_temp_files=False)
-
-        logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
 
     def _replay_entry(self, name: str, entry: dict) -> None:
         """Only replay entries that have been committed."""
@@ -632,24 +622,23 @@ class CollectionService:
 
         Args:
             name: Collection name
-            to_temp_files: If True, save to temporary files (.tempsnap),
-                          otherwise save to main snapshot files
+            to_temp_files: If True, save to .tempsnap files and then atomically replace
+                           the main snapshots; otherwise write directly to the main files.
         """
         res = self._collections[name]
 
         if to_temp_files:
-            # Save to temporary files for transaction durability
-            vec_path = res['vec_snap'].with_suffix('.tempsnap')
-            meta_path = res['meta_snap'].with_suffix('.tempsnap')
-            doc_path = res['doc_snap'].with_suffix('.tempsnap')
+            # preserve the original suffix and append ".tempsnap"
+            vec_path = res['vec_snap'].with_suffix(res['vec_snap'].suffix + '.tempsnap')
+            meta_path = res['meta_snap'].with_suffix(res['meta_snap'].suffix + '.tempsnap')
+            doc_path = res['doc_snap'].with_suffix(res['doc_snap'].suffix + '.tempsnap')
         else:
-            # Save to main snapshot files
             vec_path = res['vec_snap']
             meta_path = res['meta_snap']
             doc_path = res['doc_snap']
 
         try:
-            # Serialize and save indexes
+            # serialize & write
             vec_data = res['vec_index'].serialize()
             vec_path.write_bytes(vec_data)
 
@@ -659,21 +648,24 @@ class CollectionService:
             doc_data = res['doc_index'].serialize()
             doc_path.write_bytes(doc_data)
 
-            # Ensure data is written to disk
-            with open(vec_path, 'rb') as f:
-                os.fsync(f.fileno())
-            with open(meta_path, 'rb') as f:
-                os.fsync(f.fileno())
-            with open(doc_path, 'rb') as f:
-                os.fsync(f.fileno())
+            # fsync each
+            for p in (vec_path, meta_path, doc_path):
+                with open(p, 'rb') as f:
+                    os.fsync(f.fileno())
+
+            # atomic replace tempsnap → main
+            if to_temp_files:
+                os.replace(vec_path, res['vec_snap'])
+                os.replace(meta_path, res['meta_snap'])
+                os.replace(doc_path, res['doc_snap'])
 
         except Exception as e:
-            # Clean up temporary files on error
+            # clean up on error
             if to_temp_files:
-                for temp_file in [vec_path, meta_path, doc_path]:
+                for temp_file in (vec_path, meta_path, doc_path):
                     if temp_file.exists():
                         temp_file.unlink()
-            raise e
+            raise
 
     def flush(self):
         # Use global lock only to get a consistent snapshot of collection names
