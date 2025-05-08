@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.checksummed_data import QueryPacket, CollectionSchema
+from src.vecraft.data.checksummed_data import QueryPacket, CollectionSchema, DataPacket, DataPacketType
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 
 
@@ -42,18 +42,23 @@ class TestVecraftClient(unittest.TestCase):
             idx, data, vec = args
             rec_id = self.client.insert(
                 collection=collection,
-                record_id=str(idx),
-                vector=vec,
-                original_data=data,
-                metadata={"tags": data["tags"]}
+                packet=DataPacket(
+                    type=DataPacketType.RECORD,
+                    record_id=str(idx),
+                    vector=vec,
+                    original_data=data,
+                    metadata={"tags": data["tags"]}
+                )
             )
 
             # Filtered search by tag
             results = self.client.search(
                 collection=collection,
-                query_vector=rng.random(32).astype(np.float32),
-                k=20,
-                where={"tags": data["tags"]}
+                packet=QueryPacket(
+                    query_vector=rng.random(32).astype(np.float32),
+                    k=20,
+                    where={"tags": data["tags"]}
+                )
             )
             self.assertTrue(any(res.data_packet.record_id == rec_id for res in results))
 
@@ -64,8 +69,10 @@ class TestVecraftClient(unittest.TestCase):
             # Zero-distance check
             top = self.client.search(
                 collection=collection,
-                query_vector=vec,
-                k=1
+                packet=QueryPacket(
+                    query_vector=vec,
+                    k=1
+                )
             )[0]
             self.assertEqual(top.data_packet.record_id, rec_id)
             self.assertTrue(np.isclose(top.distance, 0.0))
@@ -87,17 +94,22 @@ class TestVecraftClient(unittest.TestCase):
             idx, vec, data = args
             rec_id = self.client.insert(
                 collection=collection,
-                record_id=str(idx),
-                vector=vec,
-                original_data=data,
-                metadata={"tags": data["tags"]}
+                packet=DataPacket(
+                    type=DataPacketType.RECORD,
+                    record_id=str(idx),
+                    vector=vec,
+                    original_data=data,
+                    metadata={"tags": data["tags"]}
+                )
             )
 
             # Pre-delete search
             pre = self.client.search(
                 collection=collection,
-                query_vector=vec,
-                k=1
+                packet=QueryPacket(
+                    query_vector=vec,
+                    k=1
+                )
             )
             self.assertTrue(pre and pre[0].data_packet.record_id == rec_id)
 
@@ -107,10 +119,12 @@ class TestVecraftClient(unittest.TestCase):
             # Post-delete search
             post = self.client.search(
                 collection=collection,
-                query_vector=vec,
-                k=1
+                packet=QueryPacket(
+                    query_vector=vec,
+                    k=1
+                )
             )
-            self.assertTrue(all(r["record_id"] != rec_id for r in post))
+            self.assertTrue(all(r.data_packet.record_id != rec_id for r in post))
 
             # Fetch must fail
             with self.assertRaises(Exception):
@@ -136,18 +150,23 @@ class TestVecraftClient(unittest.TestCase):
         # Insert the record
         record_id = self.client.insert(
             collection=collection,
-            record_id="id1",
-            vector=original_vector,
-            original_data=original_data,
-            metadata={"tags": original_data["tags"]}
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id="id1",
+                vector=original_vector,
+                original_data=original_data,
+                metadata={"tags": original_data["tags"]}
+            )
         )
 
         # Verify it's searchable and fetchable
         results = self.client.search(
             collection=collection,
-            query_vector=original_vector,
-            k=5,
-            where={"tags": original_data["tags"]}
+            packet=QueryPacket(
+                query_vector=original_vector,
+                k=5,
+                where={"tags": original_data["tags"]}
+            )
         )
         self.assertTrue(any(res.data_packet.record_id == record_id for res in results))
         rec = self.client.get(collection, record_id)
@@ -158,29 +177,36 @@ class TestVecraftClient(unittest.TestCase):
         updated_vector = rng.random(32).astype(np.float32)
 
         # Update with same ID
-        self.client.update(
+        self.client.insert(
             collection=collection,
-            record_id=record_id,
-            new_vector=updated_vector,
-            new_data=updated_data,
-            new_metadata={"tags": updated_data["tags"]}
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id=record_id,
+                vector=updated_vector,
+                original_data=updated_data,
+                metadata={"tags": updated_data["tags"]}
+            )
         )
 
         # Verify old metadata doesn't return the record
         old_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=5,
-            where={"tags": original_data["tags"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=5,
+                where={"tags": original_data["tags"]}
+            )
         )
-        self.assertTrue(all(res["record_id"] != record_id for res in old_results))
+        self.assertTrue(all(res.data_packet.record_id != record_id for res in old_results))
 
         # Verify new metadata returns the record
         new_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=5,
-            where={"tags": updated_data["tags"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=5,
+                where={"tags": updated_data["tags"]}
+            )
         )
         self.assertTrue(any(res.data_packet.record_id == record_id for res in new_results))
 
@@ -191,8 +217,10 @@ class TestVecraftClient(unittest.TestCase):
         # Verify zero-distance search with updated vector works
         top = self.client.search(
             collection=collection,
-            query_vector=updated_vector,
-            k=1
+            packet=QueryPacket(
+                query_vector=updated_vector,
+                k=1
+            )
         )[0]
         self.assertEqual(top.data_packet.record_id, record_id)
         self.assertTrue(np.isclose(top.distance, 0.0))
@@ -220,10 +248,13 @@ class TestVecraftClient(unittest.TestCase):
         for i in range(batch_size):
             rec_id = self.client.insert(
                 collection=collection,
-                record_id=str(i),
-                vector=vectors[i],
-                original_data=records[i],
-                metadata={"tags": records[i]["tags"]}
+                packet=DataPacket(
+                    type=DataPacketType.RECORD,
+                    record_id=str(i),
+                    vector=vectors[i],
+                    original_data=records[i],
+                    metadata={"tags": records[i]["tags"]}
+                )
             )
             record_ids.append(rec_id)
 
@@ -235,17 +266,21 @@ class TestVecraftClient(unittest.TestCase):
         # Verify filtering by tag works
         even_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=batch_size,
-            where={"tags": ["even"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=batch_size,
+                where={"tags": ["even"]}
+            )
         )
         self.assertTrue(len(even_results) > 0)
 
         odd_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=batch_size,
-            where={"tags": ["odd"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=batch_size,
+                where={"tags": ["odd"]}
+            )
         )
         self.assertTrue(len(odd_results) > 0)
 
@@ -266,18 +301,22 @@ class TestVecraftClient(unittest.TestCase):
         # Verify searching by "even" tag returns no results
         empty_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=batch_size,
-            where={"tags": ["even"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=batch_size,
+                where={"tags": ["even"]}
+            )
         )
         self.assertEqual(len(empty_results), 0)
 
         # Odd records should still be searchable
         odd_results_after = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=batch_size,
-            where={"tags": ["odd"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=batch_size,
+                where={"tags": ["odd"]}
+            )
         )
         self.assertTrue(len(odd_results_after) > 0)
 
@@ -303,50 +342,61 @@ class TestVecraftClient(unittest.TestCase):
             vec = rng.random(32).astype(np.float32)
             rec_id = self.client.insert(
                 collection=collection,
-                record_id=str(idx),
-                vector=vec,
-                original_data=data,
-                metadata={
-                    "tags": data["tags"],
-                    "category": data["category"],
-                    "count": data["count"]
-                }
+                packet=DataPacket(
+                    type=DataPacketType.RECORD,
+                    record_id=str(idx),
+                    vector=vec,
+                    original_data=data,
+                    metadata={
+                        "tags": data["tags"],
+                        "category": data["category"],
+                        "count": data["count"]
+                    }
+                )
             )
             record_ids.append(rec_id)
 
         # Test filtering by single tag
         red_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=10,
-            where={"tags": ["red"]}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=10,
+                where={"tags": ["red"]}
+            )
         )
         self.assertEqual(len(red_results), 3)  # 3 red items
 
         # Test filtering by category
         produce_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=10,
-            where={"category": "produce"}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=10,
+                where={"category": "produce"}
+            )
         )
         self.assertEqual(len(produce_results), 3)  # 3 produce items
 
         # Test filtering with numeric comparison
         high_count_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=10,
-            where={"count": {"$gt": 4}}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=10,
+                where={"count": {"$gt": 4}}
+            )
         )
         self.assertEqual(len(high_count_results), 2)  # 2 items with count > 4
 
         # Test combined filtering
         red_produce_results = self.client.search(
             collection=collection,
-            query_vector=rng.random(32).astype(np.float32),
-            k=10,
-            where={"tags": ["red"], "category": "produce"}
+            packet=QueryPacket(
+                query_vector=rng.random(32).astype(np.float32),
+                k=10,
+                where={"tags": ["red"], "category": "produce"}
+            )
         )
         self.assertEqual(len(red_produce_results), 2)  # 2 red produce items
 
@@ -363,10 +413,13 @@ class TestVecraftClient(unittest.TestCase):
         initial_vector = rng.random(32).astype(np.float32)
         record_id = self.client.insert(
             collection=collection,
-            record_id="id1",
-            vector=initial_vector,
-            original_data=initial_data,
-            metadata={"version": initial_data["version"]}
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id="id1",
+                vector=initial_vector,
+                original_data=initial_data,
+                metadata={"version": initial_data["version"]}
+            )
         )
 
         # Define task for concurrent updates
@@ -374,12 +427,15 @@ class TestVecraftClient(unittest.TestCase):
             data = {"text": f"update_{i}", "version": i}
             vec = rng.random(32).astype(np.float32)
             try:
-                self.client.update(
+                self.client.insert(
                     collection=collection,
-                    record_id=record_id,
-                    new_vector=vec,
-                    new_data=data,
-                    new_metadata={"version": data["version"]}
+                    packet=DataPacket(
+                        type=DataPacketType.RECORD,
+                        record_id=record_id,
+                        vector=vec,
+                        original_data=data,
+                        metadata={"version": data["version"]}
+                    )
                 )
                 return i
             except Exception as e:
@@ -418,10 +474,13 @@ class TestVecraftClient(unittest.TestCase):
         special_vec = rng.random(8).astype(np.float32)
         record_id = self.client.insert(
             collection=collection,
-            record_id="id1",
-            vector=special_vec,
-            original_data=special_data,
-            metadata={"has_emoji": True}
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id="id1",
+                vector=special_vec,
+                original_data=special_data,
+                metadata={"has_emoji": True}
+            )
         )
 
         # Verify complex data is preserved
@@ -445,18 +504,23 @@ class TestVecraftClient(unittest.TestCase):
         large_vec = rng.random(4).astype(np.float32)
         record_id = self.client.insert(
             collection=collection,
-            record_id="id1",
-            vector=large_vec,
-            original_data={"text": "large_meta"},
-            metadata=large_meta
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id="id1",
+                vector=large_vec,
+                original_data={"text": "large_meta"},
+                metadata=large_meta
+            )
         )
 
         # Verify we can search by one of the metadata values
         results = self.client.search(
             collection=collection,
-            query_vector=large_vec,
-            k=1,
-            where={"key_50": "value_50"}
+            packet=QueryPacket(
+                query_vector=large_vec,
+                k=1,
+                where={"key_50": "value_50"}
+            )
         )
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].data_packet.record_id, record_id)
@@ -490,13 +554,16 @@ class TestVecraftClient(unittest.TestCase):
 
             rec_id = self.client.insert(
                 collection=collection,
-                record_id=str(i),
-                vector=vec,
-                original_data=data,
-                metadata={
-                    "category": category,
-                    "price_range": "high" if data["price"] > 500 else "low"
-                }
+                packet=DataPacket(
+                    type=DataPacketType.RECORD,
+                    record_id=str(i),
+                    vector=vec,
+                    original_data=data,
+                    metadata={
+                        "category": category,
+                        "price_range": "high" if data["price"] > 500 else "low"
+                    }
+                )
             )
             record_ids.append(rec_id)
 
@@ -510,24 +577,30 @@ class TestVecraftClient(unittest.TestCase):
         search_vector = rng.random(32).astype(np.float32)
         results = self.client.search(
             collection=collection,
-            query_vector=search_vector,
-            k=10
+            packet=QueryPacket(
+                query_vector=search_vector,
+                k=10
+            )
         )
 
         # Filtered search
         filtered_results = self.client.search(
             collection=collection,
-            query_vector=search_vector,
-            k=10,
-            where={"category": "electronics"}
+            packet=QueryPacket(
+                query_vector=search_vector,
+                k=10,
+                where={"category": "electronics"}
+            )
         )
 
         # Complex filtered search
         complex_results = self.client.search(
             collection=collection,
-            query_vector=search_vector,
-            k=10,
-            where={"category": "electronics", "price_range": "high"}
+            packet=QueryPacket(
+                query_vector=search_vector,
+                k=10,
+                where={"category": "electronics", "price_range": "high"}
+            )
         )
 
         search_time = time.time() - start_time
@@ -553,10 +626,13 @@ class TestVecraftClient(unittest.TestCase):
         # Insert the valid record
         record_id = self.client.insert(
             collection=collection,
-            record_id="test1",
-            vector=vector,
-            original_data=data,
-            metadata={"valid": True}
+            packet=DataPacket(
+                type=DataPacketType.RECORD,
+                record_id="test1",
+                vector=vector,
+                original_data=data,
+                metadata={"valid": True}
+            )
         )
 
         # Creating a tampered query packet (we'll need to access the client's internal components)

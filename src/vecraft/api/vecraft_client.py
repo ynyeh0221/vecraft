@@ -1,11 +1,8 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, \
-    CollectionSchema
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, CollectionSchema
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
@@ -70,24 +67,14 @@ class VecraftClient:
     def create_collection(self, collection_schema: CollectionSchema) -> None:
         return self.catalog.create_collection(collection_schema)
 
-    def list_collections(self) -> List[str]:
-        return [item.name for item in self.catalog.list_collections() if item.validate_checksum() or True]
+    def list_collections(self) -> List[CollectionSchema]:
+        return self.catalog.list_collections()
 
     def insert(
         self,
         collection: str,
-        record_id: str,
-        vector: np.ndarray,
-        original_data: Any,
-        metadata: Optional[Dict[str, Any]] = None,
+        packet: DataPacket
     ) -> str:
-        packet = DataPacket(
-            type=DataPacketType.RECORD,
-            record_id=record_id,
-            vector=vector,
-            original_data=original_data,
-            metadata=metadata or {},
-        )
         plan = self.planner.plan_insert(collection=collection, data_packet=packet)
         return self.executor.execute(plan)
 
@@ -103,33 +90,7 @@ class VecraftClient:
     def search(
             self,
             collection: str,
-            query_vector: np.ndarray,
-            k: int,
-            where: Optional[Dict[str, Any]] = None,
-            where_document: Optional[Dict[str, Any]] = None,
+            packet: QueryPacket
     ) -> List[SearchDataPacket]:
-        packet = QueryPacket(
-            query_vector=query_vector,
-            k=k,
-            where=where or {},
-            where_document=where_document or {},
-        )
         plan = self.planner.plan_search(collection=collection, query_packet=packet)
         return self.executor.execute(plan)
-
-    def update(
-        self,
-        collection: str,
-        record_id: str,
-        new_vector: np.ndarray,
-        new_data: Any,
-        new_metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        # an “update” is just an insert with an existing ID
-        return self.insert(
-            collection=collection,
-            record_id=record_id,
-            vector=new_vector,
-            original_data=new_data,
-            metadata=new_metadata,
-        )

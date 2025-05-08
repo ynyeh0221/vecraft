@@ -7,7 +7,7 @@ import sys
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.checksummed_data import CollectionSchema
+from src.vecraft.data.checksummed_data import CollectionSchema, QueryPacket, DataPacket, DataPacketType
 
 
 def parse_vector(vector_str):
@@ -82,7 +82,7 @@ def get_parser():
 def execute_command(client, args):
     try:
         if args.command == "list-collections":
-            print(json.dumps(client.list_collections(), indent=2))
+            print(json.dumps([item.name for item in client.list_collections()], indent=2))
         elif args.command == "create-collection":
             client.create_collection(CollectionSchema(name=args.name, dim=args.dim, vector_type=args.type))
             print(f"Created collection '{args.name}'")
@@ -91,10 +91,7 @@ def execute_command(client, args):
             meta = json.loads(args.metadata)
             rec_id = client.insert(
                 collection=args.collection,
-                record_id=args.id,
-                vector=args.vector,
-                original_data=data,
-                metadata=meta
+                packet=DataPacket(type=DataPacketType.RECORD, record_id=args.id, vector=args.vector, original_data=data, metadata=meta or {}),
             )
             print(rec_id)
         elif args.command == "get":
@@ -108,10 +105,7 @@ def execute_command(client, args):
             where_document = json.loads(args.where_document)
             results = client.search(
                 collection=args.collection,
-                query_vector=args.vector,
-                k=args.k,
-                where=where,
-                where_document=where_document
+                packet=QueryPacket(args.vector, k=args.k, where=where or {}, where_document=where_document or {}),
             )
             results_dict = [result.to_dict() for result in results]
             print(json.dumps(results_dict, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
