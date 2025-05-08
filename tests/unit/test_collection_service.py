@@ -25,16 +25,45 @@ class DummyStorage(StorageIndexEngine):
     def __init__(self, data_path=None, index_path=None):
         self._buffer = bytearray()
         self._locs = {}
+        self._deleted_locs = {}  # Track deleted locations
         self._next_id = 1
+        self._next_offset = 0  # Track the next available offset for allocation
+
+    def allocate(self, size: int) -> int:
+        """Allocate space and return the offset."""
+        offset = self._next_offset
+        self._next_offset += size
+        # Extend buffer if needed
+        if len(self._buffer) < self._next_offset:
+            self._buffer.extend(b"\x00" * (self._next_offset - len(self._buffer)))
+        return offset
+
+    def write_and_index(self, data: bytes, location_item: LocationItem) -> int:
+        """Atomic write to storage and index."""
+        # Write to storage
+        actual_offset = self.write(data, location_item)
+
+        try:
+            # Update index
+            self.add_record(location_item)
+        except Exception as e:
+            # For append-only storage, mark as deleted instead of zeroing
+            self.mark_deleted(location_item.record_id)
+            raise Exception(f"Failed to update index, marked as deleted: {e}")
+
+        return actual_offset
 
     def get_deleted_locations(self) -> List[LocationItem]:
-        pass
+        """Return list of deleted locations."""
+        return list(self._deleted_locs.values())
 
-    def write(self,  data: bytes, location_item: LocationItem) -> int:
+    def write(self, data: bytes, location_item: LocationItem) -> int:
         end = location_item.offset + len(data)
         if len(self._buffer) < end:
             self._buffer.extend(b"\x00" * (end - len(self._buffer)))
         self._buffer[location_item.offset:end] = data
+        # Update next_offset if we've written beyond it
+        self._next_offset = max(self._next_offset, end)
         return location_item.offset
 
     def read(self, location_item: LocationItem) -> bytes:
@@ -56,6 +85,31 @@ class DummyStorage(StorageIndexEngine):
         self._locs.pop(record_id, None)
 
     def mark_deleted(self, record_id) -> None:
+        """Mark a record as deleted."""
+        loc = self._locs.get(record_id)
+        if loc:
+            self._deleted_locs[record_id] = loc
+
+    def clear_deleted(self) -> None:
+        """Clear all deleted records."""
+        self._deleted_locs.clear()
+
+    def verify_consistency(self) -> List[str]:
+        """Verify storage and index consistency."""
+        orphaned = []
+
+        # Check if any locations point beyond the buffer
+        for record_id, loc in self._locs.items():
+            if loc.offset + loc.size > len(self._buffer):
+                orphaned.append(record_id)
+                # Move to deleted
+                self._deleted_locs[record_id] = loc
+                self._locs.pop(record_id)
+
+        return orphaned
+
+    def close(self) -> None:
+        """Clean up resources."""
         pass
 
 class DummyVectorIndex(Index):
@@ -198,19 +252,54 @@ class DummyWAL(WALInterface):
 
     def __init__(self, path=None):
         self.entries = []
+        self.committed_records = []  # Track order of commits
 
-    def append(self, data_packet: DataPacket) -> None:
-        """Append a data packet to the WAL."""
-        self.entries.append(data_packet.to_dict())
+    def append(self, data_packet: DataPacket, phase: str = "prepare") -> None:
+        """Append a data packet to the WAL with phase marker."""
+        entry = data_packet.to_dict()
+        entry["_phase"] = phase
+        self.entries.append(entry)
 
-    def replay(self, handler: Callable[[dict], None]) -> None:
-        """Replay all entries in the WAL using the provided handler."""
+    def commit(self, record_id: str) -> None:
+        """Write a commit marker for a specific record."""
+        commit_entry = {"record_id": record_id, "_phase": "commit"}
+        self.entries.append(commit_entry)
+        # Track committed records in order
+        if record_id not in self.committed_records:
+            self.committed_records.append(record_id)
+
+    def replay(self, handler: Callable[[dict], None]) -> int:
+        """Replay only committed entries using the provided handler."""
+        # Collect all entries by record_id
+        pending_operations = {}
+        committed_records = []
+
         for entry in self.entries:
-            handler(entry)
+            phase = entry.get("_phase", "prepare")
+
+            if phase == "commit":
+                record_id = entry["record_id"]
+                if record_id not in committed_records:
+                    committed_records.append(record_id)
+            else:
+                # Store pending operations
+                record_id = entry.get("record_id")
+                if record_id:
+                    pending_operations[record_id] = entry
+
+        # Replay only committed operations in order
+        count = 0
+        for record_id in committed_records:
+            if record_id in pending_operations:
+                handler(pending_operations[record_id])
+                count += 1
+
+        return count
 
     def clear(self) -> None:
         """Clear all entries from the WAL."""
         self.entries.clear()
+        self.committed_records.clear()
 
 class DummySchema(CollectionSchema):
     def __init__(self, dim):

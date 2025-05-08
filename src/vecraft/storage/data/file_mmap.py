@@ -1,5 +1,7 @@
+import fcntl
 import mmap
 import os
+import threading
 from pathlib import Path
 
 from src.vecraft.core.storage_engine_interface import StorageEngine
@@ -8,89 +10,99 @@ from src.vecraft.data.checksummed_data import LocationItem
 
 class MMapStorage(StorageEngine):
     """
-    Append-only memory-mapped file storage with explicit offset return,
-    safe writes via file operations, and context-manager support.
-
-    - write() returns the actual offset where data was written.
-    - File grows dynamically; mmap is recreated after each write.
-    - Use read() directly on the mmap for fast reads.
+    Append-only memory-mapped file storage with proper fsync,
+    file locking, and safe offset allocation.
     """
+
     def __init__(self, path: str, page_size: int = 4096, initial_size: int = 4096):
         self._path = Path(path)
         self._page_size = page_size
-        # ensure parent directory exists
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self._open_file()
+        self._lock = threading.Lock()
+        self._next_offset = 0
 
-        # Ensure file has minimum size
+        # Initialize next_offset from file size
         self._file.seek(0, os.SEEK_END)
         size = self._file.tell()
+        self._next_offset = size
+
         if size < initial_size:
             self._resize_file(initial_size)
         else:
-            # map entire file
             self._mmap = mmap.mmap(self._file.fileno(), 0)
 
     def _open_file(self):
-        # 'a+b' = read/write, create if missing
         f = self._path.open('a+b')
         f.seek(0)
+        # Acquire exclusive lock for this process
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return f
 
     def _resize_file(self, new_size: int):
-        """
-        Resize the file to the given size properly handling initial file creation.
-        """
-        # round up to page boundary
+        """Resize the file with proper fsync."""
         new_size = ((new_size + self._page_size - 1) // self._page_size) * self._page_size
-
-        # Use truncate to set the file size directly instead of seek+write
         self._file.truncate(new_size)
         self._file.flush()
+        os.fsync(self._file.fileno())  # Ensure resize is durable
 
-        # remap mmap to new size
         if hasattr(self, '_mmap'):
             self._mmap.close()
-        self._mmap = mmap.mmap(self._file.fileno(), 0)  # Map the entire file
+        self._mmap = mmap.mmap(self._file.fileno(), 0)
+
+    def allocate(self, size: int) -> int:
+        """Allocate space and return offset - thread-safe."""
+        with self._lock:
+            offset = self._next_offset
+            self._next_offset += size
+            # Ensure file is large enough
+            required_size = self._next_offset
+            current_size = self._file.seek(0, os.SEEK_END)
+            if current_size < required_size:
+                self._resize_file(required_size)
+            return offset
 
     def write(self, data: bytes, location_item: LocationItem) -> int:
-        """
-        Write at the specified offset, not just at EOF.
-        Returns the actual offset where data was written.
-        """
+        """Write with proper fsync for durability."""
         location_item.validate_checksum()
+
         # Ensure file is large enough
         required_size = location_item.offset + len(data)
         current_size = self._file.seek(0, os.SEEK_END)
         if current_size < required_size:
             self._resize_file(required_size)
 
-        # Write data at the specified offset
+        # Write data
         self._mmap[location_item.offset:location_item.offset + len(data)] = data
         self._mmap.flush()
-        location_item.validate_checksum()
+        self._file.flush()
+        os.fsync(self._file.fileno())  # Ensure data is on disk
 
-        return location_item.offset  # Return the offset that was passed in
+        location_item.validate_checksum()
+        return location_item.offset
 
     def read(self, location_item: LocationItem) -> bytes:
         location_item.validate_checksum()
         if location_item.offset < 0 or location_item.offset + location_item.size > len(self._mmap):
-            raise ValueError(f"Read range {location_item.offset}:{location_item.offset + location_item.size} exceeds file size {len(self._mmap)}")
+            raise ValueError(
+                f"Read range {location_item.offset}:{location_item.offset + location_item.size} exceeds file size {len(self._mmap)}")
         result = self._mmap[location_item.offset:location_item.offset + location_item.size]
         location_item.validate_checksum()
         return result
 
     def flush(self) -> None:
-        # flush mmap and underlying file
+        """Flush with proper fsync."""
         if hasattr(self, '_mmap'):
             self._mmap.flush()
         self._file.flush()
+        os.fsync(self._file.fileno())  # Ensure everything is durable
 
     def close(self) -> None:
-        # explicit cleanup
         if hasattr(self, '_mmap') and self._mmap:
             self._mmap.close()
         if hasattr(self, '_file') and self._file:
+            # Release file lock
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
             self._file.close()
 
     def __enter__(self):

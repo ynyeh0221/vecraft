@@ -12,6 +12,9 @@ class StorageEngine(ABC):
     Implementations handle the physical storage details (file-based, memory-based, etc.)
     while providing a consistent interface for higher-level components.
     """
+    @abstractmethod
+    def allocate(self, size: int) -> int:
+        ...
 
     @abstractmethod
     def write(self, data: bytes, location_item: LocationItem) -> int:

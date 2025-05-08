@@ -48,31 +48,21 @@ class CollectionService:
         logger.info("CollectionService initialized")
 
     def _get_or_init_collection(self, name: str):
-        """
-        Optimized method to get or initialize a collection without always acquiring the global lock.
-        Uses threading.Event for signaling initialization completion.
-        """
+        """Initialize collection with consistency check on startup."""
         # First, try to access the collection without locking
-        # This is safe for reading since Python's dict access is atomic
         if name in self._collections:
             res = self._collections[name]
-            # Wait until initialization is complete
             res['init_event'].wait()
             return res
 
-        # If we reach here, the collection doesn't exist (or at least didn't when we checked)
-        # We need to acquire the global lock to either create it or get it if another thread created it
         with self._global_lock.write_lock():
-            # Double-check if the collection was created by another thread while we were waiting
+            # Double-check
             if name in self._collections:
                 res = self._collections[name]
-                # Wait until initialization is complete
                 res['init_event'].wait()
                 return res
 
             logger.info(f"Registering collection {name}")
-
-            # Only retrieve the schema under the global lock
             schema: CollectionSchema = self._catalog.get_schema(name)
             logger.debug(f"Retrieved schema for collection {name} with dimension {schema.dim}")
 
@@ -81,44 +71,34 @@ class CollectionService:
             meta_snap = Path(f"{name}.metasnap")
             doc_snap = Path(f"{name}.docsnap")
 
-            # Create a collection-specific lock
             collection_lock = ReentrantRWLock()
-            # Create an event to signal initialization completion
             init_event = threading.Event()
 
-            # Create a minimal collection entry with just enough information
-            # to allow other threads to find it and wait on the event
             collection_resources = {
                 'schema': schema,
                 'vec_snap': vec_snap,
                 'meta_snap': meta_snap,
                 'doc_snap': doc_snap,
-                'lock': collection_lock,  # Add the collection-specific lock
-                'init_event': init_event,  # Add the initialization event
-                'initialized': False  # Mark as not fully initialized yet
+                'lock': collection_lock,
+                'init_event': init_event,
+                'initialized': False
             }
             self._collections[name] = collection_resources
 
-        # Released global lock - now continue with collection-specific initialization
-        # using the collection-specific lock
-        assert collection_resources is not None
-
-        # Acquire collection lock for initialization
+        # Continue with collection-specific initialization
         with collection_resources['lock'].write_lock():
-            # Check if another thread already initialized it while we were waiting
             if collection_resources.get('initialized', False):
                 return collection_resources
 
             logger.info(f"Initializing collection {name} resources")
 
-            # Now create the heavyweight resources under the collection lock
+            # Create resources with improved factories
             wal = self._wal_factory(f"{name}.wal")
             storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
             vector_index = self._vector_index_factory("hnsw", schema.dim)
             meta_index = self._metadata_index_factory()
             doc_index = self._doc_index_factory()
 
-            # Add these resources to the collection
             collection_resources.update({
                 'wal': wal,
                 'storage': storage,
@@ -127,8 +107,15 @@ class CollectionService:
                 'doc_index': doc_index
             })
 
-            # load or rebuild
-            if vec_snap.exists() and meta_snap.exists():
+            # Verify storage consistency before loading
+            if hasattr(storage, 'verify_consistency'):
+                logger.info(f"Verifying storage consistency for collection {name}")
+                orphaned = storage.verify_consistency()
+                if orphaned:
+                    logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
+
+            # Load snapshots or rebuild (same as before)
+            if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
                 logger.info(f"Loading collection {name} from snapshots")
                 start_time = time.time()
                 vec_data = pickle.loads(vec_snap.read_bytes())
@@ -139,37 +126,34 @@ class CollectionService:
                 doc_index.deserialize(doc_data)
                 logger.info(f"Loaded collection {name} from snapshots in {time.time() - start_time:.2f}s")
             else:
-                # full rebuild loops
+                # Full rebuild
                 logger.info(f"No snapshots found for collection {name}, performing full rebuild")
                 start_time = time.time()
                 record_count = 0
 
-                # Vector, Metadata and document index rebuild
-                logger.debug(f"Rebuilding vector index, metadata and document indices for collection {name}")
                 for rid in storage.get_all_record_locations().keys():
                     rec_data = self._get_internal(name, rid, storage)
                     if rec_data:
                         vector_index.add(rec_data.to_index_item())
                         meta_index.add(rec_data.to_metadata_item())
                         doc_index.add(rec_data.to_doc_item())
+                        record_count += 1
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
 
-            # Now replay the WAL
+            # Replay WAL with improved replay mechanism
             logger.info(f"Replaying WAL for collection {name}")
             wal_start = time.time()
             try:
                 replay_count = wal.replay(
                     lambda entry: self._replay_entry(name, entry)
                 )
-                wal.clear()
-                logger.info(f"Replayed and cleared {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
+                # WAL is automatically cleared after successful replay
+                logger.info(f"Replayed {replay_count} WAL entries in {time.time() - wal_start:.2f}s")
 
-                # Mark as fully initialized
                 collection_resources['initialized'] = True
 
             finally:
-                # ALWAYS wake up anyone waiting, even if initialization fails
                 collection_resources['init_event'].set()
 
             logger.info(f"Collection {name} initialized successfully")
@@ -236,6 +220,14 @@ class CollectionService:
         logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
 
     def _replay_entry(self, name: str, entry: dict) -> None:
+        """Only replay entries that have been committed."""
+        # Remove the _phase marker before creating DataPacket
+        phase = entry.pop("_phase", "prepare")
+
+        # Skip non-prepare entries (like commits)
+        if phase != "prepare":
+            return
+
         data_packet = DataPacket.from_dict(entry)
         data_packet.validate_checksum()
         logger.debug(f"Replaying {data_packet.type} operation for record {data_packet.record_id}")
@@ -253,14 +245,13 @@ class CollectionService:
             raise
 
     def _apply_insert(self, name: str, data_packet: DataPacket) -> DataPacket:
+        """Apply insert with improved storage engine atomicity."""
         res = self._collections[name]
         rec_bytes = data_packet.to_bytes()
-        size = len(rec_bytes)
 
         old_loc = res['storage'].get_record_location(data_packet.record_id)
         if old_loc:
             logger.debug(f"Record {data_packet.record_id} already exists, performing update")
-            # During WAL replay, use _get_internal directly to avoid reentrant initialization
             preimage = self._get_internal(name, data_packet.record_id, res['storage'])
         else:
             logger.debug(f"Record {data_packet.record_id} is new")
@@ -269,20 +260,21 @@ class CollectionService:
         updated_storage = updated_meta = updated_vec = updated_doc = False
 
         try:
-            # A) storage
+            # A) Atomic storage write with index update
             try:
-                all_locs = res['storage'].get_all_record_locations()
-                [loc.validate_checksum() for loc in all_locs.values()] # validate checksum
-                new_offset = max((l.offset + l.size for l in all_locs.values()), default=0)
-                logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
-                actual_offset = res['storage'].write(rec_bytes, LocationItem(record_id=data_packet.record_id, offset=new_offset, size=size))
+                # Allocate new offset
+                new_offset = res['storage'].allocate(len(rec_bytes))
+                new_location = LocationItem(
+                    record_id=data_packet.record_id,
+                    offset=new_offset,
+                    size=len(rec_bytes)
+                )
 
-                if old_loc:
-                    logger.debug(f"Marking old record location as deleted")
-                    res['storage'].mark_deleted(data_packet.record_id)
-                    res['storage'].delete_record(data_packet.record_id)
-                res['storage'].add_record(LocationItem(record_id=data_packet.record_id, offset=new_offset, size=size))
-                [loc.validate_checksum() for loc in all_locs.values()] # validate checksum
+                logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
+
+                # Use atomic write_and_index if available
+                res['storage'].write_and_index(rec_bytes, new_location)
+
                 updated_storage = True
                 logger.debug(f"Storage updated for record {data_packet.record_id}")
             except Exception as e:
@@ -290,6 +282,7 @@ class CollectionService:
                 logger.debug(error_message)
                 raise StorageFailureException(error_message, e)
 
+            # Rest of the index updates remain the same...
             # B) user metadata index
             try:
                 if preimage.type != DataPacketType.NONEXISTENT:
@@ -335,13 +328,13 @@ class CollectionService:
                 logger.debug(error_message)
                 raise VectorIndexBuildingException(error_message, e)
 
-            # Return pre-image
             return preimage
 
         except Exception as e:
-            logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}", exc_info=True)
+            logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}",
+                         exc_info=True)
 
-            # rollback
+            # Rollback logic remains the same but with improved storage handling
             if updated_vec:
                 logger.debug(f"Rolling back vector index changes")
                 res['vec_index'].delete(record_id=data_packet.record_id)
@@ -367,7 +360,6 @@ class CollectionService:
                 if old_loc is not None:
                     old_loc.validate_checksum()
                     res['storage'].add_record(old_loc)
-                    old_loc.validate_checksum()
 
             logger.error(f"Rollback complete for record {data_packet.record_id}")
             raise
@@ -458,61 +450,82 @@ class CollectionService:
             raise
 
     def insert(self, collection: str, data_packet: DataPacket) -> DataPacket:
-        # Initialize collection with global lock if needed
+        """Insert with two-phase commit to WAL."""
         self._get_or_init_collection(collection)
 
-        # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].write_lock():
-
             logger.info(f"Inserting {data_packet.record_id} to {collection} started")
             start_time = time.time()
 
             data_packet.validate_checksum()
             schema: CollectionSchema = self._collections[collection]['schema']
-            # Check vector dim and reject mismatch
+
+            # Check vector dimension
             if len(data_packet.vector) != schema.dim:
                 err_msg = f"Vector dimension mismatch: expected {schema.dim}, got {len(data_packet.vector)}"
                 logger.error(err_msg)
                 raise VectorDimensionMismatchException(err_msg)
 
-            # Add to WAL first for durability
+            wal = self._collections[collection]['wal']
+
+            # Phase 1: Append to WAL with "prepare" phase
             logger.debug(f"Appending insert operation to WAL for record {data_packet.record_id}")
-            self._collections[collection]['wal'].append(data_packet)
+            wal.append(data_packet, phase="prepare")
 
-            # Apply the insert operation
-            preimage = self._apply_insert(collection, data_packet)
-            data_packet.validate_checksum()
+            try:
+                # Apply the insert operation
+                preimage = self._apply_insert(collection, data_packet)
 
-            elapsed = time.time() - start_time
-            logger.info(f"Inserting {data_packet.record_id} to {collection} completed in {elapsed:.3f}s")
+                # Phase 2: Commit to WAL
+                logger.debug(f"Committing insert operation for record {data_packet.record_id}")
+                wal.commit(data_packet.record_id)
 
-            # return preimage
-            return preimage
+                data_packet.validate_checksum()
+
+                elapsed = time.time() - start_time
+                logger.info(f"Inserting {data_packet.record_id} to {collection} completed in {elapsed:.3f}s")
+
+                return preimage
+
+            except Exception as e:
+                # No explicit abort needed - the absence of commit marker means abort
+                logger.error(f"Insert failed for {data_packet.record_id}, transaction will be aborted")
+                raise
 
     def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
-        # Initialize collection with global lock if needed
+        """Delete with two-phase commit to WAL."""
         self._get_or_init_collection(collection)
 
-        # Use collection-specific lock for the operation
         with self._collections[collection]['lock'].write_lock():
-
             logger.info(f"Deleting {data_packet.record_id} from {collection} started")
             start_time = time.time()
 
             data_packet.validate_checksum()
-            # Add to WAL first for durability
+            wal = self._collections[collection]['wal']
+
+            # Phase 1: Append to WAL with "prepare" phase
             logger.debug(f"Appending delete operation to WAL for record {data_packet.record_id}")
-            self._collections[collection]['wal'].append(data_packet)
+            wal.append(data_packet, phase="prepare")
 
-            # Apply the delete operation
-            preimage = self._apply_delete(collection, data_packet)
-            data_packet.validate_checksum()
+            try:
+                # Apply the delete operation
+                preimage = self._apply_delete(collection, data_packet)
 
-            elapsed = time.time() - start_time
-            logger.info(f"Deleting {data_packet.record_id} from {collection} completed in {elapsed:.3f}s")
+                # Phase 2: Commit to WAL
+                logger.debug(f"Committing delete operation for record {data_packet.record_id}")
+                wal.commit(data_packet.record_id)
 
-            # return preimage
-            return preimage
+                data_packet.validate_checksum()
+
+                elapsed = time.time() - start_time
+                logger.info(f"Deleting {data_packet.record_id} from {collection} completed in {elapsed:.3f}s")
+
+                return preimage
+
+            except Exception as e:
+                # No explicit abort needed - the absence of commit marker means abort
+                logger.error(f"Delete failed for {data_packet.record_id}, transaction will be aborted")
+                raise
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
         # Initialize collection with global lock if needed
