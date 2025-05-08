@@ -8,14 +8,14 @@ from typing import Any, Dict, List, Optional, Set, Callable
 import numpy as np
 
 from src.vecraft.analysis.tsne import generate_tsne
-from src.vecraft.catalog.schema import CollectionSchema
 from src.vecraft.core.catalog_interface import Catalog
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, LocationItem
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, LocationItem, \
+    CollectionSchema
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
     DocumentIndexBuildingException, VectorIndexBuildingException
@@ -74,7 +74,7 @@ class CollectionService:
 
             # Only retrieve the schema under the global lock
             schema: CollectionSchema = self._catalog.get_schema(name)
-            logger.debug(f"Retrieved schema for collection {name} with dimension {schema.field.dim}")
+            logger.debug(f"Retrieved schema for collection {name} with dimension {schema.dim}")
 
             # Create paths for snapshots
             vec_snap = Path(f"{name}.idxsnap")
@@ -114,7 +114,7 @@ class CollectionService:
             # Now create the heavyweight resources under the collection lock
             wal = self._wal_factory(f"{name}.wal")
             storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
-            vector_index = self._vector_index_factory("hnsw", schema.field.dim)
+            vector_index = self._vector_index_factory("hnsw", schema.dim)
             meta_index = self._metadata_index_factory()
             doc_index = self._doc_index_factory()
 
@@ -464,8 +464,8 @@ class CollectionService:
             data_packet.validate_checksum()
             schema: CollectionSchema = self._collections[collection]['schema']
             # Check vector dim and reject mismatch
-            if len(data_packet.vector) != schema.field.dim:
-                err_msg = f"Vector dimension mismatch: expected {schema.field.dim}, got {len(data_packet.vector)}"
+            if len(data_packet.vector) != schema.dim:
+                err_msg = f"Vector dimension mismatch: expected {schema.dim}, got {len(data_packet.vector)}"
                 logger.error(err_msg)
                 raise VectorDimensionMismatchException(err_msg)
 
@@ -518,8 +518,8 @@ class CollectionService:
 
             query_packet.validate_checksum()
             schema: CollectionSchema = self._collections[collection]['schema']
-            if len(query_packet.query_vector) != schema.field.dim:
-                err_msg = f"Query dimension mismatch: expected {schema.field.dim}, got {len(query_packet.query_vector)}"
+            if len(query_packet.query_vector) != schema.dim:
+                err_msg = f"Query dimension mismatch: expected {schema.dim}, got {len(query_packet.query_vector)}"
                 logger.error(err_msg)
                 raise VectorDimensionMismatchException(err_msg)
 

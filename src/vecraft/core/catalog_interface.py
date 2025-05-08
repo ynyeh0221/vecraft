@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-from src.vecraft.catalog.schema import CollectionSchema
+from src.vecraft.data.checksummed_data import CollectionSchema
 
 
 class Catalog(ABC):

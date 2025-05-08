@@ -821,3 +821,98 @@ class LocationItem:
                 self.size == other.size and
                 self.checksum_algorithm == other.checksum_algorithm and
                 self.checksum == other.checksum)
+
+@dataclass
+class CollectionSchema:
+    """
+    A class representing the schema for a vector collection.
+
+    Attributes:
+        name (str): The name of the collection.
+        dim (int): The dimensionality of vectors in the collection.
+        vector_type (str): The type of vectors stored in the collection.
+        checksum_algorithm (Union[str, ChecksumFunc]): The algorithm used to calculate the checksum,
+                                                      default is 'sha256'.
+        checksum (str): Automatically calculated checksum for validating data integrity.
+    """
+    name: str
+    dim: int
+    vector_type: str
+    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+
+    checksum: str = field(init=False)
+
+    def __post_init__(self):
+        """
+        Automatically calculates the checksum after initialization.
+        """
+        # Compute checksum from serialized fields
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        self.checksum = func(raw)
+
+    def _serialize_for_checksum(self) -> bytes:
+        """
+        Serialize schema fields into bytes for checksum calculation.
+        """
+        parts: List[bytes] = []
+
+        parts.append(self.name.encode('utf-8'))
+        parts.append(_prepare_field_bytes(self.dim))
+        parts.append(self.vector_type.encode('utf-8'))
+
+        return _concat_bytes(parts)
+
+    def validate_checksum(self) -> bool:
+        """
+        Recompute checksum and compare. Raises ChecksumValidationFailureError if data was corrupted.
+        """
+        func = get_checksum_func(self.checksum_algorithm)
+        raw = self._serialize_for_checksum()
+        if func(raw) != self.checksum:
+            raise ChecksumValidationFailureError("CollectionSchema checksum validation failed",
+                                                 name=self.name)
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Turn this CollectionSchema into a JSON-friendly dict.
+        """
+        return {
+            'name': self.name,
+            'dim': self.dim,
+            'vector_type': self.vector_type,
+            'checksum_algorithm': self.checksum_algorithm,
+            'checksum': self.checksum
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'CollectionSchema':
+        """
+        Reconstruct a CollectionSchema from a dictionary.
+        """
+        schema = cls(
+            name=d['name'],
+            dim=d['dim'],
+            vector_type=d['vector_type'],
+            checksum_algorithm=d.get('checksum_algorithm', 'sha256')
+        )
+
+        # Restore the original checksum (skip re-hashing)
+        if 'checksum' in d:
+            schema.checksum = d['checksum']
+
+        return schema
+
+    def __eq__(self, other):
+        """
+        Compares two CollectionSchema instances for equality.
+        """
+        if not isinstance(other, type(self)):
+            return False
+
+        return (self.name == other.name and
+                self.dim == other.dim and
+                self.vector_type == other.vector_type and
+                self.checksum_algorithm == other.checksum_algorithm and
+                self.checksum == other.checksum)

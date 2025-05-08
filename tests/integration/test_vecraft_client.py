@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.checksummed_data import QueryPacket
+from src.vecraft.data.checksummed_data import QueryPacket, CollectionSchema
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 
 
@@ -29,7 +29,7 @@ class TestVecraftClient(unittest.TestCase):
     def test_insert_search_and_fetch_consistency(self):
         collection = "consistency_collection"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
         records = [{"text": f"record_{i}", "tags": [str(i % 2)]} for i in range(20)]
@@ -78,7 +78,7 @@ class TestVecraftClient(unittest.TestCase):
     def test_insert_search_delete_and_fetch_consistency(self):
         collection = "isd_concurrent"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=24, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=24, vector_type="float32"))
 
         rng = np.random.default_rng(1)
         tasks = [(i, rng.random(24).astype(np.float32), {"text": f"temp_{i}", "tags": ["temp"]}) for i in range(10)]
@@ -125,7 +125,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test updating records and ensuring consistency before and after updates."""
         collection = "update_consistency"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
 
@@ -201,7 +201,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test bulk operations (insert, search, delete) for consistency."""
         collection = "batch_consistency"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
 
@@ -285,7 +285,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test complex filtering scenarios (multiple tags, nested conditions)."""
         collection = "filtering_collection"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
 
@@ -354,7 +354,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test concurrent modifications to the same records."""
         collection = "concurrent_mod"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
 
@@ -402,7 +402,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test with special characters in data."""
         collection = "special_chars"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=8, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=8, vector_type="float32"))
 
         special_data = {
             "text": "Special chars: !@#$%^&*()",
@@ -433,7 +433,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test with a large metadata object."""
         collection = "large_meta"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=4, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=4, vector_type="float32"))
 
         # Create large metadata with many keys
         large_meta = {}
@@ -465,7 +465,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test database performance with a larger number of records."""
         collection = "scalability"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=32, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=32, vector_type="float32"))
 
         rng = np.random.default_rng(0)
 
@@ -543,7 +543,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test that the validate_checksum decorator catches and enriches exceptions."""
         collection = "checksum_validation"
         if collection not in self.client.list_collections():
-            self.client.create_collection(collection, dim=4, vector_type="float32")
+            self.client.create_collection(CollectionSchema(name=collection, dim=4, vector_type="float32"))
 
         # Create and insert a valid record
         rng = np.random.default_rng(42)

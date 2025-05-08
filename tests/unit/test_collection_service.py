@@ -9,14 +9,13 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.catalog.schema import CollectionSchema
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import IndexItem, Vector, Index
 from src.vecraft.core.wal_interface import WALInterface
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem, DataPacketType, \
-    LocationItem
+    LocationItem, CollectionSchema
 from src.vecraft.engine.collection_service import CollectionService
 
 
@@ -215,11 +214,7 @@ class DummyWAL(WALInterface):
 
 class DummySchema(CollectionSchema):
     def __init__(self, dim):
-        class Field:
-            def __init__(self, dim):
-                self.dim = dim
-
-        self.field = Field(dim)
+        self.dim = dim
 
 
 class TestCollectionService(unittest.TestCase):

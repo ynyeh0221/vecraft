@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 from typing import List, Dict
 
-from src.vecraft.catalog.schema import CollectionSchema, Field
 from src.vecraft.core.catalog_interface import Catalog
+from src.vecraft.data.checksummed_data import CollectionSchema
 from src.vecraft.data.exception import CollectionNotExistedException
 
 
@@ -60,14 +60,6 @@ class JsonCatalog(Catalog):
     def _load_from_file(self, file_path: Path):
         """
         Load collection schemas from a specific file with validation.
-
-        Args:
-            file_path (Path): Path to the JSON file to load.
-
-        Raises:
-            json.JSONDecodeError: If the file contains invalid JSON.
-            KeyError: If the expected structure is not found.
-            Exception: For other validation errors.
         """
         content = file_path.read_text()
         data = json.loads(content)
@@ -80,14 +72,24 @@ class JsonCatalog(Catalog):
         self._collections.clear()
 
         # Parse collections
-        for col_name, d in data.items():
-            if 'field' not in d:
-                raise KeyError(f"Missing 'field' in collection '{col_name}'")
+        for col_name, schema_dict in data.items():
+            if not isinstance(schema_dict, dict):
+                raise ValueError(f"Invalid schema format for collection {col_name}")
 
-            self._collections[col_name] = CollectionSchema(
-                name=col_name,
-                field=Field(**d['field'])
+            # Create a CollectionSchema - this will auto-compute the checksum
+            schema = CollectionSchema(
+                name=schema_dict.get('name', col_name),
+                dim=schema_dict['dim'],
+                vector_type=schema_dict['vector_type'],
+                checksum_algorithm=schema_dict.get('checksum_algorithm', 'sha256')
             )
+
+            # If there's a checksum in the file, validate it
+            if 'checksum' in schema_dict:
+                if schema.checksum != schema_dict['checksum']:
+                    raise ValueError(f"Checksum mismatch for collection {col_name}")
+
+            self._collections[col_name] = schema
 
     def _recover_from_backup(self):
         """
@@ -133,7 +135,7 @@ class JsonCatalog(Catalog):
             self._cleanup_old_backups()
 
         # Prepare the data
-        data = {name: {'field': vars(schema.field)} for name, schema in self._collections.items()}
+        data = {name: schema.to_dict() for name, schema in self._collections.items()}
 
         # Create a temporary file
         temp_path = self._path.with_suffix('.tmp')
@@ -165,7 +167,7 @@ class JsonCatalog(Catalog):
             except Exception as e:
                 print(f"Failed to remove old backup {old_backup}: {e}")
 
-    def create_collection(self, name: str, dim: int, vector_type: str) -> None:
+    def create_collection(self, collection_schema: CollectionSchema) -> None:
         """
         Create a new collection in the catalog.
 
@@ -174,7 +176,7 @@ class JsonCatalog(Catalog):
             dim (int): Dimensionality of vectors in the collection.
             vector_type (str): Data type of the vector elements (e.g., 'float', 'int').
         """
-        self._collections[name] = CollectionSchema(name, Field(name, dim, vector_type))
+        self._collections[collection_schema.name] = collection_schema
         self._save()
 
     def drop_collection(self, name: str) -> None:
@@ -187,14 +189,14 @@ class JsonCatalog(Catalog):
         self._collections.pop(name, None)
         self._save()
 
-    def list_collections(self) -> List[str]:
+    def list_collections(self) -> List[CollectionSchema]:
         """
         List all collection names in the catalog.
 
         Returns:
             List[str]: Names of all collections in the catalog.
         """
-        return list(self._collections.keys())
+        return list(self._collections.values())
 
     def get_schema(self, name: str) -> CollectionSchema:
         """
@@ -216,9 +218,6 @@ class JsonCatalog(Catalog):
     def verify_integrity(self) -> bool:
         """
         Verify the integrity of the catalog file.
-
-        Returns:
-            bool: True if catalog file is valid, False otherwise.
         """
         if not self._path.exists():
             return False
@@ -231,8 +230,27 @@ class JsonCatalog(Catalog):
             if not isinstance(data, dict):
                 return False
 
-            for col_name, d in data.items():
-                if 'field' not in d:
+            for col_name, schema_dict in data.items():
+                # Validate each collection schema has required fields
+                if (not isinstance(schema_dict, dict) or
+                        'name' not in schema_dict or
+                        'dim' not in schema_dict or
+                        'vector_type' not in schema_dict or
+                        'checksum_algorithm' not in schema_dict or
+                        'checksum' not in schema_dict):
+                    return False
+
+                # Additional validation: try to reconstruct and verify checksum
+                try:
+                    schema = CollectionSchema(
+                        name=schema_dict['name'],
+                        dim=schema_dict['dim'],
+                        vector_type=schema_dict['vector_type'],
+                        checksum_algorithm=schema_dict['checksum_algorithm']
+                    )
+                    if schema.checksum != schema_dict['checksum']:
+                        return False
+                except Exception:
                     return False
 
             return True

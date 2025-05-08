@@ -7,6 +7,7 @@ import sys
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
+from src.vecraft.data.checksummed_data import CollectionSchema
 
 
 def parse_vector(vector_str):
@@ -83,7 +84,7 @@ def execute_command(client, args):
         if args.command == "list-collections":
             print(json.dumps(client.list_collections(), indent=2))
         elif args.command == "create-collection":
-            client.create_collection(name=args.name, dim=args.dim, vector_type=args.type)
+            client.create_collection(CollectionSchema(name=args.name, dim=args.dim, vector_type=args.type))
             print(f"Created collection '{args.name}'")
         elif args.command == "insert":
             data = json.loads(args.data)

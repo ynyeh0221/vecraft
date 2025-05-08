@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, \
+    CollectionSchema
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
@@ -66,11 +67,11 @@ class VecraftClient:
         self.planner = Planner()
         self.executor = Executor(self.db)
 
-    def create_collection(self, name: str, dim: int, vector_type: str = "float32"):
-        return self.catalog.create_collection(name, dim=dim, vector_type=vector_type)
+    def create_collection(self, collection_schema: CollectionSchema) -> None:
+        return self.catalog.create_collection(collection_schema)
 
     def list_collections(self) -> List[str]:
-        return self.catalog.list_collections()
+        return [item.name for item in self.catalog.list_collections() if item.validate_checksum() or True]
 
     def insert(
         self,
