@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, CollectionSchema
+from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner
@@ -80,7 +81,20 @@ class VecraftClient:
 
     def get(self, collection: str, record_id: str) -> DataPacket:
         plan = self.planner.plan_get(collection, record_id)
-        return self.executor.execute(plan)
+        result = self.executor.execute(plan)
+
+        if result.type == DataPacketType.NONEXISTENT:
+            raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
+
+        # Verify that the returned record is the one which we request
+        if result.record_id != record_id:
+            error_message = f"Returned record {result.record_id} does not match expected record {record_id}"
+            raise ChecksumValidationFailureError(error_message)
+
+        # validate checksum
+        result.validate_checksum()
+
+        return result
 
     def delete(self, collection: str, record_id: str) -> None:
         packet = DataPacket(type=DataPacketType.TOMBSTONE, record_id=record_id)
@@ -93,4 +107,9 @@ class VecraftClient:
             packet: QueryPacket
     ) -> List[SearchDataPacket]:
         plan = self.planner.plan_search(collection=collection, query_packet=packet)
-        return self.executor.execute(plan)
+        search_result = self.executor.execute(plan)
+
+        # validate checksum
+        [result.validate_checksum() for result in search_result]
+
+        return search_result
