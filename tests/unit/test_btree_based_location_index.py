@@ -37,14 +37,8 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         # Check if tables exist
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
-        self.assertIn('config', tables)
         self.assertIn('records', tables)
         self.assertIn('deleted_records', tables)
-
-        # Check if next_id is initialized to 0
-        cursor.execute("SELECT value FROM config WHERE key='next_id'")
-        next_id = cursor.fetchone()[0]
-        self.assertEqual(next_id, 0)
 
         conn.close()
 

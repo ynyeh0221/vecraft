@@ -31,15 +31,6 @@ class SQLiteRecordLocationIndex(RecordLocationIndex):
         """Initialize the database schema"""
         conn = self._get_connection()
         cur = conn.cursor()
-        # Single table for meta config (next_id)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS config (
-                key TEXT PRIMARY KEY,
-                value INTEGER
-            )
-        """)
-        # Initialize next_id if missing
-        cur.execute("INSERT OR IGNORE INTO config(key, value) VALUES('next_id', 0)")
 
         # Table for record locations
         cur.execute("""
