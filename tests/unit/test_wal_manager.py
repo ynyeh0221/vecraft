@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacketType, DataPacket
 from src.vecraft.wal.wal_manager import WALManager
 
 

@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Optional, Set, Dict, Any
 
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
-from src.vecraft.data.checksummed_data import DocItem
+from src.vecraft.data.index_packets import DocumentPacket
 from src.vecraft.user_doc_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
@@ -13,12 +13,12 @@ class BruteForceDocIndex(DocIndexInterface):
     def __init__(self):
         self._doc_index = dict()
 
-    def add(self, item: DocItem):
+    def add(self, item: DocumentPacket):
         item.validate_checksum()
         self._doc_index[item.record_id] = item.document
         item.validate_checksum()
 
-    def update(self, old_item: DocItem, new_item: DocItem):
+    def update(self, old_item: DocumentPacket, new_item: DocumentPacket):
         old_item.validate_checksum()
         new_item.validate_checksum()
         self.delete(old_item)
@@ -26,7 +26,7 @@ class BruteForceDocIndex(DocIndexInterface):
         old_item.validate_checksum()
         new_item.validate_checksum()
 
-    def delete(self, item: DocItem):
+    def delete(self, item: DocumentPacket):
         item.validate_checksum()
         self._doc_index.pop(item.record_id, None)
         item.validate_checksum()

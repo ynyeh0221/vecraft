@@ -12,10 +12,11 @@ from src.vecraft.catalog.json_catalog import JsonCatalog
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
-from src.vecraft.core.vector_index_interface import IndexItem, Vector, Index
+from src.vecraft.core.vector_index_interface import VectorPacket, Vector, Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, MetadataItem, DocItem, DataPacketType, \
-    LocationItem, CollectionSchema
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.index_packets import MetadataPacket, DocumentPacket, LocationPacket, CollectionSchema
+from src.vecraft.data.query_packet import QueryPacket
 from src.vecraft.engine.collection_service import CollectionService
 
 
@@ -38,7 +39,7 @@ class DummyStorage(StorageIndexEngine):
             self._buffer.extend(b"\x00" * (self._next_offset - len(self._buffer)))
         return offset
 
-    def write_and_index(self, data: bytes, location_item: LocationItem) -> int:
+    def write_and_index(self, data: bytes, location_item: LocationPacket) -> int:
         """Atomic write to storage and index."""
         # Write to storage
         actual_offset = self.write(data, location_item)
@@ -53,11 +54,11 @@ class DummyStorage(StorageIndexEngine):
 
         return actual_offset
 
-    def get_deleted_locations(self) -> List[LocationItem]:
+    def get_deleted_locations(self) -> List[LocationPacket]:
         """Return list of deleted locations."""
         return list(self._deleted_locs.values())
 
-    def write(self, data: bytes, location_item: LocationItem) -> int:
+    def write(self, data: bytes, location_item: LocationPacket) -> int:
         end = location_item.offset + len(data)
         if len(self._buffer) < end:
             self._buffer.extend(b"\x00" * (end - len(self._buffer)))
@@ -66,19 +67,19 @@ class DummyStorage(StorageIndexEngine):
         self._next_offset = max(self._next_offset, end)
         return location_item.offset
 
-    def read(self, location_item: LocationItem) -> bytes:
+    def read(self, location_item: LocationPacket) -> bytes:
         return bytes(self._buffer[location_item.offset:location_item.offset + location_item.size])
 
     def flush(self) -> None:
         pass
 
-    def get_record_location(self, record_id) -> Optional[LocationItem]:
+    def get_record_location(self, record_id) -> Optional[LocationPacket]:
         return self._locs.get(record_id)
 
-    def get_all_record_locations(self) -> Dict[str, LocationItem]:
+    def get_all_record_locations(self) -> Dict[str, LocationPacket]:
         return self._locs.copy()
 
-    def add_record(self, location_item: LocationItem) -> None:
+    def add_record(self, location_item: LocationPacket) -> None:
         self._locs[location_item.record_id] = location_item
 
     def delete_record(self, record_id) -> None:
@@ -118,7 +119,7 @@ class DummyVectorIndex(Index):
         self.dim = dim
         self.items = {}
 
-    def add(self, item: IndexItem):
+    def add(self, item: VectorPacket):
         self.items[item.record_id] = item.vector
 
     def delete(self, record_id: str):
@@ -134,7 +135,7 @@ class DummyVectorIndex(Index):
             ids = [i for i in ids if i in allowed_ids]
         return [(rid, 0.0) for rid in ids[:k]]
 
-    def build(self, items: List[IndexItem]) -> None:
+    def build(self, items: List[VectorPacket]) -> None:
         pass
 
     def get_ids(self) -> Set[str]:
@@ -160,15 +161,15 @@ class DummyMetadataIndex(MetadataIndexInterface):
     def __init__(self):
         self.items = {}
 
-    def add(self, item: MetadataItem) -> None:
+    def add(self, item: MetadataPacket) -> None:
         """Add a metadata item to the vector_index."""
         self.items[item.record_id] = item.metadata
 
-    def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
+    def update(self, old_item: MetadataPacket, new_item: MetadataPacket) -> None:
         """Update a metadata item in the vector_index."""
         self.items[new_item.record_id] = new_item.metadata
 
-    def delete(self, item: MetadataItem) -> None:
+    def delete(self, item: MetadataPacket) -> None:
         """Delete a metadata item from the vector_index."""
         self.items.pop(item.record_id, None)
 
@@ -201,15 +202,15 @@ class DummyDocIndex(DocIndexInterface):
     def __init__(self):
         self.items = {}
 
-    def add(self, item: DocItem) -> None:
+    def add(self, item: DocumentPacket) -> None:
         """Add a user_doc_index item to the vector_index."""
         self.items[item.record_id] = item.document
 
-    def update(self, old_item: DocItem, new_item: DocItem) -> None:
+    def update(self, old_item: DocumentPacket, new_item: DocumentPacket) -> None:
         """Update a user_doc_index item in the vector_index."""
         self.items[new_item.record_id] = new_item.document
 
-    def delete(self, item: DocItem) -> None:
+    def delete(self, item: DocumentPacket) -> None:
         """Delete a user_doc_index item from the vector_index."""
         self.items.pop(item.record_id, None)
 

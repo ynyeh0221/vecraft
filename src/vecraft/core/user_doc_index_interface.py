@@ -1,6 +1,6 @@
 from typing import runtime_checkable, Any, Dict, Optional, Set, Protocol
 
-from src.vecraft.data.checksummed_data import MetadataItem, DocItem
+from src.vecraft.data.index_packets import MetadataPacket, DocumentPacket
 
 
 @runtime_checkable
@@ -8,13 +8,13 @@ class DocIndexInterface(Protocol):
     """
     Interface for metadata indexing supporting equality and range queries.
     """
-    def add(self, item: DocItem) -> None:
+    def add(self, item: DocumentPacket) -> None:
         ...
 
-    def update(self, old_item: DocItem, new_item: DocItem) -> None:
+    def update(self, old_item: DocumentPacket, new_item: DocumentPacket) -> None:
         ...
 
-    def delete(self, item: DocItem) -> None:
+    def delete(self, item: DocumentPacket) -> None:
         ...
 
     def get_matching_ids(self,

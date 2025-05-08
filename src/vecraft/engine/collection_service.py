@@ -15,11 +15,13 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, LocationItem, \
-    CollectionSchema
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.index_packets import LocationPacket, CollectionSchema
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
     DocumentIndexBuildingException, VectorIndexBuildingException, TsnePlotGeneratingFailureException
+from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft.data.search_data_packet import SearchDataPacket
 from src.vecraft.engine.locks import ReentrantRWLock
 
 # Set up logger for this module
@@ -134,9 +136,9 @@ class CollectionService:
                 for rid in storage.get_all_record_locations().keys():
                     rec_data = self._get_internal(name, rid, storage)
                     if rec_data:
-                        vector_index.add(rec_data.to_index_item())
-                        meta_index.add(rec_data.to_metadata_item())
-                        doc_index.add(rec_data.to_doc_item())
+                        vector_index.add(rec_data.to_vector_packet())
+                        meta_index.add(rec_data.to_metadata_packet())
+                        doc_index.add(rec_data.to_document_packet())
                         record_count += 1
 
                 logger.info(f"Rebuilt collection {name} with {record_count} records in {time.time() - start_time:.2f}s")
@@ -250,7 +252,7 @@ class CollectionService:
             try:
                 # Allocate new offset (includes space for status byte)
                 new_offset = res['storage'].allocate(len(rec_bytes))
-                new_location = LocationItem(
+                new_location = LocationPacket(
                     record_id=data_packet.record_id,
                     offset=new_offset,
                     size=len(rec_bytes)
@@ -273,12 +275,12 @@ class CollectionService:
                 if preimage.type != DataPacketType.NONEXISTENT:
                     logger.debug(f"Updating metadata index for record {data_packet.record_id}")
                     res['meta_index'].update(
-                        preimage.to_metadata_item(),
-                        data_packet.to_metadata_item()
+                        preimage.to_metadata_packet(),
+                        data_packet.to_metadata_packet()
                     )
                 else:
                     logger.debug(f"Adding new entry to metadata index for record {data_packet.record_id}")
-                    res['meta_index'].add(data_packet.to_metadata_item())
+                    res['meta_index'].add(data_packet.to_metadata_packet())
                 updated_meta = True
             except Exception as e:
                 error_message = f"Metadata index update failed for record {data_packet.record_id}"
@@ -290,12 +292,12 @@ class CollectionService:
                 if preimage.type != DataPacketType.NONEXISTENT:
                     logger.debug(f"Updating document index for record {data_packet.record_id}")
                     res['doc_index'].update(
-                        preimage.to_doc_item(),
-                        data_packet.to_doc_item()
+                        preimage.to_document_packet(),
+                        data_packet.to_document_packet()
                     )
                 else:
                     logger.debug(f"Adding new entry to document index for record {data_packet.record_id}")
-                    res['doc_index'].add(data_packet.to_doc_item())
+                    res['doc_index'].add(data_packet.to_document_packet())
                 updated_doc = True
             except Exception as e:
                 error_message = f"Document index update failed for record {data_packet.record_id}"
@@ -305,7 +307,7 @@ class CollectionService:
             # D) vector index
             try:
                 logger.debug(f"Updating vector index for record {data_packet.record_id}")
-                res['vec_index'].add(data_packet.to_index_item())
+                res['vec_index'].add(data_packet.to_vector_packet())
                 updated_vec = True
                 logger.debug(f"All indices updated for record {data_packet.record_id}")
             except Exception as e:
@@ -324,19 +326,19 @@ class CollectionService:
                 logger.debug(f"Rolling back vector index changes")
                 res['vec_index'].delete(record_id=data_packet.record_id)
                 if preimage.type != DataPacketType.NONEXISTENT:
-                    res['vec_index'].add(preimage.to_index_item())
+                    res['vec_index'].add(preimage.to_vector_packet())
 
             if updated_doc:
                 logger.debug(f"Rolling back document index changes")
-                res['doc_index'].delete(data_packet.to_doc_item())
+                res['doc_index'].delete(data_packet.to_document_packet())
                 if preimage.type != DataPacketType.NONEXISTENT:
-                    res['doc_index'].add(preimage.to_doc_item())
+                    res['doc_index'].add(preimage.to_document_packet())
 
             if updated_meta:
                 logger.debug(f"Rolling back metadata index changes")
-                res['meta_index'].delete(data_packet.to_metadata_item())
+                res['meta_index'].delete(data_packet.to_metadata_packet())
                 if preimage.type != DataPacketType.NONEXISTENT:
-                    res['meta_index'].add(preimage.to_metadata_item())
+                    res['meta_index'].add(preimage.to_metadata_packet())
 
             if updated_storage and new_location:
                 logger.debug(f"Rolling back storage changes")
@@ -382,7 +384,7 @@ class CollectionService:
             # B) user metadata index
             try:
                 logger.debug(f"Removing record {record_id} from metadata index")
-                res['meta_index'].delete(preimage.to_metadata_item())
+                res['meta_index'].delete(preimage.to_metadata_packet())
                 removed_meta = True
             except Exception as e:
                 error_message = f"Metadata index removal failed for record {data_packet.record_id}"
@@ -392,7 +394,7 @@ class CollectionService:
             # C) user document index
             try:
                 logger.debug(f"Removing record {record_id} from doc index")
-                res['doc_index'].delete(preimage.to_doc_item())
+                res['doc_index'].delete(preimage.to_document_packet())
                 removed_doc = True
             except Exception as e:
                 error_message = f"Document index removal failed for record {data_packet.record_id}"
@@ -419,19 +421,19 @@ class CollectionService:
 
             if removed_vec:
                 logger.debug(f"Rolling back vector index deletion")
-                res['vec_index'].add(preimage.to_index_item())
+                res['vec_index'].add(preimage.to_vector_packet())
 
             if removed_doc:
                 logger.debug(f"Rolling back doc index deletion")
-                res['doc_index'].add(preimage.to_doc_item())
+                res['doc_index'].add(preimage.to_document_packet())
 
             if removed_meta:
                 logger.debug(f"Rolling back metadata index deletion")
-                res['meta_index'].add(preimage.to_metadata_item())
+                res['meta_index'].add(preimage.to_metadata_packet())
 
             if removed_storage:
                 logger.debug(f"Rolling back storage deletion")
-                res['storage'].add_record(LocationItem(record_id=record_id, offset=old_loc.offset, size=old_loc.size))
+                res['storage'].add_record(LocationPacket(record_id=record_id, offset=old_loc.offset, size=old_loc.size))
 
             logger.error(f"Rollback complete for record {record_id}")
             raise
@@ -613,7 +615,7 @@ class CollectionService:
         if not loc:
             return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
 
-        data = storage.read(LocationItem(record_id=record_id, offset=loc.offset, size=loc.size))
+        data = storage.read(LocationPacket(record_id=record_id, offset=loc.offset, size=loc.size))
         data_packet = DataPacket.from_bytes(data)
 
         # Verify that the returned record is the one which we request

@@ -2,19 +2,19 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any, Set
 
-from src.vecraft.data.checksummed_data import IndexItem, Vector
+from src.vecraft.data.index_packets import VectorPacket, Vector
 
 
 class Index(ABC):
     """Abstract vector record_vector with support for pre-filtering."""
 
     @abstractmethod
-    def build(self, items: List[IndexItem]) -> None:
+    def build(self, items: List[VectorPacket]) -> None:
         """Build the record_vector from a list of IndexItems."""
         ...
 
     @abstractmethod
-    def add(self, item: IndexItem) -> None:
+    def add(self, item: VectorPacket) -> None:
         """Add a single IndexItem to the record_vector."""
         ...
 

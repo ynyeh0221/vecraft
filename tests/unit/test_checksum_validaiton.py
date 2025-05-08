@@ -2,8 +2,10 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import MetadataItem, DataPacket, QueryPacket, IndexItem, DataPacketType
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.index_packets import MetadataPacket, VectorPacket
 from src.vecraft.data.exception import ChecksumValidationFailureError
+from src.vecraft.data.query_packet import QueryPacket
 
 
 class ChecksumValidationTests(unittest.TestCase):
@@ -59,7 +61,7 @@ class ChecksumValidationTests(unittest.TestCase):
     def test_index_item_checksum_validation_failure(self):
         """Test that IndexItem throws ChecksumValidationFailureError when checksum validation fails."""
         # Create a valid IndexItem
-        index_item = IndexItem(
+        index_item = VectorPacket(
             record_id="test1",
             vector=np.array([0.1, 0.2, 0.3, 0.4])
         )
@@ -81,7 +83,7 @@ class ChecksumValidationTests(unittest.TestCase):
     def test_metadata_item_checksum_validation_failure(self):
         """Test that MetadataItem throws ChecksumValidationFailureError when checksum validation fails."""
         # Create a valid MetadataItem
-        metadata_item = MetadataItem(
+        metadata_item = MetadataPacket(
             record_id="test1",
             metadata={"tags": ["test"]}
         )

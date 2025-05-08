@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.core.vector_index_interface import IndexItem
+from src.vecraft.core.vector_index_interface import VectorPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, UnsupportedMetricException
 from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
 from src.vecraft.vector_index.id_mapper import IdMapper
@@ -23,10 +23,10 @@ class TestHNSW(unittest.TestCase):
         ]
         self.record_ids = ["rec1", "rec2", "rec3", "rec4"]
         self.items = [
-            IndexItem(record_id=self.record_ids[0], vector=self.vectors[0]),
-            IndexItem(record_id=self.record_ids[1], vector=self.vectors[1]),
-            IndexItem(record_id=self.record_ids[2], vector=self.vectors[2]),
-            IndexItem(record_id=self.record_ids[3], vector=self.vectors[3])
+            VectorPacket(record_id=self.record_ids[0], vector=self.vectors[0]),
+            VectorPacket(record_id=self.record_ids[1], vector=self.vectors[1]),
+            VectorPacket(record_id=self.record_ids[2], vector=self.vectors[2]),
+            VectorPacket(record_id=self.record_ids[3], vector=self.vectors[3])
         ]
 
     def test_init(self):
@@ -154,7 +154,7 @@ class TestHNSW(unittest.TestCase):
         hnsw.add(self.items[0])
 
         # Create an item with a longer dimension
-        longer_item = IndexItem(record_id="rec_long", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32))
+        longer_item = VectorPacket(record_id="rec_long", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32))
 
         # Add the item without raising an error (should truncate)
         hnsw.add(longer_item)
@@ -163,7 +163,7 @@ class TestHNSW(unittest.TestCase):
         self.assertTrue(hnsw._id_mapper.has_record_id("rec_long"))
 
         # Create an item with a shorter dimension
-        shorter_item = IndexItem(record_id="rec_short", vector=np.array([1.0, 2.0], dtype=np.float32))
+        shorter_item = VectorPacket(record_id="rec_short", vector=np.array([1.0, 2.0], dtype=np.float32))
 
         # Add the item without raising an error (should pad)
         hnsw.add(shorter_item)
@@ -179,7 +179,7 @@ class TestHNSW(unittest.TestCase):
         hnsw.add(self.items[0])
 
         # Create an item with a different dimension
-        item = IndexItem(record_id="rec5", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32))
+        item = VectorPacket(record_id="rec5", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32))
 
         # Adding the item should raise a VectorDimensionMismatchException
         with self.assertRaises(VectorDimensionMismatchException):
@@ -190,7 +190,7 @@ class TestHNSW(unittest.TestCase):
         hnsw = HNSW(dim=3, normalize_vectors=True)
 
         # Add an item with a known vector
-        item = IndexItem(record_id="norm_test", vector=np.array([3.0, 0.0, 0.0], dtype=np.float32))
+        item = VectorPacket(record_id="norm_test", vector=np.array([3.0, 0.0, 0.0], dtype=np.float32))
         hnsw.add(item)
 
         # Search with the same vector but different magnitude
@@ -286,7 +286,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(results1[0][0], self.record_ids[0])
 
         # Now update it with a new vector
-        new_item = IndexItem(record_id=self.record_ids[0], vector=np.array([10.0, 11.0, 12.0], dtype=np.float32))
+        new_item = VectorPacket(record_id=self.record_ids[0], vector=np.array([10.0, 11.0, 12.0], dtype=np.float32))
         hnsw.add(new_item)
 
         # Current_elements should still be 1 (update, not add)
@@ -310,7 +310,7 @@ class TestHNSW(unittest.TestCase):
         # Create more items than max_elements
         many_items = []
         for i in range(10):
-            many_items.append(IndexItem(record_id=f"rec{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
+            many_items.append(VectorPacket(record_id=f"rec{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
 
         # Add them in batch (should trigger resize)
         hnsw.add_batch(many_items)
@@ -394,7 +394,7 @@ class TestHNSW(unittest.TestCase):
                 vectors.append(np.array([float(x), float(y), 0.0], dtype=np.float32))
                 record_ids.append(f"vec_{x}_{y}")
 
-        items = [IndexItem(record_id=record_ids[i], vector=vectors[i]) for i in range(len(vectors))]
+        items = [VectorPacket(record_id=record_ids[i], vector=vectors[i]) for i in range(len(vectors))]
 
         # Initialize HNSW
         hnsw = HNSW(dim=3)
@@ -437,15 +437,15 @@ class TestHNSW(unittest.TestCase):
         hnsw = HNSW(dim=3)
 
         # Test adding a list
-        list_item = IndexItem(record_id="list_vec", vector=np.array([10.0, 11.0, 12.0], dtype=np.float32))
+        list_item = VectorPacket(record_id="list_vec", vector=np.array([10.0, 11.0, 12.0], dtype=np.float32))
         hnsw.add(list_item)
 
         # Test adding a numpy array
-        numpy_item = IndexItem(record_id="numpy_vec", vector=np.array([13.0, 14.0, 15.0], dtype=np.float32))
+        numpy_item = VectorPacket(record_id="numpy_vec", vector=np.array([13.0, 14.0, 15.0], dtype=np.float32))
         hnsw.add(numpy_item)
 
         # Test adding a 2D numpy array (should be flattened)
-        array_2d_item = IndexItem(record_id="2d_vec", vector=np.array([[16.0, 17.0, 18.0]], dtype=np.float32))
+        array_2d_item = VectorPacket(record_id="2d_vec", vector=np.array([[16.0, 17.0, 18.0]], dtype=np.float32))
         hnsw.add(array_2d_item)
 
         # Check that all were added successfully
@@ -479,7 +479,7 @@ class TestHNSW(unittest.TestCase):
         hnsw = HNSW(dim=3, normalize_vectors=True)
 
         # Add a zero vector
-        zero_item = IndexItem(record_id="zero_vec", vector=np.array([0.0, 0.0, 0.0], dtype=np.float32))
+        zero_item = VectorPacket(record_id="zero_vec", vector=np.array([0.0, 0.0, 0.0], dtype=np.float32))
         hnsw.add(zero_item)
 
         # Should handle without errors
@@ -499,7 +499,7 @@ class TestHNSW(unittest.TestCase):
         # Create many items to force multiple resizing
         many_items = []
         for i in range(10):
-            many_items.append(IndexItem(record_id=f"resize_vec_{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
+            many_items.append(VectorPacket(record_id=f"resize_vec_{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
 
         # Add items one by one to test _maybe_resize
         for item in many_items:
@@ -516,7 +516,7 @@ class TestHNSW(unittest.TestCase):
         # Create more items
         items = []
         for i in range(10):
-            items.append(IndexItem(record_id=f"filter_vec_{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
+            items.append(VectorPacket(record_id=f"filter_vec_{i}", vector=np.array([float(i), float(i + 1), float(i + 2)], dtype=np.float32)))
 
         # Add items
         hnsw.add_batch(items)
@@ -548,11 +548,11 @@ class TestHNSW(unittest.TestCase):
         """Test each distance metric with specific vectors to verify correctness."""
         # Test vectors designed to demonstrate differences between metrics
         items = [
-            IndexItem(record_id="vec_1", vector=np.array([1.0, 0.0, 0.0], dtype=np.float32)),  # Unit vector in x
-            IndexItem(record_id="vec_2", vector=np.array([0.0, 1.0, 0.0], dtype=np.float32)),  # Unit vector in y
-            IndexItem(record_id="vec_3", vector=np.array([0.0, 0.0, 1.0], dtype=np.float32)),  # Unit vector in z
-            IndexItem(record_id="vec_4", vector=np.array([2.0, 0.0, 0.0], dtype=np.float32)),  # 2x unit vector in x
-            IndexItem(record_id="vec_5", vector=np.array([1.0, 1.0, 1.0], dtype=np.float32)),  # Equal in all dimensions
+            VectorPacket(record_id="vec_1", vector=np.array([1.0, 0.0, 0.0], dtype=np.float32)),  # Unit vector in x
+            VectorPacket(record_id="vec_2", vector=np.array([0.0, 1.0, 0.0], dtype=np.float32)),  # Unit vector in y
+            VectorPacket(record_id="vec_3", vector=np.array([0.0, 0.0, 1.0], dtype=np.float32)),  # Unit vector in z
+            VectorPacket(record_id="vec_4", vector=np.array([2.0, 0.0, 0.0], dtype=np.float32)),  # 2x unit vector in x
+            VectorPacket(record_id="vec_5", vector=np.array([1.0, 1.0, 1.0], dtype=np.float32)),  # Equal in all dimensions
         ]
 
         # 1. Test Euclidean distance
@@ -596,9 +596,9 @@ class TestHNSW(unittest.TestCase):
         """Test the build method with items of different dimensions."""
         # Create items with different dimensions
         items = [
-            IndexItem(record_id="vec_1", vector=np.array([1.0, 2.0, 3.0], dtype=np.float32)),
-            IndexItem(record_id="vec_2", vector=np.array([4.0, 5.0, 6.0, 7.0], dtype=np.float32)),  # 4D
-            IndexItem(record_id="vec_3", vector=np.array([8.0, 9.0], dtype=np.float32))  # 2D
+            VectorPacket(record_id="vec_1", vector=np.array([1.0, 2.0, 3.0], dtype=np.float32)),
+            VectorPacket(record_id="vec_2", vector=np.array([4.0, 5.0, 6.0, 7.0], dtype=np.float32)),  # 4D
+            VectorPacket(record_id="vec_3", vector=np.array([8.0, 9.0], dtype=np.float32))  # 2D
         ]
 
         # Test with auto_resize_dim=False
@@ -628,7 +628,7 @@ class TestHNSW(unittest.TestCase):
 
         # Try to add an empty vector
         with self.assertRaises(Exception):  # Should raise some kind of exception
-            empty_item = IndexItem(record_id="empty_vec", vector=np.array([]))
+            empty_item = VectorPacket(record_id="empty_vec", vector=np.array([]))
             hnsw.add(empty_item)
 
     def test_serialization_with_different_parameters(self):
@@ -646,8 +646,8 @@ class TestHNSW(unittest.TestCase):
 
         # Add some vectors
         items = [
-            IndexItem(record_id="ip_vec_1", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)),
-            IndexItem(record_id="ip_vec_2", vector=np.array([5.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32))
+            VectorPacket(record_id="ip_vec_1", vector=np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)),
+            VectorPacket(record_id="ip_vec_2", vector=np.array([5.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32))
         ]
         hnsw.add_batch(items)
 
@@ -745,8 +745,8 @@ class TestHNSW(unittest.TestCase):
 
         # Create different items
         diff_items = [
-            IndexItem(record_id="diff1", vector=np.array([10.0, 11.0, 12.0], dtype=np.float32)),
-            IndexItem(record_id="diff2", vector=np.array([13.0, 14.0, 15.0], dtype=np.float32))
+            VectorPacket(record_id="diff1", vector=np.array([10.0, 11.0, 12.0], dtype=np.float32)),
+            VectorPacket(record_id="diff2", vector=np.array([13.0, 14.0, 15.0], dtype=np.float32))
         ]
         hnsw2.add_batch(diff_items)
 
@@ -945,7 +945,7 @@ class TestHNSW(unittest.TestCase):
         many_items = []
         for i in range(100):
             vector = [float(i % 10) for _ in range(10)]  # 10D vector
-            many_items.append(IndexItem(record_id=f"large_vec_{i}", vector=np.array(vector, dtype=np.float32)))
+            many_items.append(VectorPacket(record_id=f"large_vec_{i}", vector=np.array(vector, dtype=np.float32)))
 
         # Add items
         hnsw.add_batch(many_items)

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.checksummed_data import DataPacket
+from src.vecraft.data.data_packet import DataPacket
 
 
 class WALManager(WALInterface):

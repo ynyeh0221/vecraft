@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from src.vecraft.core.catalog_interface import Catalog
-from src.vecraft.data.checksummed_data import CollectionSchema
+from src.vecraft.data.index_packets import CollectionSchema
 from src.vecraft.data.exception import CollectionNotExistedException, CollectionAlreadyExistedException
 
 

@@ -1,7 +1,9 @@
 from typing import List, Callable, Optional
 
 from src.vecraft.core.catalog_interface import Catalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, SearchDataPacket
+from src.vecraft.data.data_packet import DataPacket
+from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft.data.search_data_packet import SearchDataPacket
 from src.vecraft.engine.collection_service import CollectionService
 
 

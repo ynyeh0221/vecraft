@@ -1,6 +1,6 @@
 from typing import Callable, Protocol, runtime_checkable
 
-from src.vecraft.data.checksummed_data import DataPacket
+from src.vecraft.data.data_packet import DataPacket
 
 
 @runtime_checkable

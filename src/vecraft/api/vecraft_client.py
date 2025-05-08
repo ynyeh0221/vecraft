@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.vecraft.catalog.sqlite_catalog import SqliteCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, \
-    CollectionSchema
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.index_packets import CollectionSchema
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft.data.search_data_packet import SearchDataPacket
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
 from src.vecraft.query.planner import Planner

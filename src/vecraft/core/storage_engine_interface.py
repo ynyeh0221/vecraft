@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
 
-from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.index_packets import LocationPacket
 
 
 class StorageEngine(ABC):
@@ -17,7 +17,7 @@ class StorageEngine(ABC):
         ...
 
     @abstractmethod
-    def write(self, data: bytes, location_item: LocationItem) -> int:
+    def write(self, data: bytes, location_item: LocationPacket) -> int:
         """
         Write `data` bytes at the given `offset`.
 
@@ -38,7 +38,7 @@ class StorageEngine(ABC):
         ...
 
     @abstractmethod
-    def read(self, location_item: LocationItem) -> bytes:
+    def read(self, location_item: LocationPacket) -> bytes:
         """
         Read `size` bytes starting from `offset`.
 
@@ -81,7 +81,7 @@ class RecordLocationIndex(ABC):
     """
 
     @abstractmethod
-    def get_record_location(self, record_id: str) -> Optional[LocationItem]:
+    def get_record_location(self, record_id: str) -> Optional[LocationPacket]:
         """
         Retrieve the location information for a specific record.
 
@@ -95,7 +95,7 @@ class RecordLocationIndex(ABC):
         ...
 
     @abstractmethod
-    def get_all_record_locations(self) -> Dict[str, LocationItem]:
+    def get_all_record_locations(self) -> Dict[str, LocationPacket]:
         """
         Return a mapping from all record IDs to their storage locations.
 
@@ -105,7 +105,7 @@ class RecordLocationIndex(ABC):
         ...
 
     @abstractmethod
-    def get_deleted_locations(self) -> List[LocationItem]:
+    def get_deleted_locations(self) -> List[LocationPacket]:
         """
         List all freed slots available for reuse.
 
@@ -119,7 +119,7 @@ class RecordLocationIndex(ABC):
         ...
 
     @abstractmethod
-    def add_record(self, location_item: LocationItem) -> None:
+    def add_record(self, location_item: LocationPacket) -> None:
         """
         Add or update the storage location for a record.
 

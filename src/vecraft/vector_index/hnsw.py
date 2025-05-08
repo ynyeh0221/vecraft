@@ -4,7 +4,7 @@ from typing import List, Tuple, Union, Optional, Any, Set
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import IndexItem
+from src.vecraft.data.index_packets import VectorPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     UnsupportedMetricException
 from src.vecraft.vector_index.id_mapper import IdMapper
@@ -157,7 +157,7 @@ class HNSW:
 
         return np_vec
 
-    def build(self, items: List[IndexItem]) -> None:
+    def build(self, items: List[VectorPacket]) -> None:
         """
         Build the record_vector from a list of IndexItems.
 
@@ -243,7 +243,7 @@ class HNSW:
         self._index.add_items(data, ids)
         self._current_elements = len(items)
 
-    def add(self, item: IndexItem) -> None:
+    def add(self, item: VectorPacket) -> None:
         """
         Add a single IndexItem to the record_vector.
 
@@ -293,7 +293,7 @@ class HNSW:
 
         item.validate_checksum()
 
-    def add_batch(self, items: List[IndexItem]) -> None:
+    def add_batch(self, items: List[VectorPacket]) -> None:
         """
         Add multiple IndexItems to the record_vector at once.
 

@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from src.vecraft.data.checksummed_data import DocItem
+from src.vecraft.data.index_packets import DocumentPacket
 from src.vecraft.user_doc_index.inverted_index_user_doc_index import InvertedIndexDocIndex
 
 
@@ -183,7 +183,7 @@ class TestInvertedIndexDocIndex(unittest.TestCase):
         json_str = json.dumps(data, sort_keys=True)
 
         # Create a mock DocItem with checksum validation
-        doc_item = MagicMock(spec=DocItem)
+        doc_item = MagicMock(spec=DocumentPacket)
         doc_item.record_id = record_id
         doc_item.document = json_str  # Store as JSON string directly
         return doc_item
@@ -219,7 +219,7 @@ class TestInvertedIndexDocIndex(unittest.TestCase):
     def test_non_json_content(self):
         """Test handling of non-JSON content"""
         # Create a document with non-JSON content
-        doc4 = MagicMock(spec=DocItem)
+        doc4 = MagicMock(spec=DocumentPacket)
         doc4.record_id = 'doc4'
         doc4.document = 'Plain text document about Python programming'
 

@@ -8,8 +8,10 @@ from pathlib import Path
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.checksummed_data import QueryPacket, CollectionSchema, DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacketType, DataPacket
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft.data.index_packets import CollectionSchema
+from src.vecraft.data.query_packet import QueryPacket
 
 
 class TestVecraftClient(unittest.TestCase):

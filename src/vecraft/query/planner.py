@@ -1,6 +1,7 @@
 from typing import Optional, List
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
+from src.vecraft.data.data_packet import DataPacket
+from src.vecraft.data.query_packet import QueryPacket
 from src.vecraft.query.plan_nodes import InsertNode, PlanNode, DeleteNode, GetNode, SearchNode, TSNENode
 
 
@@ -38,4 +39,3 @@ class Planner:
                        random_state: int = 42,
                        outfile: str = "tsne.png") -> PlanNode:
         return TSNENode(collection, record_ids, perplexity, random_state, outfile)
-

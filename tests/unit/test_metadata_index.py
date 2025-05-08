@@ -1,6 +1,6 @@
 import unittest
 
-from src.vecraft.data.checksummed_data import MetadataItem
+from src.vecraft.data.index_packets import MetadataPacket
 from src.vecraft.user_metadata_index.user_metadata_index import InvertedIndexMetadataIndex
 
 
@@ -11,7 +11,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.index = InvertedIndexMetadataIndex()
 
         # Create some sample metadata items
-        self.item1 = MetadataItem(
+        self.item1 = MetadataPacket(
             record_id="doc1",
             metadata={
                 "type": "article",
@@ -21,7 +21,7 @@ class TestMetadataIndex(unittest.TestCase):
             }
         )
 
-        self.item2 = MetadataItem(
+        self.item2 = MetadataPacket(
             record_id="doc2",
             metadata={
                 "type": "book",
@@ -31,7 +31,7 @@ class TestMetadataIndex(unittest.TestCase):
             }
         )
 
-        self.item3 = MetadataItem(
+        self.item3 = MetadataPacket(
             record_id="doc3",
             metadata={
                 "type": "article",
@@ -130,7 +130,7 @@ class TestMetadataIndex(unittest.TestCase):
         self.index.add(self.item2)
 
         # Update an item
-        updated_item = MetadataItem(
+        updated_item = MetadataPacket(
             record_id="doc1",
             metadata={
                 "type": "book",
@@ -225,11 +225,11 @@ class TestMetadataIndex(unittest.TestCase):
         self.assertEqual(set(), result)
 
         # Add item with empty metadata
-        empty_item = MetadataItem("empty", {})
+        empty_item = MetadataPacket("empty", {})
         self.index.add(empty_item)
 
         # Non-comparable values for range record_vector
-        complex_item = MetadataItem(
+        complex_item = MetadataPacket(
             record_id="complex",
             metadata={
                 "value": complex(1, 2),  # Complex numbers aren't orderable

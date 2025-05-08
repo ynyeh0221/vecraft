@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
 
 
@@ -45,7 +45,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_add_record(self):
         """Test adding a record."""
         # Add a record
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
 
         # Verify record was added
         loc = self.index.get_record_location("test1")
@@ -64,7 +64,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         conn.close()
 
         # Test updating an existing record
-        self.index.add_record(LocationItem(record_id="test1", offset=200, size=75))
+        self.index.add_record(LocationPacket(record_id="test1", offset=200, size=75))
         loc = self.index.get_record_location("test1")
         self.assertEqual(loc.offset, 200)
         self.assertEqual(loc.size, 75)
@@ -72,15 +72,15 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_get_record_location(self):
         """Test getting record location."""
         # Add records
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
-        self.index.add_record(LocationItem(record_id="test2", offset=200, size=75))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test2", offset=200, size=75))
 
         # Get existing record
         loc1 = self.index.get_record_location("test1")
-        self.assertEqual(loc1, LocationItem(record_id="test1", offset=100, size=50))
+        self.assertEqual(loc1, LocationPacket(record_id="test1", offset=100, size=50))
 
         loc2 = self.index.get_record_location("test2")
-        self.assertEqual(loc2, LocationItem(record_id="test2", offset=200, size=75))
+        self.assertEqual(loc2, LocationPacket(record_id="test2", offset=200, size=75))
 
         # Get non-existent record
         loc3 = self.index.get_record_location("nonexistent")
@@ -89,26 +89,26 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_get_all_record_locations(self):
         """Test getting all record locations."""
         # Add records
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
-        self.index.add_record(LocationItem(record_id="test2", offset=200, size=75))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test2", offset=200, size=75))
 
         # Get all records
         all_locs = self.index.get_all_record_locations()
 
         # Verify expected content
         self.assertEqual(len(all_locs), 2)
-        self.assertEqual(all_locs["test1"], LocationItem(record_id="test1", offset=100, size=50))
-        self.assertEqual(all_locs["test2"], LocationItem(record_id="test2", offset=200, size=75))
+        self.assertEqual(all_locs["test1"], LocationPacket(record_id="test1", offset=100, size=50))
+        self.assertEqual(all_locs["test2"], LocationPacket(record_id="test2", offset=200, size=75))
 
         # Verify it's a copy (can't mutate the original data in DB)
-        all_locs["test3"] = LocationItem(record_id="test3", offset=300, size=100)
+        all_locs["test3"] = LocationPacket(record_id="test3", offset=300, size=100)
         new_all_locs = self.index.get_all_record_locations()
         self.assertNotIn("test3", new_all_locs)
 
     def test_delete_record(self):
         """Test deleting a record."""
         # Add a record
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
 
         # Verify it exists
         self.assertIsNotNone(self.index.get_record_location("test1"))
@@ -133,7 +133,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_mark_deleted(self):
         """Test marking a record as deleted."""
         # Add a record
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
 
         # Mark it as deleted
         self.index.mark_deleted("test1")
@@ -141,7 +141,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         # Verify deleted_records contains the record
         deleted = self.index.get_deleted_locations()
         self.assertEqual(len(deleted), 1)
-        self.assertEqual(deleted[0], LocationItem(record_id="test1", offset=100, size=50))
+        self.assertEqual(deleted[0], LocationPacket(record_id="test1", offset=100, size=50))
 
         # Verify it was saved to the database
         conn = sqlite3.connect(str(self.temp_path))
@@ -161,8 +161,8 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_clear_deleted(self):
         """Test clearing deleted records."""
         # Add and mark records as deleted
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
-        self.index.add_record(LocationItem(record_id="test2", offset=200, size=75))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test2", offset=200, size=75))
         self.index.mark_deleted("test1")
         self.index.mark_deleted("test2")
 
@@ -188,7 +188,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
     def test_mark_and_delete(self):
         """Test the workflow of marking a record as deleted and then deleting it."""
         # Add a record
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
 
         # Mark it as deleted
         self.index.mark_deleted("test1")
@@ -201,12 +201,12 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
 
         deleted = self.index.get_deleted_locations()
         self.assertEqual(len(deleted), 1)
-        self.assertEqual(deleted[0], LocationItem(record_id="test1", offset=100, size=50))
+        self.assertEqual(deleted[0], LocationPacket(record_id="test1", offset=100, size=50))
 
     def test_concurrent_connections(self):
         """Test that the database can be accessed from multiple connections."""
         # Add a record from the main connection
-        self.index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        self.index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
 
         # Open a new connection and check if the record exists
         conn = sqlite3.connect(str(self.temp_path))
@@ -237,7 +237,7 @@ class TestSQLiteRecordLocationIndex(unittest.TestCase):
         in_memory_index = SQLiteRecordLocationIndex(Path(":memory:"))
 
         # Test basic operations
-        in_memory_index.add_record(LocationItem(record_id="test1", offset=100, size=50))
+        in_memory_index.add_record(LocationPacket(record_id="test1", offset=100, size=50))
         loc = in_memory_index.get_record_location("test1")
 
         self.assertIsNotNone(loc)

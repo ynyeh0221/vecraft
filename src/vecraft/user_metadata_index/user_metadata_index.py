@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Set, Optional
 
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
-from src.vecraft.data.checksummed_data import MetadataItem
+from src.vecraft.data.index_packets import MetadataPacket
 
 
 class InvertedIndexMetadataIndex(MetadataIndexInterface):
@@ -18,7 +18,7 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
         self._eq_index: Dict[str, Dict[Any, Set[str]]] = defaultdict(lambda: defaultdict(set))
         self._range_index: Dict[str, list] = defaultdict(list)
 
-    def add(self, item: MetadataItem) -> None:
+    def add(self, item: MetadataPacket) -> None:
         """
         Index a record's metadata.
         """
@@ -40,7 +40,7 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
                     pass
         item.validate_checksum()
 
-    def update(self, old_item: MetadataItem, new_item: MetadataItem) -> None:
+    def update(self, old_item: MetadataPacket, new_item: MetadataPacket) -> None:
         """
         Update a record's metadata by removing old and adding new.
         """
@@ -51,7 +51,7 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
         old_item.validate_checksum()
         new_item.validate_checksum()
 
-    def delete(self, item: MetadataItem) -> None:
+    def delete(self, item: MetadataPacket) -> None:
         """
         Remove a record's metadata from the record_vector.
         """

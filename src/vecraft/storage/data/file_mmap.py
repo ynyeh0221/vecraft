@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from src.vecraft.core.storage_engine_interface import StorageEngine
-from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.index_packets import LocationPacket
 
 # Status byte constants
 STATUS_UNCOMMITTED = 0
@@ -75,7 +75,7 @@ class MMapStorage(StorageEngine):
                 self._resize_file(required_size)
             return offset
 
-    def write(self, data: bytes, location_item: LocationItem) -> int:
+    def write(self, data: bytes, location_item: LocationPacket) -> int:
         """Write with proper fsync for durability."""
         location_item.validate_checksum()
 
@@ -95,14 +95,14 @@ class MMapStorage(StorageEngine):
         location_item.validate_checksum()
         return location_item.offset
 
-    def mark_committed(self, location_item: LocationItem) -> None:
+    def mark_committed(self, location_item: LocationPacket) -> None:
         """Mark a record as committed by setting its status byte."""
         self._mmap[location_item.offset] = STATUS_COMMITTED
         self._mmap.flush()
         self._file.flush()
         os.fsync(self._file.fileno())
 
-    def read(self, location_item: LocationItem) -> bytes:
+    def read(self, location_item: LocationPacket) -> bytes:
         location_item.validate_checksum()
         # Skip the status byte when reading
         data_offset = location_item.offset + 1

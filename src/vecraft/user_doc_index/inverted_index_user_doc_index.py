@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Optional, Set, Dict, Any
 
 from src.vecraft.core.user_doc_index_interface import DocIndexInterface
-from src.vecraft.data.checksummed_data import DocItem
+from src.vecraft.data.index_packets import DocumentPacket
 from src.vecraft.user_doc_index.document_filter_evaluator import DocumentFilterEvaluator
 
 
@@ -28,7 +28,7 @@ class InvertedIndexDocIndex(DocIndexInterface):
         self._doc_fields = defaultdict(dict)
         self._doc_terms = defaultdict(set)
 
-    def add(self, item: DocItem):
+    def add(self, item: DocumentPacket):
         item.validate_checksum()
         self._doc_index[item.record_id] = item.document
 
@@ -114,7 +114,7 @@ class InvertedIndexDocIndex(DocIndexInterface):
         # Simple implementation - split on non-alphanumeric chars and convert to lowercase
         return set(re.findall(r'\w+', content.lower()))
 
-    def update(self, old_item: DocItem, new_item: DocItem):
+    def update(self, old_item: DocumentPacket, new_item: DocumentPacket):
         old_item.validate_checksum()
         new_item.validate_checksum()
         self.delete(old_item)
@@ -122,7 +122,7 @@ class InvertedIndexDocIndex(DocIndexInterface):
         old_item.validate_checksum()
         new_item.validate_checksum()
 
-    def delete(self, item: DocItem):
+    def delete(self, item: DocumentPacket):
         item.validate_checksum()
         record_id = item.record_id
         if record_id not in self._doc_index:

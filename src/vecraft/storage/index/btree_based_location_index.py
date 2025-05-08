@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from src.vecraft.core.storage_engine_interface import RecordLocationIndex
-from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.data.exception import ChecksumValidationFailureError
 
 
@@ -51,7 +51,7 @@ class SQLiteRecordLocationIndex(RecordLocationIndex):
                 )
             """)
 
-    def get_record_location(self, record_id: str) -> Optional[LocationItem]:
+    def get_record_location(self, record_id: str) -> Optional[LocationPacket]:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute(
@@ -60,36 +60,36 @@ class SQLiteRecordLocationIndex(RecordLocationIndex):
         )
         row = cur.fetchone()
         if row:
-            location_item = LocationItem(record_id=record_id, offset=row[0], size=row[1])
+            location_item = LocationPacket(record_id=record_id, offset=row[0], size=row[1])
             if row[2] != location_item.checksum:
                 raise ChecksumValidationFailureError(
                     f"Checksum mismatch for record {record_id}: {location_item.checksum}")
             return location_item
         return None
 
-    def get_all_record_locations(self) -> Dict[str, LocationItem]:
+    def get_all_record_locations(self) -> Dict[str, LocationPacket]:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute("SELECT record_id, offset, size, checksum FROM records")
         result = {}
         for rid, off, sz, checksum in cur.fetchall():
-            location_item = LocationItem(record_id=rid, offset=off, size=sz)
+            location_item = LocationPacket(record_id=rid, offset=off, size=sz)
             if location_item.checksum == checksum:
                 result[rid] = location_item
         return result
 
-    def get_deleted_locations(self) -> List[LocationItem]:
+    def get_deleted_locations(self) -> List[LocationPacket]:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute("SELECT record_id, offset, size, checksum FROM deleted_records")
         result = []
         for rid, off, sz, checksum in cur.fetchall():
-            location_item = LocationItem(record_id=rid, offset=off, size=sz)
+            location_item = LocationPacket(record_id=rid, offset=off, size=sz)
             if location_item.checksum == checksum:
                 result.append(location_item)
         return result
 
-    def add_record(self, location_item: LocationItem) -> None:
+    def add_record(self, location_item: LocationPacket) -> None:
         location_item.validate_checksum()
         conn = self._get_connection()
         with conn:  # Atomic transaction

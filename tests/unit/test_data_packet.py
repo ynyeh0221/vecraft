@@ -2,7 +2,8 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.query_packet import QueryPacket
 
 
 class TestPackets(unittest.TestCase):

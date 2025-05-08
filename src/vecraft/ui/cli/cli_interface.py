@@ -7,7 +7,7 @@ import sys
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.checksummed_data import CollectionSchema, QueryPacket, DataPacket, DataPacketType
+from src.vecraft.data.index_packets import CollectionSchema, QueryPacket, DataPacket, DataPacketType
 
 
 def parse_vector(vector_str):

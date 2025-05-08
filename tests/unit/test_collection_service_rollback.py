@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket, DataPacketType
 from src.vecraft.data.exception import MetadataIndexBuildingException, VectorIndexBuildingException, \
     StorageFailureException
 from src.vecraft.engine.collection_service import CollectionService

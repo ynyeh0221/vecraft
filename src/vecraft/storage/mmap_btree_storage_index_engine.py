@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
-from src.vecraft.data.checksummed_data import LocationItem
+from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.data.exception import ChecksumValidationFailureError, StorageFailureException
 from src.vecraft.storage.data.file_mmap import MMapStorage
 from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
@@ -31,7 +31,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         """Allocate space and return offset."""
         return self._storage.allocate(size)
 
-    def write_and_index(self, data: bytes, location_item: LocationItem) -> int:
+    def write_and_index(self, data: bytes, location_item: LocationPacket) -> int:
         """Atomic write to storage and index."""
 
         # Write to storage (initially uncommitted)
@@ -68,26 +68,26 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
         return actual_offset
 
-    def write(self, data: bytes, location_item: LocationItem) -> int:
+    def write(self, data: bytes, location_item: LocationPacket) -> int:
         """Write to storage with existing location info."""
         return self._storage.write(data, location_item)
 
-    def read(self, location_item: LocationItem) -> bytes:
+    def read(self, location_item: LocationPacket) -> bytes:
         return self._storage.read(location_item)
 
     def flush(self) -> None:
         self._storage.flush()
 
-    def get_record_location(self, record_id: str) -> Optional[LocationItem]:
+    def get_record_location(self, record_id: str) -> Optional[LocationPacket]:
         return self._loc_index.get_record_location(record_id)
 
-    def get_all_record_locations(self) -> Dict[str, LocationItem]:
+    def get_all_record_locations(self) -> Dict[str, LocationPacket]:
         return self._loc_index.get_all_record_locations()
 
-    def get_deleted_locations(self) -> List[LocationItem]:
+    def get_deleted_locations(self) -> List[LocationPacket]:
         return self._loc_index.get_deleted_locations()
 
-    def add_record(self, location_item: LocationItem) -> None:
+    def add_record(self, location_item: LocationPacket) -> None:
         self._loc_index.add_record(location_item)
 
     def delete_record(self, record_id: str) -> None:
