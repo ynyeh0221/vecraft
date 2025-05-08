@@ -20,7 +20,7 @@ class VectorDB:
                                                      metadata_index_factory=metadata_index_factory,
                                                      doc_index_factory=doc_index_factory)
 
-    def insert(self, collection: str, data_packet: DataPacket) -> str:
+    def insert(self, collection: str, data_packet: DataPacket) -> DataPacket:
         """
         Insert or update a record in the vector_index.
 
@@ -29,7 +29,7 @@ class VectorDB:
             data_packet: Data fields and checksum
 
         Returns:
-            The record ID
+            The preimage record
         """
         return self._collection_service.insert(collection, data_packet)
 
@@ -49,7 +49,7 @@ class VectorDB:
         """Retrieve a record by ID."""
         return self._collection_service.get(collection, record_id)
 
-    def delete(self, collection: str, data_packet: DataPacket) -> bool:
+    def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
         """Delete a record by ID."""
         result = self._collection_service.delete(collection, data_packet)
         return result

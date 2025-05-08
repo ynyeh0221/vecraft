@@ -18,7 +18,7 @@ class InsertNode(PlanNode):
         self.collection = collection
         self.data_packet = data_packet
 
-    def execute(self, context: Dict[str, Any]) -> str:
+    def execute(self, context: Dict[str, Any]) -> DataPacket:
         db = context['vector_db']
         return db.insert(self.collection, self.data_packet)
 
@@ -27,7 +27,7 @@ class DeleteNode(PlanNode):
         self.collection = collection
         self.data_packet = data_packet
 
-    def execute(self, context: Dict[str, Any]) -> bool:
+    def execute(self, context: Dict[str, Any]) -> DataPacket:
         db = context['vector_db']
         return db.delete(self.collection, self.data_packet)
 

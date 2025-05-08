@@ -40,7 +40,7 @@ class TestVecraftClient(unittest.TestCase):
 
         def task(args):
             idx, data, vec = args
-            rec_id = self.client.insert(
+            preimage = self.client.insert(
                 collection=collection,
                 packet=DataPacket(
                     type=DataPacketType.RECORD,
@@ -60,10 +60,10 @@ class TestVecraftClient(unittest.TestCase):
                     where={"tags": data["tags"]}
                 )
             )
-            self.assertTrue(any(res.data_packet.record_id == rec_id for res in results))
+            self.assertTrue(any(res.data_packet.record_id == preimage.record_id for res in results))
 
             # Fetch
-            rec = self.client.get(collection, rec_id)
+            rec = self.client.get(collection, preimage.record_id)
             self.assertEqual(rec.original_data, data)
 
             # Zero-distance check
@@ -74,9 +74,9 @@ class TestVecraftClient(unittest.TestCase):
                     k=1
                 )
             )[0]
-            self.assertEqual(top.data_packet.record_id, rec_id)
+            self.assertEqual(top.data_packet.record_id, preimage.record_id)
             self.assertTrue(np.isclose(top.distance, 0.0))
-            return rec_id
+            return preimage.record_id
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             ids = list(pool.map(task, tasks))
@@ -92,7 +92,7 @@ class TestVecraftClient(unittest.TestCase):
 
         def task(args):
             idx, vec, data = args
-            rec_id = self.client.insert(
+            preimage = self.client.insert(
                 collection=collection,
                 packet=DataPacket(
                     type=DataPacketType.RECORD,
@@ -111,7 +111,7 @@ class TestVecraftClient(unittest.TestCase):
                     k=1
                 )
             )
-            self.assertTrue(pre and pre[0].data_packet.record_id == rec_id)
+            self.assertTrue(pre and pre[0].data_packet.record_id == preimage.record_id)
 
             # Delete
             self.client.delete(collection=collection, record_id=str(idx))
@@ -124,12 +124,12 @@ class TestVecraftClient(unittest.TestCase):
                     k=1
                 )
             )
-            self.assertTrue(all(r.data_packet.record_id != rec_id for r in post))
+            self.assertTrue(all(r.data_packet.record_id != preimage.record_id for r in post))
 
             # Fetch must fail
             with self.assertRaises(Exception):
-                self.client.get(collection, rec_id)
-            return rec_id
+                self.client.get(collection, preimage.record_id)
+            return preimage.record_id
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             ids = list(pool.map(task, tasks))
@@ -148,7 +148,7 @@ class TestVecraftClient(unittest.TestCase):
         original_vector = rng.random(32).astype(np.float32)
 
         # Insert the record
-        record_id = self.client.insert(
+        preimage = self.client.insert(
             collection=collection,
             packet=DataPacket(
                 type=DataPacketType.RECORD,
@@ -168,8 +168,8 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": original_data["tags"]}
             )
         )
-        self.assertTrue(any(res.data_packet.record_id == record_id for res in results))
-        rec = self.client.get(collection, record_id)
+        self.assertTrue(any(res.data_packet.record_id == preimage.record_id for res in results))
+        rec = self.client.get(collection, preimage.record_id)
         self.assertEqual(rec.original_data, original_data)
 
         # Update the record with new data and vector
@@ -181,7 +181,7 @@ class TestVecraftClient(unittest.TestCase):
             collection=collection,
             packet=DataPacket(
                 type=DataPacketType.RECORD,
-                record_id=record_id,
+                record_id=preimage.record_id,
                 vector=updated_vector,
                 original_data=updated_data,
                 metadata={"tags": updated_data["tags"]}
@@ -197,7 +197,7 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": original_data["tags"]}
             )
         )
-        self.assertTrue(all(res.data_packet.record_id != record_id for res in old_results))
+        self.assertTrue(all(res.data_packet.record_id != preimage.record_id for res in old_results))
 
         # Verify new metadata returns the record
         new_results = self.client.search(
@@ -208,10 +208,10 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": updated_data["tags"]}
             )
         )
-        self.assertTrue(any(res.data_packet.record_id == record_id for res in new_results))
+        self.assertTrue(any(res.data_packet.record_id == preimage.record_id for res in new_results))
 
         # Verify the updated record can be fetched
-        updated_rec = self.client.get(collection, record_id)
+        updated_rec = self.client.get(collection, preimage.record_id)
         self.assertEqual(updated_rec.original_data, updated_data)
 
         # Verify zero-distance search with updated vector works
@@ -222,7 +222,7 @@ class TestVecraftClient(unittest.TestCase):
                 k=1
             )
         )[0]
-        self.assertEqual(top.data_packet.record_id, record_id)
+        self.assertEqual(top.data_packet.record_id, preimage.record_id)
         self.assertTrue(np.isclose(top.distance, 0.0))
 
     def test_batch_operations_consistency(self):
@@ -246,7 +246,7 @@ class TestVecraftClient(unittest.TestCase):
 
         # Batch insert (sequentially)
         for i in range(batch_size):
-            rec_id = self.client.insert(
+            preimage = self.client.insert(
                 collection=collection,
                 packet=DataPacket(
                     type=DataPacketType.RECORD,
@@ -256,7 +256,7 @@ class TestVecraftClient(unittest.TestCase):
                     metadata={"tags": records[i]["tags"]}
                 )
             )
-            record_ids.append(rec_id)
+            record_ids.append(preimage.record_id)
 
         # Verify all records can be fetched
         for i, rec_id in enumerate(record_ids):
@@ -411,7 +411,7 @@ class TestVecraftClient(unittest.TestCase):
         # Insert an initial record
         initial_data = {"text": "initial", "version": 0}
         initial_vector = rng.random(32).astype(np.float32)
-        record_id = self.client.insert(
+        preimage = self.client.insert(
             collection=collection,
             packet=DataPacket(
                 type=DataPacketType.RECORD,
@@ -431,7 +431,7 @@ class TestVecraftClient(unittest.TestCase):
                     collection=collection,
                     packet=DataPacket(
                         type=DataPacketType.RECORD,
-                        record_id=record_id,
+                        record_id=preimage.record_id,
                         vector=vec,
                         original_data=data,
                         metadata={"version": data["version"]}
@@ -447,7 +447,7 @@ class TestVecraftClient(unittest.TestCase):
             results = list(pool.map(update_task, range(1, num_updates + 1)))
 
         # Verify record exists and has been updated
-        final_record = self.client.get(collection, record_id)
+        final_record = self.client.get(collection, preimage.record_id)
         self.assertIsNotNone(final_record)
         self.assertTrue(final_record.original_data["version"] > 0)
 
@@ -472,7 +472,7 @@ class TestVecraftClient(unittest.TestCase):
         # Use a fixed seed for reproducibility
         rng = np.random.default_rng(42)
         special_vec = rng.random(8).astype(np.float32)
-        record_id = self.client.insert(
+        preimage = self.client.insert(
             collection=collection,
             packet=DataPacket(
                 type=DataPacketType.RECORD,
@@ -484,7 +484,7 @@ class TestVecraftClient(unittest.TestCase):
         )
 
         # Verify complex data is preserved
-        result = self.client.get(collection=collection, record_id=record_id)
+        result = self.client.get(collection=collection, record_id=preimage.record_id)
         self.assertEqual(result.original_data["nested"]["emoji"], "😀🚀🌍")
         self.assertEqual(result.original_data["nested"]["quotes"], "\"quoted text\"")
 
@@ -502,7 +502,7 @@ class TestVecraftClient(unittest.TestCase):
         # Use a fixed seed for reproducibility
         rng = np.random.default_rng(42)
         large_vec = rng.random(4).astype(np.float32)
-        record_id = self.client.insert(
+        preimage = self.client.insert(
             collection=collection,
             packet=DataPacket(
                 type=DataPacketType.RECORD,
@@ -523,7 +523,7 @@ class TestVecraftClient(unittest.TestCase):
             )
         )
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].data_packet.record_id, record_id)
+        self.assertEqual(results[0].data_packet.record_id, preimage.record_id)
 
     def test_scalability(self):
         """Test database performance with a larger number of records."""

@@ -75,9 +75,14 @@ class VecraftClient:
         self,
         collection: str,
         packet: DataPacket
-    ) -> str:
+    ) -> DataPacket:
         plan = self.planner.plan_insert(collection=collection, data_packet=packet)
-        return self.executor.execute(plan)
+        preimage = self.executor.execute(plan)
+
+        # validate checksum
+        preimage.validate_checksum()
+
+        return preimage
 
     def get(self, collection: str, record_id: str) -> DataPacket:
         plan = self.planner.plan_get(collection, record_id)
@@ -96,10 +101,15 @@ class VecraftClient:
 
         return result
 
-    def delete(self, collection: str, record_id: str) -> None:
+    def delete(self, collection: str, record_id: str) -> DataPacket:
         packet = DataPacket(type=DataPacketType.TOMBSTONE, record_id=record_id)
         plan = self.planner.plan_delete(collection=collection, data_packet=packet)
-        self.executor.execute(plan)
+        preimage = self.executor.execute(plan)
+
+        # validate checksum
+        preimage.validate_checksum()
+
+        return preimage
 
     def search(
             self,

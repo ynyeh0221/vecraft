@@ -282,8 +282,8 @@ class TestCollectionService(unittest.TestCase):
         )
 
         # Insert data
-        inserted_id = self.collection_service.insert(self.collection_name, data_packet)
-        self.assertEqual(record_id, inserted_id)
+        preimage = self.collection_service.insert(self.collection_name, data_packet)
+        self.assertEqual(record_id, preimage.record_id)
 
         # Get data and verify
         rec = self.collection_service.get(self.collection_name, record_id)

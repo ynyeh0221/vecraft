@@ -252,7 +252,7 @@ class CollectionService:
                          exc_info=True)
             raise
 
-    def _apply_insert(self, name: str, data_packet: DataPacket) -> None:
+    def _apply_insert(self, name: str, data_packet: DataPacket) -> DataPacket:
         res = self._collections[name]
         rec_bytes = data_packet.to_bytes()
         size = len(rec_bytes)
@@ -335,6 +335,9 @@ class CollectionService:
                 logger.debug(error_message)
                 raise VectorIndexBuildingException(error_message, e)
 
+            # Return pre-image
+            return old
+
         except Exception as e:
             logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}", exc_info=True)
 
@@ -369,7 +372,7 @@ class CollectionService:
             logger.error(f"Rollback complete for record {data_packet.record_id}")
             raise
 
-    def _apply_delete(self, name: str, data_packet: DataPacket) -> None:
+    def _apply_delete(self, name: str, data_packet: DataPacket) -> DataPacket:
         res = self._collections[name]
         record_id = data_packet.record_id
         logger.debug(f"Applying delete for record {record_id} from collection {name}")
@@ -429,6 +432,9 @@ class CollectionService:
 
             logger.debug(f"Successfully deleted record {record_id} from all indices")
 
+            # return preimage
+            return old
+
         except Exception as e:
             logger.error(f"Error applying delete for record {record_id}, rolling back: {str(e)}", exc_info=True)
 
@@ -451,7 +457,7 @@ class CollectionService:
             logger.error(f"Rollback complete for record {record_id}")
             raise
 
-    def insert(self, collection: str, data_packet: DataPacket) -> str:
+    def insert(self, collection: str, data_packet: DataPacket) -> DataPacket:
         # Initialize collection with global lock if needed
         self._get_or_init_collection(collection)
 
@@ -474,15 +480,16 @@ class CollectionService:
             self._collections[collection]['wal'].append(data_packet)
 
             # Apply the insert operation
-            self._apply_insert(collection, data_packet)
+            preimage = self._apply_insert(collection, data_packet)
             data_packet.validate_checksum()
 
             elapsed = time.time() - start_time
             logger.info(f"Inserting {data_packet.record_id} to {collection} completed in {elapsed:.3f}s")
 
-            return data_packet.record_id
+            # return preimage
+            return preimage
 
-    def delete(self, collection: str, data_packet: DataPacket) -> bool:
+    def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
         # Initialize collection with global lock if needed
         self._get_or_init_collection(collection)
 
@@ -498,13 +505,14 @@ class CollectionService:
             self._collections[collection]['wal'].append(data_packet)
 
             # Apply the delete operation
-            self._apply_delete(collection, data_packet)
+            preimage = self._apply_delete(collection, data_packet)
             data_packet.validate_checksum()
 
             elapsed = time.time() - start_time
             logger.info(f"Deleting {data_packet.record_id} from {collection} completed in {elapsed:.3f}s")
 
-            return True
+            # return preimage
+            return preimage
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
         # Initialize collection with global lock if needed
