@@ -104,7 +104,7 @@ def execute_command(client, args):
             meta = json.loads(args.metadata)
             rec_id = client.insert(
                 collection=args.collection,
-                packet=DataPacket(type=DataPacketType.RECORD, record_id=args.id, vector=args.vector, original_data=data, metadata=meta or {}),
+                packet=DataPacket.create_record(record_id=args.id, vector=args.vector, original_data=data, metadata=meta or {}),
             )
             print(rec_id)
         elif args.command == "get":

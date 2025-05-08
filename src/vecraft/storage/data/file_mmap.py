@@ -118,53 +118,71 @@ class MMapStorage(StorageEngine):
         Comprehensive scan of the entire file to find all records.
 
         Returns:
-            Dict mapping record_id to (offset, size, is_committed) tuples
+            Dict mapping record_id to (offset, size, is_committed) tuples,
+            where `offset` is the position of the status byte and `size`
+            matches exactly the length of DataPacket.to_bytes().
         """
-        all_records = {}
+        # DataPacket.to_bytes() writes a 5-byte prefix immediately after the status byte
+        PREFIX_SIZE = 5
+
+        # The header is five 4-byte unsigned ints (rid_len, orig_len, vec_len, meta_len, checksum_len)
+        HEADER_FORMAT = '<5I'
+        HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+        all_records: Dict[str, Tuple[int, int, bool]] = {}
+        data_len = len(self._mmap)
         offset = 0
 
-        while offset < len(self._mmap):
-            # Check if we have at least one byte for status
-            if offset >= len(self._mmap):
-                break
+        while offset < data_len:
+            status = self._mmap[offset]
+            # only 0 or 1 are valid “status” bytes
+            if status not in (STATUS_UNCOMMITTED, STATUS_COMMITTED):
+                offset += 1
+                continue
 
-            status_byte = self._mmap[offset]
+            # header actually starts after: [status(1) + prefix(PREFIX_SIZE)]
+            header_offset = offset + 1 + PREFIX_SIZE
+            # must-have space for the header
+            if header_offset + HEADER_SIZE > data_len:
+                offset += 1
+                continue
 
-            # Check if this looks like a valid status byte
-            if status_byte in (STATUS_UNCOMMITTED, STATUS_COMMITTED):
-                try:
-                    # Try to read the record header to get size
-                    header_offset = offset + 1
-                    if header_offset + 20 <= len(self._mmap):  # 5 integers * 4 bytes
-                        header = self._mmap[header_offset:header_offset + 20]
-                        rid_len, orig_len, vec_len, meta_len, checksum_len = struct.unpack('<5I', header)
+            try:
+                header_bytes = self._mmap[header_offset: header_offset + HEADER_SIZE]
+                rid_len, orig_len, vec_len, meta_len, checksum_len = struct.unpack(
+                    HEADER_FORMAT, header_bytes
+                )
+            except struct.error:
+                offset += 1
+                continue
 
-                        # Validate header values are reasonable
-                        total_size = rid_len + orig_len + vec_len + meta_len + checksum_len
-                        if (0 < rid_len < 1000 and  # Reasonable record ID length
-                                0 <= orig_len < 10 * 1024 * 1024 and  # Max 10MB original data
-                                0 <= vec_len < 1024 * 1024 and  # Max 1MB vector
-                                0 <= meta_len < 1024 * 1024 and  # Max 1MB metadata
-                                0 < checksum_len < 100 and  # Reasonable checksum length
-                                header_offset + 20 + total_size <= len(self._mmap)):
-                            # Read record ID
-                            rid_start = header_offset + 20
-                            rid_bytes = self._mmap[rid_start:rid_start + rid_len]
-                            record_id = rid_bytes.decode('utf-8', errors='ignore')
+            # total payload (record_id + original + vector + metadata + checksum)
+            payload_size = rid_len + orig_len + vec_len + meta_len + checksum_len
+            # full packet length (excluding the status byte)
+            record_size = PREFIX_SIZE + HEADER_SIZE + payload_size
 
-                            # Valid record found
-                            is_committed = (status_byte == STATUS_COMMITTED)
-                            all_records[record_id] = (offset, total_size, is_committed)
+            # sanity‐check lengths
+            if (
+                    rid_len <= 0 or rid_len > 1000 or
+                    orig_len < 0 or orig_len > 10 * 1024 * 1024 or
+                    vec_len < 0 or vec_len > 1024 * 1024 or
+                    meta_len < 0 or meta_len > 1024 * 1024 or
+                    checksum_len <= 0 or checksum_len > 100 or
+                    header_offset + HEADER_SIZE + payload_size > data_len
+            ):
+                offset += 1
+                continue
 
-                            # Move to next potential record
-                            offset += 1 + 20 + total_size  # status + header + data
-                            continue
+            # extract the record ID
+            rid_start = header_offset + HEADER_SIZE
+            rid_bytes = self._mmap[rid_start: rid_start + rid_len]
+            record_id = rid_bytes.decode('utf-8', errors='ignore')
 
-                except Exception:
-                    pass  # Invalid record structure, continue scanning
+            is_committed = (status == STATUS_COMMITTED)
+            all_records[record_id] = (offset, record_size, is_committed)
 
-            # Not a valid record start, move to next byte
-            offset += 1
+            # skip over [status + entire packet]
+            offset += 1 + record_size
 
         return all_records
 

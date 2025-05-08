@@ -109,9 +109,11 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
         # Get all records from comprehensive file scan
         all_records_in_file = self._storage.scan_all_records()
+        logger.debug(f"all_records_in_file: {all_records_in_file}")
 
         # Get all records from index
         all_records_in_index = self._loc_index.get_all_record_locations()
+        logger.debug(f"all_records_in_index: {all_records_in_index}")
 
         # Find uncommitted records in file
         for record_id, (offset, size, is_committed) in all_records_in_file.items():
