@@ -7,7 +7,7 @@ from typing import List, Dict
 
 from src.vecraft.core.catalog_interface import Catalog
 from src.vecraft.data.checksummed_data import CollectionSchema
-from src.vecraft.data.exception import CollectionNotExistedException
+from src.vecraft.data.exception import CollectionNotExistedException, CollectionAlreadyExistedException
 
 
 class JsonCatalog(Catalog):
@@ -167,27 +167,32 @@ class JsonCatalog(Catalog):
             except Exception as e:
                 print(f"Failed to remove old backup {old_backup}: {e}")
 
-    def create_collection(self, collection_schema: CollectionSchema) -> None:
+    def create_collection(self, collection_schema: CollectionSchema) -> CollectionSchema:
         """
         Create a new collection in the catalog.
 
         Args:
-            name (str): Name of the collection.
-            dim (int): Dimensionality of vectors in the collection.
-            vector_type (str): Data type of the vector elements (e.g., 'float', 'int').
+            collection_schema: collection of (name, dim, vector_type)
+                name (str): Name of the collection.
+                dim (int): Dimensionality of vectors in the collection.
+                vector_type (str): Data type of the vector elements (e.g., 'float', 'int').
         """
+        if collection_schema.name in self._collections:
+            raise CollectionAlreadyExistedException(f"Collection {collection_schema.name} already exists")
         self._collections[collection_schema.name] = collection_schema
         self._save()
+        return collection_schema
 
-    def drop_collection(self, name: str) -> None:
+    def drop_collection(self, name: str) -> CollectionSchema:
         """
         Remove a collection from the catalog.
 
         Args:
             name (str): Name of the collection to drop.
         """
-        self._collections.pop(name, None)
+        popped = self._collections.pop(name, None)
         self._save()
+        return popped
 
     def list_collections(self) -> List[CollectionSchema]:
         """

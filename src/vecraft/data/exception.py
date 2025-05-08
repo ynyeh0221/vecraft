@@ -291,6 +291,26 @@ class CollectionNotExistedException(Exception):
         return self.message
 
 
+class CollectionAlreadyExistedException(Exception):
+    """
+    Exception raised when trying to create a collection which has same name as existing one.
+    """
+
+    def __init__(self, message, collection_name=None):
+        self.collection_name = collection_name
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection_name is not None:
+            details.append(f"collection_name={self.collection_name}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
+
+
 class StorageFailureException(Exception):
     """
     Exception raised when disk full, write I/O error, or underlying storage

@@ -1,8 +1,19 @@
+"""
+VecraftClient - Vector Database Client
+
+A client interface for the Vecraft vector database system that provides methods for
+managing collections and performing CRUD operations with vector data.
+
+The client implements a planning and execution architecture where operations are first
+planned and then executed, with built-in checksum validation for data integrity.
+"""
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, CollectionSchema
+from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacketType, SearchDataPacket, \
+    CollectionSchema
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.engine.vector_db import VectorDB
 from src.vecraft.query.executor import Executor
@@ -15,15 +26,29 @@ from src.vecraft.wal.wal_manager import WALManager
 
 
 class VecraftClient:
+    """
+    Vector database client for managing collections and vector data operations.
+
+    This client provides a high-level interface to the Vecraft vector database,
+    supporting collection management, data insertion, retrieval, deletion, and
+    vector similarity search. All operations include checksum validation for
+    data integrity.
+    """
     def __init__(
         self,
         root: str,
         vector_index_params: Optional[Dict[str, Any]] = None,
     ):
         """
-        root: path where all collections, data files, and WALs live.
-        vector_index_kind: one of "hnsw" (more in future?)
-        vector_index_params: e.g. {"M": 16, "ef_construction": 200}
+        Initialize the VecraftClient with database configuration.
+
+        Sets up the storage infrastructure including catalog, WAL manager,
+        storage engine, vector indices, and metadata indices.
+
+        Args:
+            root (str): Path to the root directory for database files
+            vector_index_params (Optional[Dict[str, Any]]): Vector index configuration
+                Defaults to {"M": 16, "ef_construction": 200} for HNSW index
         """
         self.root = Path(root)
         catalog_path = self.root / "catalog.json"
@@ -65,10 +90,29 @@ class VecraftClient:
         self.planner = Planner()
         self.executor = Executor(self.db)
 
-    def create_collection(self, collection_schema: CollectionSchema) -> None:
+    def create_collection(self, collection_schema: CollectionSchema) -> CollectionSchema:
+        """
+        Create a new collection in the database.
+
+        Args:
+            collection_schema (CollectionSchema): Schema defining the collection
+                properties including name, dimension, and other metadata
+
+        Returns:
+            None
+
+        Raises:
+            CollectionAlreadyExistedException: If a collection with the same name exists
+        """
         return self.catalog.create_collection(collection_schema)
 
     def list_collections(self) -> List[CollectionSchema]:
+        """
+        List all collections in the database.
+
+        Returns:
+            List[CollectionSchema]: List of collection schemas
+        """
         return self.catalog.list_collections()
 
     def insert(
@@ -76,6 +120,26 @@ class VecraftClient:
         collection: str,
         packet: DataPacket
     ) -> DataPacket:
+        """
+        Insert a data record into a collection.
+
+        The operation is planned, executed, and the resulting data is validated
+        for checksum integrity. Returns a preimage of the data before insertion.
+
+        Args:
+            collection (str): Name of the target collection
+            packet (DataPacket): Data packet containing the record to insert
+                Must include record_id, vector, and optional metadata
+
+        Returns:
+            DataPacket: Preimage (previous state) of the record if it existed,
+                otherwise a packet indicating non-existence
+
+        Raises:
+            CollectionNotExistedException: If the collection doesn't exist
+            ChecksumValidationFailureError: If checksum validation fails
+            VectorDimensionMismatchException: If vector dimension doesn't match collection
+        """
         plan = self.planner.plan_insert(collection=collection, data_packet=packet)
         preimage = self.executor.execute(plan)
 
@@ -85,6 +149,22 @@ class VecraftClient:
         return preimage
 
     def get(self, collection: str, record_id: str) -> DataPacket:
+        """
+        Retrieve a specific record from a collection by ID.
+
+        Args:
+            collection (str): Name of the collection
+            record_id (str): Unique identifier of the record
+
+        Returns:
+            DataPacket: The requested data record
+
+        Raises:
+            CollectionNotExistedException: If the collection doesn't exist
+            RecordNotFoundError: If the record doesn't exist
+            ChecksumValidationFailureError: If checksum validation fails or
+                returned record ID doesn't match requested ID
+        """
         plan = self.planner.plan_get(collection, record_id)
         result = self.executor.execute(plan)
 
@@ -102,6 +182,24 @@ class VecraftClient:
         return result
 
     def delete(self, collection: str, record_id: str) -> DataPacket:
+        """
+        Delete a record from a collection.
+
+        Creates a tombstone marker for the record. Returns the preimage
+        (previous state) of the deleted record.
+
+        Args:
+            collection (str): Name of the collection
+            record_id (str): Unique identifier of the record to delete
+
+        Returns:
+            DataPacket: Preimage of the deleted record
+
+        Raises:
+            CollectionNotExistedException: If the collection doesn't exist
+            RecordNotFoundError: If the record doesn't exist
+            ChecksumValidationFailureError: If checksum validation fails
+        """
         packet = DataPacket(type=DataPacketType.TOMBSTONE, record_id=record_id)
         plan = self.planner.plan_delete(collection=collection, data_packet=packet)
         preimage = self.executor.execute(plan)
@@ -116,6 +214,30 @@ class VecraftClient:
             collection: str,
             packet: QueryPacket
     ) -> List[SearchDataPacket]:
+        """
+        Perform vector similarity search in a collection.
+
+        Searches for the k most similar vectors to the query vector,
+        with optional filtering based on metadata.
+
+        Args:
+            collection (str): Name of the collection to search
+            packet (QueryPacket): Query packet containing:
+                - vector: Query vector for similarity search
+                - k: Number of results to return
+                - metadata_filter: Optional metadata constraints
+                - distance_threshold: Optional distance cutoff
+
+        Returns:
+            List[SearchDataPacket]: Sorted list of search results, each containing:
+                - data_packet: searched record
+                - distance: Distance/similarity score
+
+        Raises:
+            CollectionNotExistedException: If the collection doesn't exist
+            ChecksumValidationFailureError: If checksum validation fails
+            VectorDimensionMismatchException: If query vector dimension doesn't match collection
+        """
         plan = self.planner.plan_search(collection=collection, query_packet=packet)
         search_result = self.executor.execute(plan)
 
