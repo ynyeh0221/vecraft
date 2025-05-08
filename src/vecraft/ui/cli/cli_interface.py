@@ -76,6 +76,13 @@ def get_parser():
     c_search.add_argument("--where", default="{}", help="Optional filter as JSON string")
     c_search.add_argument("--where-document", default="{}", help="Optional document filter as JSON string")
 
+    c_tsne = subparsers.add_parser("tsne-plot", help="Generate t-SNE plot for a collection")
+    c_tsne.add_argument("collection", help="Collection name")
+    c_tsne.add_argument("--record-ids", nargs="+", help="Specific record IDs to visualize (default: all)")
+    c_tsne.add_argument("--perplexity", type=int, default=30, help="t-SNE perplexity parameter (default: 30)")
+    c_tsne.add_argument("--random-state", type=int, default=42, help="Random seed for reproducibility (default: 42)")
+    c_tsne.add_argument("--outfile", default="tsne.png", help="Output file path (default: tsne.png)")
+
     return parser
 
 
@@ -109,6 +116,17 @@ def execute_command(client, args):
             )
             results_dict = [result.to_dict() for result in results]
             print(json.dumps(results_dict, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
+        elif args.command == "tsne-plot":
+            # Execute the t-SNE plot generation
+            plot_path = client.generate_tsne_plot(
+                collection=args.collection,
+                record_ids=args.record_ids,
+                perplexity=args.perplexity,
+                random_state=args.random_state,
+                outfile=args.outfile
+            )
+            print(f"Generated t-SNE plot for collection '{args.collection}'")
+            print(f"Plot saved to: {plot_path}")
         else:
             return False
         return True

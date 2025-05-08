@@ -18,7 +18,7 @@ from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, DataPacke
     CollectionSchema
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
-    DocumentIndexBuildingException, VectorIndexBuildingException
+    DocumentIndexBuildingException, VectorIndexBuildingException, TsnePlotGeneratingFailureException
 from src.vecraft.engine.locks import ReentrantRWLock
 
 # Set up logger for this module
@@ -667,45 +667,58 @@ class CollectionService:
         Returns:
             Path to the saved t-SNE plot image.
         """
+        self._get_or_init_collection(name)
+
         with self._collections[name]['lock'].read_lock():
-            logger.info(f"Generating t-SNE plot for collection {name}")
-            start_time = time.time()
+            try:
+                logger.info(f"Generating t-SNE plot for collection {name}")
+                start_time = time.time()
 
-            # Determine which IDs to plot
-            if record_ids is None:
-                record_ids = list(self._collections[name]['storage'].get_all_record_locations().keys())
-                logger.debug(f"Using all {len(record_ids)} records in collection")
-            else:
-                logger.debug(f"Using {len(record_ids)} specified record IDs")
+                # Determine which IDs to plot
+                if record_ids is None:
+                    record_ids = list(self._collections[name]['storage'].get_all_record_locations().keys())
+                    logger.debug(f"Using all {len(record_ids)} records in collection")
+                else:
+                    logger.debug(f"Using {len(record_ids)} specified record IDs")
 
-            vectors = []
-            labels = []
-            for rid in record_ids:
-                rec = self.get(name, rid)
-                if not rec:
-                    logger.warning(f"Record {rid} not found, skipping for t-SNE")
-                    continue
-                vectors.append(rec.vector)
-                labels.append(rid)
+                vectors = []
+                labels = []
+                for rid in record_ids:
+                    rec = self.get(name, rid)
+                    if not rec:
+                        logger.warning(f"Record {rid} not found, skipping for t-SNE")
+                        continue
+                    vectors.append(rec.vector)
+                    labels.append(rid)
 
-            if not vectors:
-                err_msg = "No vectors available for t-SNE visualization"
-                logger.error(err_msg)
-                raise NullOrZeroVectorException(err_msg)
+                if not vectors:
+                    err_msg = "No vectors available for t-SNE visualization"
+                    logger.error(err_msg)
+                    raise NullOrZeroVectorException(err_msg)
 
-            # Stack into a 2D array
-            data = np.vstack(vectors)
-            logger.debug(f"Processing {len(vectors)} vectors of dimension {vectors[0].shape[0]}")
+                # Stack into a 2D array
+                data = np.vstack(vectors)
+                logger.debug(f"Processing {len(vectors)} vectors of dimension {vectors[0].shape[0]}")
 
-            # Log the parameters
-            logger.debug(f"t-SNE parameters: perplexity={perplexity}, random_state={random_state}")
-            logger.debug(f"Output file: {outfile}")
+                # Log the parameters
+                logger.debug(f"t-SNE parameters: perplexity={perplexity}, random_state={random_state}")
+                logger.debug(f"Output file: {outfile}")
 
-            # Call the helper to generate and save the plot
-            return generate_tsne(
-                vectors=data,
-                labels=labels,
-                outfile=outfile,
-                perplexity=perplexity,
-                random_state=random_state
-            )
+                # Call the helper to generate and save the plot
+                plot = generate_tsne(
+                    vectors=data,
+                    labels=labels,
+                    outfile=outfile,
+                    perplexity=perplexity,
+                    random_state=random_state
+                )
+
+                elapsed = time.time() - start_time
+                logger.info(f"T-SNE plot from {name} completed in {elapsed:.3f}s")
+
+                return plot
+
+            except Exception as e:
+                error_message = f"Error generating t-SNE plot"
+                logger.error(error_message)
+                raise TsnePlotGeneratingFailureException(error_message, name, e)

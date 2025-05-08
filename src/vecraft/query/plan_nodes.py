@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, SearchDataPacket
 
@@ -48,3 +48,20 @@ class SearchNode(PlanNode):
     def execute(self, context: Dict[str, Any]) -> List[SearchDataPacket]:
         db = context['vector_db']
         return db.search(self.collection, self.query_packet)
+
+class TSNENode(PlanNode):
+    def __init__(self,
+                 collection: str,
+                 record_ids: Optional[List[str]] = None,
+                 perplexity: int = 30,
+                 random_state: int = 42,
+                 outfile: str = "tsne.png"):
+        self.collection = collection
+        self.record_ids = record_ids
+        self.perplexity = perplexity
+        self.random_state = random_state
+        self.outfile = outfile
+
+    def execute(self, context: Dict[str, Any]) -> str:
+        db = context['vector_db']
+        return db.generate_tsne_plot(self.collection, self.record_ids, self.perplexity, self.random_state, self.outfile)

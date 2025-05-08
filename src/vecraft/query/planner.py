@@ -1,5 +1,7 @@
+from typing import Optional, List
+
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket
-from src.vecraft.query.plan_nodes import InsertNode, PlanNode, DeleteNode, GetNode, SearchNode
+from src.vecraft.query.plan_nodes import InsertNode, PlanNode, DeleteNode, GetNode, SearchNode, TSNENode
 
 
 class Planner:
@@ -28,3 +30,12 @@ class Planner:
                                        where_document=query_packet.where_document,
                                        checksum_algorithm=query_packet.checksum_algorithm)
         return SearchNode(collection, query_packet)
+
+    def plan_tsne_plot(self,
+                       collection: str,
+                       record_ids: Optional[List[str]] = None,
+                       perplexity: int = 30,
+                       random_state: int = 42,
+                       outfile: str = "tsne.png") -> PlanNode:
+        return TSNENode(collection, record_ids, perplexity, random_state, outfile)
+

@@ -304,3 +304,25 @@ class DocumentIndexBuildingException(Exception):
         if details:
             return f"{self.message} ({', '.join(details)})"
         return self.message
+
+class TsnePlotGeneratingFailureException(Exception):
+    """
+    Exception raised when getting failures from generating t-SNE plots.
+    """
+
+    def __init__(self, message, collection_name=None, cause: Exception = None):
+        self.collection_name = collection_name
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection_name is not None:
+            details.append(f"collection_name={self.collection_name}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message

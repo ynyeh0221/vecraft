@@ -245,3 +245,13 @@ class VecraftClient:
         [result.validate_checksum() for result in search_result]
 
         return search_result
+
+    def generate_tsne_plot(self,
+                           collection: str,
+                           record_ids: Optional[List[str]] = None,
+                           perplexity: int = 30,
+                           random_state: int = 42,
+                           outfile: str = "tsne.png"):
+        plan = self.planner.plan_tsne_plot(collection, record_ids, perplexity, random_state, outfile)
+        plot = self.executor.execute(plan)
+        return plot

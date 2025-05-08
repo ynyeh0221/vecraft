@@ -1,13 +1,13 @@
-from typing import List, Callable
+from typing import List, Callable, Optional
 
-from src.vecraft.catalog.json_catalog import JsonCatalog
+from src.vecraft.core.catalog_interface import Catalog
 from src.vecraft.data.checksummed_data import DataPacket, QueryPacket, SearchDataPacket
 from src.vecraft.engine.collection_service import CollectionService
 
 
 class VectorDB:
     def __init__(self,
-                 catalog: JsonCatalog,
+                 catalog: Catalog,
                  wal_factory: Callable,
                  storage_factory: Callable,
                  vector_index_factory: Callable,
@@ -51,8 +51,19 @@ class VectorDB:
 
     def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
         """Delete a record by ID."""
-        result = self._collection_service.delete(collection, data_packet)
-        return result
+        return self._collection_service.delete(collection, data_packet)
+
+    def generate_tsne_plot(self,
+                           collection: str,
+                           record_ids: Optional[List[str]] = None,
+                           perplexity: int = 30,
+                           random_state: int = 42,
+                           outfile: str = "tsne.png"):
+        return self._collection_service.generate_tsne_plot(name=collection,
+                                                           record_ids=record_ids,
+                                                           perplexity=perplexity,
+                                                           random_state=random_state,
+                                                           outfile=outfile)
 
     def flush(self):
         """Flush collection service's data and indices to disk."""
