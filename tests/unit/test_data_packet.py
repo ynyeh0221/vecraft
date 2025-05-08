@@ -2,15 +2,14 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.query_packet import QueryPacket
 
 
 class TestPackets(unittest.TestCase):
 
     def test_data_packet(self):
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id="packet_1",
             original_data={"x": 1, "y": "abc"},
             vector=np.array([1, 2, 3], dtype=np.float32),

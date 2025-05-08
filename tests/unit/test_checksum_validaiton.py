@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.index_packets import MetadataPacket, VectorPacket
 from src.vecraft.data.exception import ChecksumValidationFailureError
 from src.vecraft.data.query_packet import QueryPacket
@@ -13,8 +13,7 @@ class ChecksumValidationTests(unittest.TestCase):
     def test_data_packet_checksum_validation_failure(self):
         """Test that DataPacket throws ChecksumValidationFailureError when checksum validation fails."""
         # Create a valid DataPacket
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id="test1",
             original_data={"text": "test data"},
             vector=np.array([0.1, 0.2, 0.3, 0.4]),

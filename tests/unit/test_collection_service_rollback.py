@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.exception import MetadataIndexBuildingException, VectorIndexBuildingException, \
     StorageFailureException
 from src.vecraft.engine.collection_service import CollectionService
@@ -90,8 +90,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id="test1",
             original_data={"foo": "bar"},
             vector=vec,
@@ -123,8 +122,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id="test2",
             original_data={"foo": "bar"},
             vector=vec,
@@ -156,8 +154,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         # Prepare data for insert
         vec = np.ones(4, dtype=np.float32)
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id="test3",
             original_data={"foo": "bar"},
             vector=vec,
@@ -185,8 +182,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         vec = np.arange(4, dtype=np.float32)
         record_id = "test_delete_meta"
 
-        insert_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet = DataPacket.create_record(
             record_id=record_id,
             original_data={"x": 1},
             vector=vec,
@@ -202,10 +198,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         collection['meta_index'].delete = failing_delete
 
         # Attempt to delete, which should fail
-        delete_packet = DataPacket(
-            type=DataPacketType.TOMBSTONE,
-            record_id=record_id
-        )
+        delete_packet = DataPacket.create_tombstone(record_id=record_id)
 
         with self.assertRaises(MetadataIndexBuildingException):
             self.collection_service.delete(self.collection_name, delete_packet)
@@ -227,8 +220,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         vec = np.arange(4, dtype=np.float32)
         record_id = "test_delete_vec"
 
-        insert_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet = DataPacket.create_record(
             record_id=record_id,
             original_data={"x": 2},
             vector=vec,
@@ -244,10 +236,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         collection['vec_index'].delete = failing_delete
 
         # Attempt to delete, which should fail
-        delete_packet = DataPacket(
-            type=DataPacketType.TOMBSTONE,
-            record_id=record_id
-        )
+        delete_packet = DataPacket.create_tombstone(record_id=record_id)
 
         with self.assertRaises(VectorIndexBuildingException):
             self.collection_service.delete(self.collection_name, delete_packet)
@@ -271,8 +260,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         meta1 = {"tag": "orig"}
         record_id = "test_overwrite_meta"
 
-        insert_packet1 = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet1 = DataPacket.create_record(
             record_id=record_id,
             original_data=orig1,
             vector=vec1,
@@ -295,8 +283,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         orig2 = {"val": 2}
         meta2 = {"tag": "new"}
 
-        insert_packet2 = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet2 = DataPacket.create_record(
             record_id=record_id,
             original_data=orig2,
             vector=vec2,
@@ -326,8 +313,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         meta1 = {"flag": "keep"}
         record_id = "test_overwrite_vec"
 
-        insert_packet1 = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet1 = DataPacket.create_record(
             record_id=record_id,
             original_data=orig1,
             vector=vec1,
@@ -354,8 +340,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         orig2 = {"x": 99}
         meta2 = {"flag": "new"}
 
-        insert_packet2 = DataPacket(
-            type=DataPacketType.RECORD,
+        insert_packet2 = DataPacket.create_record(
             record_id=record_id,
             original_data=orig2,
             vector=vec2,

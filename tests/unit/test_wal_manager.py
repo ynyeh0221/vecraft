@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacketType, DataPacket
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.wal.wal_manager import WALManager
 
 
@@ -31,15 +31,13 @@ class TestWALManager(unittest.TestCase):
     def test_append(self, mock_flock):
         """Test appending entries to the WAL file."""
         test_entries = [
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             ),
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:123",
                 original_data={"name": "John Doe"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
@@ -69,8 +67,7 @@ class TestWALManager(unittest.TestCase):
     @patch('fcntl.flock')
     def test_append_with_phase(self, mock_flock):
         """Test appending entries with different phases."""
-        test_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        test_packet = DataPacket.create_record(
             record_id="user:123",
             original_data={"name": "John"},
             vector=np.array([0, 0, 0], dtype=np.float32),
@@ -104,15 +101,13 @@ class TestWALManager(unittest.TestCase):
     def test_replay(self, mock_flock):
         """Test replaying entries from the WAL file."""
         test_entries = [
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             ),
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:456",
                 original_data={"name": "John Doe"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
@@ -150,15 +145,13 @@ class TestWALManager(unittest.TestCase):
     def test_replay_uncommitted(self, mock_flock):
         """Test that uncommitted entries are not replayed."""
         test_entries = [
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
                 metadata={}
             ),
-            DataPacket(
-                type=DataPacketType.RECORD,
+            DataPacket.create_record(
                 record_id="user:456",
                 original_data={"name": "Jane"},
                 vector=np.array([0, 0, 0], dtype=np.float32),
@@ -190,8 +183,7 @@ class TestWALManager(unittest.TestCase):
     def test_clear(self):
         """Test clearing the WAL file."""
         # Append an entry to create the file
-        test_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        test_packet = DataPacket.create_record(
             record_id="test",
             original_data={},
             vector=np.array([0, 0, 0], dtype=np.float32),
@@ -240,8 +232,7 @@ class TestWALManager(unittest.TestCase):
         mock_file.fileno.return_value = 42
         mock_open.return_value.__enter__.return_value = mock_file
 
-        test_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        test_packet = DataPacket.create_record(
             record_id="test",
             original_data={},
             vector=np.array([0, 0, 0], dtype=np.float32),
@@ -268,8 +259,7 @@ class TestWALManager(unittest.TestCase):
         # Write valid entry followed by corrupted entry
         with open(self.wal_path, 'w', encoding='utf-8') as f:
             # Valid prepare entry
-            test_packet = DataPacket(
-                type=DataPacketType.RECORD,
+            test_packet = DataPacket.create_record(
                 record_id="user:123",
                 original_data={"name": "John"},
                 vector=np.array([0, 0, 0], dtype=np.float32),

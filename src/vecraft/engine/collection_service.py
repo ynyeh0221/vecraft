@@ -15,11 +15,11 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
-from src.vecraft.data.index_packets import LocationPacket, CollectionSchema
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.exception import VectorDimensionMismatchException, NullOrZeroVectorException, \
     ChecksumValidationFailureError, StorageFailureException, MetadataIndexBuildingException, \
     DocumentIndexBuildingException, VectorIndexBuildingException, TsnePlotGeneratingFailureException
+from src.vecraft.data.index_packets import LocationPacket, CollectionSchema
 from src.vecraft.data.query_packet import QueryPacket
 from src.vecraft.data.search_data_packet import SearchDataPacket
 from src.vecraft.engine.locks import ReentrantRWLock
@@ -243,7 +243,7 @@ class CollectionService:
             preimage = self._get_internal(name, data_packet.record_id, res['storage'])
         else:
             logger.debug(f"Record {data_packet.record_id} is new")
-            preimage = DataPacket(type=DataPacketType.NONEXISTENT, record_id=data_packet.record_id)
+            preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
 
         updated_storage = updated_meta = updated_vec = updated_doc = False
 
@@ -272,7 +272,7 @@ class CollectionService:
 
             # B) user metadata index
             try:
-                if preimage.type != DataPacketType.NONEXISTENT:
+                if not preimage.is_nonexistent():
                     logger.debug(f"Updating metadata index for record {data_packet.record_id}")
                     res['meta_index'].update(
                         preimage.to_metadata_packet(),
@@ -289,7 +289,7 @@ class CollectionService:
 
             # C) user document index
             try:
-                if preimage.type != DataPacketType.NONEXISTENT:
+                if not preimage.is_nonexistent():
                     logger.debug(f"Updating document index for record {data_packet.record_id}")
                     res['doc_index'].update(
                         preimage.to_document_packet(),
@@ -325,19 +325,19 @@ class CollectionService:
             if updated_vec:
                 logger.debug(f"Rolling back vector index changes")
                 res['vec_index'].delete(record_id=data_packet.record_id)
-                if preimage.type != DataPacketType.NONEXISTENT:
+                if not preimage.is_nonexistent():
                     res['vec_index'].add(preimage.to_vector_packet())
 
             if updated_doc:
                 logger.debug(f"Rolling back document index changes")
                 res['doc_index'].delete(data_packet.to_document_packet())
-                if preimage.type != DataPacketType.NONEXISTENT:
+                if not preimage.is_nonexistent():
                     res['doc_index'].add(preimage.to_document_packet())
 
             if updated_meta:
                 logger.debug(f"Rolling back metadata index changes")
                 res['meta_index'].delete(data_packet.to_metadata_packet())
-                if preimage.type != DataPacketType.NONEXISTENT:
+                if not preimage.is_nonexistent():
                     res['meta_index'].add(preimage.to_metadata_packet())
 
             if updated_storage and new_location:
@@ -361,7 +361,7 @@ class CollectionService:
         old_loc = res['storage'].get_record_location(record_id)
         if not old_loc:
             logger.warning(f"Attempted to delete non-existent record {record_id}")
-            return DataPacket(DataPacketType.NONEXISTENT, data_packet.record_id)
+            return DataPacket.create_nonexistent(data_packet.record_id)
 
         preimage = self.get(name, record_id)
 
@@ -613,7 +613,7 @@ class CollectionService:
 
         loc = storage.get_record_location(record_id)
         if not loc:
-            return DataPacket(type=DataPacketType.NONEXISTENT, record_id=record_id)
+            return DataPacket.create_nonexistent(record_id=record_id)
 
         data = storage.read(LocationPacket(record_id=record_id, offset=loc.offset, size=loc.size))
         data_packet = DataPacket.from_bytes(data)

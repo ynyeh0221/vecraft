@@ -7,17 +7,10 @@ from typing import Any, Dict, List, Union, Optional
 
 import numpy as np
 
+from src.vecraft.data.exception import ChecksumValidationFailureError, InvalidDataException
 from src.vecraft.data.index_packets import DocumentPacket, VectorPacket, _prepare_field_bytes, _concat_bytes, \
     get_checksum_func, ChecksumFunc, MetadataPacket
-from src.vecraft.data.exception import ChecksumValidationFailureError, InvalidDataException
 
-
-class DataPacketType(Enum):
-    RECORD = 1
-    TOMBSTONE = 2
-    NONEXISTENT = 3
-
-# Add constants at module level
 MAGIC_BYTES = b'VCRD'  # VeCraft Record Data
 FORMAT_VERSION = 1
 
@@ -40,6 +33,11 @@ class DataPacket:
         metadata (Optional[Dict[str, Any]]): Metadata associated with the record.
         checksum (str): Automatically calculated checksum for validating data integrity.
     """
+    class DataPacketType(Enum):
+        RECORD = 1
+        TOMBSTONE = 2
+        NONEXISTENT = 3
+
     type: DataPacketType
     record_id: str
     checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
@@ -62,7 +60,7 @@ class DataPacket:
             ValueError: If the field combination doesn't match the packet type requirements
         """
         # Validate field combinations based on type
-        if self.type == DataPacketType.RECORD:
+        if self.is_record():
             # For RECORD type: vector must be non-null, and at least one of metadata/document must be non-null
             if self.vector is None:
                 raise InvalidDataException("RECORD type DataPacket must have a non-null vector")
@@ -70,7 +68,7 @@ class DataPacket:
             if self.original_data is None and self.metadata is None:
                 raise InvalidDataException("RECORD type DataPacket must have at least one of original_data or metadata")
 
-        elif self.type in (DataPacketType.TOMBSTONE, DataPacketType.NONEXISTENT):
+        elif self.is_tombstone() or self.is_nonexistent():
             # For TOMBSTONE or NONEXISTENT: vector, metadata, and document must all be null
             if self.vector is not None:
                 raise InvalidDataException(f"{self.type.name} type DataPacket must have a null vector")
@@ -85,6 +83,52 @@ class DataPacket:
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
+
+    def is_record(self) -> bool:
+        return self.type == self.DataPacketType.RECORD
+
+    def is_tombstone(self) -> bool:
+        return self.type == self.DataPacketType.TOMBSTONE
+
+    def is_nonexistent(self) -> bool:
+        return self.type == self.DataPacketType.NONEXISTENT
+
+    @staticmethod
+    def create_record(record_id: str,
+                      checksum_algorithm: Union[str, ChecksumFunc] = 'sha256',
+                      original_data: Any = None,
+                      vector: Optional[np.ndarray] = None,
+                      metadata: Optional[Dict[str, Any]] = None) -> "DataPacket":
+        return DataPacket(
+            type=DataPacket.DataPacketType.RECORD,
+            record_id=record_id,
+            checksum_algorithm=checksum_algorithm,
+            original_data=original_data,
+            vector=vector,
+            metadata=metadata
+        )
+
+    @staticmethod
+    def create_tombstone(record_id: str, checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'):
+        return DataPacket(
+            type=DataPacket.DataPacketType.TOMBSTONE,
+            record_id=record_id,
+            checksum_algorithm=checksum_algorithm,
+            original_data=None,
+            vector=None,
+            metadata=None
+        )
+
+    @staticmethod
+    def create_nonexistent(record_id: str, checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'):
+        return DataPacket(
+            type=DataPacket.DataPacketType.NONEXISTENT,
+            record_id=record_id,
+            checksum_algorithm=checksum_algorithm,
+            original_data=None,
+            vector=None,
+            metadata=None
+        )
 
     def _serialize_for_checksum(self) -> bytes:
         """
@@ -170,7 +214,7 @@ class DataPacket:
             vector = None
 
         # Convert string back to enum for the 'type' field
-        packet_type = DataPacketType[d['type']] if isinstance(d['type'], str) else d['type']
+        packet_type = DataPacket.DataPacketType[d['type']] if isinstance(d['type'], str) else d['type']
 
         packet = cls(
             type=packet_type,
@@ -249,11 +293,12 @@ class DataPacket:
         checksum_bytes = data[pos:pos + checksum_size]
         stored_checksum = str(checksum_bytes, 'utf-8')
 
-        data_packet = DataPacket(type=DataPacketType.RECORD,
-                                 record_id=returned_record_id,
-                                 original_data=json.loads(orig_bytes.decode('utf-8')),
-                                 vector=np.frombuffer(vec_bytes, dtype=np.float32),
-                                 metadata=json.loads(meta_bytes.decode('utf-8')))
+        data_packet = DataPacket.create_record(
+            record_id=returned_record_id,
+            original_data=json.loads(orig_bytes.decode('utf-8')),
+            vector=np.frombuffer(vec_bytes, dtype=np.float32),
+            metadata=json.loads(meta_bytes.decode('utf-8'))
+        )
 
         if stored_checksum != data_packet.checksum:
             error_message = f"Record id {data_packet.record_id}'s stored checksum {stored_checksum} does not match reconstructed checksum {data_packet.checksum}"

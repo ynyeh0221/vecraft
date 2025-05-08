@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.data_packet import DataPacketType, DataPacket
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.data.index_packets import CollectionSchema
 from src.vecraft.data.query_packet import QueryPacket
@@ -44,8 +44,7 @@ class TestVecraftClient(unittest.TestCase):
             idx, data, vec = args
             preimage = self.client.insert(
                 collection=collection,
-                packet=DataPacket(
-                    type=DataPacketType.RECORD,
+                packet=DataPacket.create_record(
                     record_id=str(idx),
                     vector=vec,
                     original_data=data,
@@ -96,8 +95,7 @@ class TestVecraftClient(unittest.TestCase):
             idx, vec, data = args
             preimage = self.client.insert(
                 collection=collection,
-                packet=DataPacket(
-                    type=DataPacketType.RECORD,
+                packet=DataPacket.create_record(
                     record_id=str(idx),
                     vector=vec,
                     original_data=data,
@@ -152,8 +150,7 @@ class TestVecraftClient(unittest.TestCase):
         # Insert the record
         preimage = self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id="id1",
                 vector=original_vector,
                 original_data=original_data,
@@ -181,8 +178,7 @@ class TestVecraftClient(unittest.TestCase):
         # Update with same ID
         self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id=preimage.record_id,
                 vector=updated_vector,
                 original_data=updated_data,
@@ -250,8 +246,7 @@ class TestVecraftClient(unittest.TestCase):
         for i in range(batch_size):
             preimage = self.client.insert(
                 collection=collection,
-                packet=DataPacket(
-                    type=DataPacketType.RECORD,
+                packet=DataPacket.create_record(
                     record_id=str(i),
                     vector=vectors[i],
                     original_data=records[i],
@@ -344,8 +339,7 @@ class TestVecraftClient(unittest.TestCase):
             vec = rng.random(32).astype(np.float32)
             rec_id = self.client.insert(
                 collection=collection,
-                packet=DataPacket(
-                    type=DataPacketType.RECORD,
+                packet=DataPacket.create_record(
                     record_id=str(idx),
                     vector=vec,
                     original_data=data,
@@ -415,8 +409,7 @@ class TestVecraftClient(unittest.TestCase):
         initial_vector = rng.random(32).astype(np.float32)
         preimage = self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id="id1",
                 vector=initial_vector,
                 original_data=initial_data,
@@ -431,8 +424,7 @@ class TestVecraftClient(unittest.TestCase):
             try:
                 self.client.insert(
                     collection=collection,
-                    packet=DataPacket(
-                        type=DataPacketType.RECORD,
+                    packet=DataPacket.create_record(
                         record_id=preimage.record_id,
                         vector=vec,
                         original_data=data,
@@ -476,8 +468,7 @@ class TestVecraftClient(unittest.TestCase):
         special_vec = rng.random(8).astype(np.float32)
         preimage = self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id="id1",
                 vector=special_vec,
                 original_data=special_data,
@@ -506,8 +497,7 @@ class TestVecraftClient(unittest.TestCase):
         large_vec = rng.random(4).astype(np.float32)
         preimage = self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id="id1",
                 vector=large_vec,
                 original_data={"text": "large_meta"},
@@ -556,8 +546,7 @@ class TestVecraftClient(unittest.TestCase):
 
             rec_id = self.client.insert(
                 collection=collection,
-                packet=DataPacket(
-                    type=DataPacketType.RECORD,
+                packet=DataPacket.create_record(
                     record_id=str(i),
                     vector=vec,
                     original_data=data,
@@ -628,8 +617,7 @@ class TestVecraftClient(unittest.TestCase):
         # Insert the valid record
         record_id = self.client.insert(
             collection=collection,
-            packet=DataPacket(
-                type=DataPacketType.RECORD,
+            packet=DataPacket.create_record(
                 record_id="test1",
                 vector=vector,
                 original_data=data,

@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.vecraft.catalog.sqlite_catalog import SqliteCatalog
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
-from src.vecraft.data.index_packets import CollectionSchema
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft.data.index_packets import CollectionSchema
 from src.vecraft.data.query_packet import QueryPacket
 from src.vecraft.data.search_data_packet import SearchDataPacket
 from src.vecraft.engine.vector_db import VectorDB
@@ -170,7 +170,7 @@ class VecraftClient:
         plan = self.planner.plan_get(collection, record_id)
         result = self.executor.execute(plan)
 
-        if result.type == DataPacketType.NONEXISTENT:
+        if result.is_nonexistent():
             raise RecordNotFoundError(f"Record '{record_id}' not found in collection '{collection}'")
 
         # Verify that the returned record is the one which we request
@@ -202,7 +202,7 @@ class VecraftClient:
             RecordNotFoundError: If the record doesn't exist
             ChecksumValidationFailureError: If checksum validation fails
         """
-        packet = DataPacket(type=DataPacketType.TOMBSTONE, record_id=record_id)
+        packet = DataPacket.create_tombstone(record_id=record_id)
         plan = self.planner.plan_delete(collection=collection, data_packet=packet)
         preimage = self.executor.execute(plan)
 

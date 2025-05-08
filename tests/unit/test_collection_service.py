@@ -14,7 +14,7 @@ from src.vecraft.core.user_doc_index_interface import DocIndexInterface
 from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft.core.vector_index_interface import VectorPacket, Vector, Index
 from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.data_packet import DataPacket, DataPacketType
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.index_packets import MetadataPacket, DocumentPacket, LocationPacket, CollectionSchema
 from src.vecraft.data.query_packet import QueryPacket
 from src.vecraft.engine.collection_service import CollectionService
@@ -363,8 +363,7 @@ class TestCollectionService(unittest.TestCase):
         record_id = "test1"
 
         # Create data packet
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id=record_id,
             original_data=original,
             vector=vec,
@@ -386,8 +385,7 @@ class TestCollectionService(unittest.TestCase):
         # Insert a record
         vec = np.array([0.1, 0.2, 0.3], dtype=np.float32)
         record_id = "test_delete"
-        data_packet = DataPacket(
-            type=DataPacketType.RECORD,
+        data_packet = DataPacket.create_record(
             record_id=record_id,
             original_data={"b": 2},
             vector=vec,
@@ -400,8 +398,7 @@ class TestCollectionService(unittest.TestCase):
         self.assertEqual(record_id, rec.record_id)
 
         # Delete it
-        delete_packet = DataPacket(
-            type=DataPacketType.TOMBSTONE,
+        delete_packet = DataPacket.create_tombstone(
             record_id=record_id
         )
         result = self.collection_service.delete(self.collection_name, delete_packet)
@@ -409,7 +406,7 @@ class TestCollectionService(unittest.TestCase):
 
         # Verify it's gone
         empty_rec = self.collection_service.get(self.collection_name, record_id)
-        self.assertEqual(DataPacketType.NONEXISTENT, empty_rec.type)
+        self.assertTrue(empty_rec.is_nonexistent())
 
     def test_search(self):
         # Insert test records
@@ -418,16 +415,14 @@ class TestCollectionService(unittest.TestCase):
         r1 = "record1"
         r2 = "record2"
 
-        self.collection_service.insert(self.collection_name, DataPacket(
-            type=DataPacketType.RECORD,
+        self.collection_service.insert(self.collection_name, DataPacket.create_record(
             record_id=r1,
             original_data={"x": 1},
             vector=v1,
             metadata={"tag": "a"}
         ))
 
-        self.collection_service.insert(self.collection_name, DataPacket(
-            type=DataPacketType.RECORD,
+        self.collection_service.insert(self.collection_name, DataPacket.create_record(
             record_id=r2,
             original_data={"y": 2},
             vector=v2,
@@ -457,8 +452,7 @@ class TestCollectionService(unittest.TestCase):
         def insert_item(val):
             record_id = f"concurrent{val}"
             vec = np.array([val, val, val], dtype=np.float32)
-            packet = DataPacket(
-                type=DataPacketType.RECORD,
+            packet = DataPacket.create_record(
                 record_id=record_id,
                 original_data={"v": val},
                 vector=vec,
@@ -489,8 +483,7 @@ class TestCollectionService(unittest.TestCase):
             for i in range(insert_count):
                 record_id = f"insert_search{i}"
                 vec = np.array([i, i, i], dtype=np.float32)
-                packet = DataPacket(
-                    type=DataPacketType.RECORD,
+                packet = DataPacket.create_record(
                     record_id=record_id,
                     original_data={"i": i},
                     vector=vec,
@@ -540,8 +533,7 @@ class TestCollectionService(unittest.TestCase):
         for i in range(5):
             record_id = f"concurrent_delete{i}"
             ids.append(record_id)
-            packet = DataPacket(
-                type=DataPacketType.RECORD,
+            packet = DataPacket.create_record(
                 record_id=record_id,
                 original_data={"x": i},
                 vector=np.array([i, i, i], dtype=np.float32),
@@ -551,8 +543,7 @@ class TestCollectionService(unittest.TestCase):
 
         # Delete concurrently
         def delete_item(rid):
-            delete_packet = DataPacket(
-                type=DataPacketType.TOMBSTONE,
+            delete_packet = DataPacket.create_tombstone(
                 record_id=rid
             )
             self.collection_service.delete(self.collection_name, delete_packet)
@@ -565,15 +556,14 @@ class TestCollectionService(unittest.TestCase):
 
         # Verify all deleted
         for rid in ids:
-            self.assertEqual(DataPacketType.NONEXISTENT, self.collection_service.get(self.collection_name, rid).type)
+            self.assertTrue(self.collection_service.get(self.collection_name, rid).is_nonexistent())
 
     def test_filter_by_document_no_match(self):
         # Insert record
         v = np.array([0, 0, 0], dtype=np.float32)
         record_id = "doc_filter_test"
 
-        packet = DataPacket(
-            type=DataPacketType.RECORD,
+        packet = DataPacket.create_record(
             record_id=record_id,
             original_data={"text": "hello"},
             vector=v,
@@ -595,8 +585,7 @@ class TestCollectionService(unittest.TestCase):
         vec = np.array([4, 4, 4], dtype=np.float32)
         record_id = "flush_test"
 
-        packet = DataPacket(
-            type=DataPacketType.RECORD,
+        packet = DataPacket.create_record(
             record_id=record_id,
             original_data={"b": 2},
             vector=vec,
@@ -620,16 +609,14 @@ class TestCollectionService(unittest.TestCase):
         r1 = "tsne_test1"
         r2 = "tsne_test2"
 
-        self.collection_service.insert(self.collection_name, DataPacket(
-            type=DataPacketType.RECORD,
+        self.collection_service.insert(self.collection_name, DataPacket.create_record(
             record_id=r1,
             original_data={"x": 1},
             vector=v1,
             metadata={}
         ))
 
-        self.collection_service.insert(self.collection_name, DataPacket(
-            type=DataPacketType.RECORD,
+        self.collection_service.insert(self.collection_name, DataPacket.create_record(
             record_id=r2,
             original_data={"y": 2},
             vector=v2,
