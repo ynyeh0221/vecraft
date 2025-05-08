@@ -28,6 +28,50 @@ class TestVecraftClient(unittest.TestCase):
         # Clean up the temporary directory
         shutil.rmtree(self.test_dir)
 
+    def test_persistence_across_restarts(self):
+        """Verify that records are reconstructed correctly after restarting the client."""
+        collection = "persist_collection"
+        # Create collection if needed
+        if collection not in self.client.list_collections():
+            self.client.create_collection(
+                CollectionSchema(name=collection, dim=16, vector_type="float32")
+            )
+
+        # Insert a record
+        rng = np.random.default_rng(123)
+        original_data = {"msg": "hello persist"}
+        original_vector = rng.random(16).astype(np.float32)
+        preimage = self.client.insert(
+            collection=collection,
+            packet=DataPacket.create_record(
+                record_id="persist1",
+                vector=original_vector,
+                original_data=original_data,
+                metadata={"persist": True}
+            )
+        )
+
+        # Simulate restart by creating a fresh client against the same directory
+        new_client = VecraftClient(root=str(self.test_dir))
+
+        # Fetch via get()
+        fetched = new_client.get(collection, preimage.record_id)
+        self.assertEqual(fetched.original_data, original_data)
+        self.assertEqual(fetched.metadata, {"persist": True})
+
+        # Zero-distance search check
+        results = new_client.search(
+            collection=collection,
+            packet=QueryPacket(
+                query_vector=original_vector,
+                k=1
+            )
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].data_packet.record_id, preimage.record_id)
+        self.assertTrue(np.isclose(results[0].distance, 0.0))
+
+
     def test_insert_search_and_fetch_consistency(self):
         collection = "consistency_collection"
         if collection not in self.client.list_collections():

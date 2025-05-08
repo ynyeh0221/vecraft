@@ -1,4 +1,5 @@
 import fcntl
+import logging
 import mmap
 import os
 import struct
@@ -13,6 +14,9 @@ from src.vecraft.data.index_packets import LocationPacket
 STATUS_UNCOMMITTED = 0
 STATUS_COMMITTED = 1
 
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 class MMapStorage(StorageEngine):
     """
@@ -40,15 +44,18 @@ class MMapStorage(StorageEngine):
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ if read_only else mmap.ACCESS_WRITE)
 
     def _open_file(self):
-        if self._read_only:
-            f = self._path.open('rb')
-            # Acquire shared lock for read-only access
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
-        else:
-            f = self._path.open('a+b')
+        mode = 'rb' if self._read_only else 'a+b'
+        f = self._path.open(mode)
+        # Attempt file lock, but don’t fail if it’s already held
+        try:
+            flags = fcntl.LOCK_SH if self._read_only else fcntl.LOCK_EX
+            fcntl.flock(f.fileno(), flags | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.warning(
+                f"Could not acquire {'shared' if self._read_only else 'exclusive'} lock on {self._path}, proceeding without lock")
+        # Ensure file pointer is at start for mmap
+        if not self._read_only:
             f.seek(0)
-            # Acquire exclusive lock for write access
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return f
 
     def _resize_file(self, new_size: int):

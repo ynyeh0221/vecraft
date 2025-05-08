@@ -1,6 +1,5 @@
 import logging
 import os
-import pickle
 import threading
 import time
 from pathlib import Path
