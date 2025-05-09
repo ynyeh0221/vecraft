@@ -259,14 +259,13 @@ class DataPacket:
 
     @staticmethod
     def from_bytes(data: bytes) -> 'DataPacket':
-        # existing from_bytes implementation
         magic, version, rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
             HEADER_FORMAT, data[:HEADER_SIZE]
         )
         if magic != MAGIC_BYTES:
-            raise ValueError(f"Invalid magic bytes: expected {MAGIC_BYTES}, got {magic}")
+            raise InvalidDataException(f"Invalid magic bytes: expected {MAGIC_BYTES}, got {magic}")
         if version != FORMAT_VERSION:
-            raise ValueError(f"Unsupported format version: {version}")
+            raise InvalidDataException(f"Unsupported format version: {version}")
         pos = HEADER_SIZE
         record_id = data[pos:pos + rid_len].decode('utf-8')
         pos += rid_len

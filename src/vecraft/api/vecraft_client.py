@@ -11,7 +11,7 @@ planned and then executed, with built-in checksum validation for data integrity.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.vecraft.catalog.sqlite_catalog import SqliteCatalog
+from src.vecraft.catalog.sqlite_based_catalog import SqliteCatalog
 from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft.data.index_packets import CollectionSchema

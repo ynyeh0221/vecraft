@@ -229,7 +229,6 @@ class StorageFailureException(Exception):
             return f"{self.message} ({', '.join(details)})"
         return self.message
 
-
 class VectorIndexBuildingException(Exception):
     """
     Exception raised when there's an internal error while constructing

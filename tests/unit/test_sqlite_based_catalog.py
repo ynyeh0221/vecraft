@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import unittest
 
-from src.vecraft.catalog.sqlite_catalog import SqliteCatalog
+from src.vecraft.catalog.sqlite_based_catalog import SqliteCatalog
 from src.vecraft.data.index_packets import CollectionSchema
 from src.vecraft.data.exception import CollectionNotExistedException, CollectionAlreadyExistedException
 

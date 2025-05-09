@@ -6,7 +6,7 @@ from src.vecraft.core.storage_engine_interface import StorageIndexEngine
 from src.vecraft.data.exception import ChecksumValidationFailureError, StorageFailureException
 from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.storage.data.file_mmap import MMapStorage
-from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
+from src.vecraft.storage.index.sqlite_based_location_index import SQLiteRecordLocationIndex
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -68,8 +68,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         return actual_offset
 
     def write(self, data: bytes, location_item: LocationPacket) -> int:
-        """Write to storage with existing location info."""
-        return self._storage.write(data, location_item)
+        raise ValueError(f"Please use write_and_index instead")
 
     def read(self, location_item: LocationPacket) -> bytes:
         return self._storage.read(location_item)

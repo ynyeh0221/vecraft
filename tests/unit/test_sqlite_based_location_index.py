@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from src.vecraft.data.index_packets import LocationPacket
-from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
+from src.vecraft.storage.index.sqlite_based_location_index import SQLiteRecordLocationIndex
 
 
 class TestSQLiteRecordLocationIndex(unittest.TestCase):
