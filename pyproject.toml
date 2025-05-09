@@ -18,5 +18,8 @@ dependencies = [
 where = ["."]
 include = ["src", "src.*"]
 
+[tool.poetry.dependencies]
+python = "^3.11"
+
 [project.scripts]
 vecraft = "src.vecraft_cli.vecraft_cli:entry_point"

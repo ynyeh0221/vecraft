@@ -1,8 +1,9 @@
 import fcntl
 import json
 import os
+from collections import defaultdict
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Tuple, List, Dict
 
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.exception import InvalidDataException
@@ -55,46 +56,53 @@ class WALManager(WALInterface):
         replay_file = self._file.with_suffix(".replay")
         self._file.rename(replay_file)
 
-        committed_records = []  # List to preserve order
-        pending_operations = {}  # Change to list of operations per record_id
-        count = 0
-
         try:
-            with open(replay_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                        phase = entry.get("_phase", "prepare")
-
-                        if phase == "commit":
-                            record_id = entry["record_id"]
-                            if record_id not in committed_records:
-                                committed_records.append(record_id)
-                        else:
-                            # Store all prepare operations in order
-                            record_id = entry.get("record_id")
-                            if record_id not in pending_operations:
-                                pending_operations[record_id] = []
-                            pending_operations[record_id].append(entry)
-                    except json.JSONDecodeError:
-                        raise InvalidDataException(f"Corrupted WAL entry detected: {line}")
-
-            # Replay all operations for committed records in order
-            for record_id in committed_records:
-                if record_id in pending_operations:
-                    # Replay all prepare operations for this record
-                    for operation in pending_operations[record_id]:
-                        handler(operation)
-                        count += 1
-
-            # Success - delete the replay file
+            committed, pending = self._load_entries(replay_file)
+            count = self._apply_committed(committed, pending, handler)
             replay_file.unlink()
-
         except Exception:
-            # Restore WAL on any error
             replay_file.rename(self._file)
             raise
 
+        return count
+
+    def _load_entries(self, replay_file) -> Tuple[List[str], Dict[str, List[dict]]]:
+        committed = []
+        pending = defaultdict(list)
+
+        with open(replay_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                entry = self._parse_line(line)
+                if entry["_phase"] == "commit":
+                    rid = entry["record_id"]
+                    if rid not in committed:
+                        committed.append(rid)
+                else:
+                    rid = entry.get("record_id")
+                    pending[rid].append(entry)
+
+        return committed, pending
+
+    def _parse_line(self, line: str) -> dict:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            raise InvalidDataException(f"Corrupted WAL entry detected: {line!r}")
+        # ensure every entry has a phase
+        entry.setdefault("_phase", "prepare")
+        return entry
+
+    def _apply_committed(
+        self,
+        committed: List[str],
+        pending: Dict[str, List[dict]],
+        handler: Callable[[dict], None]
+    ) -> int:
+        count = 0
+        for rid in committed:
+            for entry in pending.get(rid, ()):
+                handler(entry)
+                count += 1
         return count
 
     def clear(self) -> None:
