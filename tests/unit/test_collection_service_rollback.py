@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from src.vecraft_db.catalog.json_catalog import JsonCatalog
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.exception import StorageFailureException, MetadataIndexBuildingException, \
     VectorIndexBuildingException
+from src.vecraft_db.core.interface.catalog_interface import Catalog
 from src.vecraft_db.engine.collection_service import CollectionService
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
@@ -46,7 +46,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
             return self.doc_index
 
         # Mock catalog
-        self.catalog = MagicMock(spec=JsonCatalog)
+        self.catalog = MagicMock(spec=Catalog)
         self.schema = DummySchema(dim=4)
         self.catalog.get_schema.return_value = self.schema
 

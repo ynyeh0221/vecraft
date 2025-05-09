@@ -8,11 +8,11 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft_db.catalog.json_catalog import JsonCatalog
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.index_packets import LocationPacket, VectorPacket, Vector, MetadataPacket, \
     DocumentPacket, CollectionSchema
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
+from src.vecraft_db.core.interface.catalog_interface import Catalog
 from src.vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
 from src.vecraft_db.core.interface.user_doc_index_interface import DocIndexInterface
 from src.vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
@@ -342,7 +342,7 @@ class TestCollectionService(unittest.TestCase):
             return DummyDocIndex()
 
         # Mock catalog
-        self.catalog = MagicMock(spec=JsonCatalog)
+        self.catalog = MagicMock(spec=Catalog)
         self.schema = DummySchema(dim=3)
         self.catalog.get_schema.return_value = self.schema
 
