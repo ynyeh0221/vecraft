@@ -1,7 +1,7 @@
 import pickle
 from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
-from typing import Any, Dict, Set, Optional
+from typing import Any, Dict, Set, Optional, Tuple, List
 
 from src.vecraft_db.core.data_model.index_packets import MetadataPacket
 from src.vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
@@ -79,53 +79,85 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
     def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
         """
         Return IDs matching filter conditions. Supports:
-        - equality: field: value
-        - $in:    field: {"$in": [v1, v2]}
-        - range:  field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
+        - equality:     field: value
+        - $in:          field: {"$in": [v1, v2]}
+        - range:        field: {"$gte": low, "$lte": high, "$gt": low2, "$lt": high2}
 
-        Returns None if unable to use record_vector effectively.
+        Returns empty set if no matches; None only if `where` is empty.
         """
-        result_ids = None
+        result_ids: Optional[Set[str]] = None
 
         for field, cond in where.items():
-            ids = set()
-
-            # simple equality
-            if not isinstance(cond, dict):
-                ids = set(self._eq_index[field].get(cond, []))
-
-            else:
-                # handle $in
-                if "$in" in cond:
-                    for v in cond["$in"]:
-                        ids |= self._eq_index[field].get(v, set())
-
-                # only perform a range scan if there's a range operator present
-                if any(k in cond for k in ("$gte", "$gt", "$lte", "$lt")):
-                    low = cond.get("$gte") if "$gte" in cond else cond.get("$gt")
-                    high = cond.get("$lte") if "$lte" in cond else cond.get("$lt")
-
-                    lst = self._range_index[field]
-                    start = bisect_left(lst, (low, "")) if low is not None else 0
-                    end = bisect_right(lst, (high, chr(255))) if high is not None else len(lst)
-
-                    for val, rid in lst[start:end]:
-                        if "$gt" in cond and val <= cond["$gt"]:
-                            continue
-                        if "$lt" in cond and val >= cond["$lt"]:
-                            continue
-                        ids.add(rid)
-
-            # if no matches at all, shortcut to empty set
+            ids = self._ids_for_condition(field, cond)
             if not ids:
                 return set()
-
-            # intersect with previous fields’ results
-            result_ids = ids if result_ids is None else (result_ids & ids)
+            result_ids = ids if result_ids is None else result_ids & ids
             if not result_ids:
                 return set()
 
         return result_ids
+
+    def _ids_for_condition(self, field: str, cond: Any) -> Set[str]:
+        """Dispatch to the right matcher based on whether `cond` is a dict."""
+        if not isinstance(cond, dict):
+            return self._eq_ids(field, cond)
+        ids = set()
+        ids |= self._in_ids(field, cond)
+        ids |= self._range_ids(field, cond)
+        return ids
+
+    def _eq_ids(self, field: str, value: Any) -> Set[str]:
+        """Simple equality lookup."""
+        return set(self._eq_index[field].get(value, []))
+
+    def _in_ids(self, field: str, cond: Dict[str, Any]) -> Set[str]:
+        """Handle a {"$in": [...]} clause (or return empty set)."""
+        values = cond.get("$in")
+        if not values:
+            return set()
+        ids: Set[str] = set()
+        for v in values:
+            ids |= set(self._eq_index[field].get(v, []))
+        return ids
+
+    def _range_ids(self, field: str, cond: Dict[str, Any]) -> Set[str]:
+        """
+        Handle any of $gte, $gt, $lte, $lt in a single pass over the sorted list.
+        """
+        if not any(op in cond for op in ("$gte", "$gt", "$lte", "$lt")):
+            return set()
+
+        lst: List[Tuple[Any, str]] = self._range_index[field]
+        low, high = self._compute_bounds(cond)
+        start = bisect_left(lst, (low, "")) if low is not None else 0
+        end = bisect_right(lst, (high, chr(255))) if high is not None else len(lst)
+
+        results: Set[str] = set()
+        for val, rid in lst[start:end]:
+            if self._violates_strict_bounds(val, cond):
+                continue
+            results.add(rid)
+        return results
+
+    def _compute_bounds(self, cond: Dict[str, Any]) -> Tuple[Any, Any]:
+        """
+        Determine the non-strict bounds for slicing.
+        Uses $gte as low when present, else $gt;
+        uses $lte as high when present, else $lt.
+        """
+        low = cond.get("$gte", cond.get("$gt"))
+        high = cond.get("$lte", cond.get("$lt"))
+        return low, high
+
+    def _violates_strict_bounds(self, val: Any, cond: Dict[str, Any]) -> bool:
+        """
+        Check strict inequalities ($gt, $lt) that can't be handled by the slice.
+        """
+        if "$gt" in cond and val <= cond["$gt"]:
+            return True
+        if "$lt" in cond and val >= cond["$lt"]:
+            return True
+        return False
 
     def serialize(self) -> bytes:
         """
