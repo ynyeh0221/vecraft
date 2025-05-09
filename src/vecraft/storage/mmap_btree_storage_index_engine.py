@@ -3,11 +3,10 @@ from pathlib import Path
 from typing import Optional, Dict, List
 
 from src.vecraft.core.storage_engine_interface import StorageIndexEngine
-from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.data.exception import ChecksumValidationFailureError, StorageFailureException
+from src.vecraft.data.index_packets import LocationPacket
 from src.vecraft.storage.data.file_mmap import MMapStorage
 from src.vecraft.storage.index.btree_based_location_index import SQLiteRecordLocationIndex
-
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -116,7 +115,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         logger.debug(f"all_records_in_index: {all_records_in_index}")
 
         # Find uncommitted records in file
-        for record_id, (offset, size, is_committed) in all_records_in_file.items():
+        for record_id, (location_packet, is_committed) in all_records_in_file.items():
             if not is_committed:
                 # This record is uncommitted
                 if record_id in all_records_in_index:
@@ -125,10 +124,10 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
                     self._loc_index.delete_record(record_id)
 
                 # Mark the storage location as invalid
-                self._storage.mark_as_deleted(offset)
+                self._storage.mark_as_deleted(location_packet.offset)
 
                 orphaned.append(record_id)
-                logger.warning(f"Found uncommitted record {record_id} at offset {offset}")
+                logger.warning(f"Found uncommitted record {record_id} at offset {location_packet.offset}")
 
         # Find records in index but not in file (or at wrong locations)
         for record_id, location in all_records_in_index.items():
@@ -140,23 +139,21 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
                 logger.warning(f"Found indexed record {record_id} not present in storage")
             else:
                 # Verify the offset matches
-                file_offset, file_size, _ = all_records_in_file[record_id]
-                if file_offset != location.offset or file_size != location.size:
+                file_location, _ = all_records_in_file[record_id]
+                if file_location.offset != location.offset or file_location.size != location.size:
                     # Mismatch between index and actual file location
                     self._loc_index.mark_deleted(record_id)
                     self._loc_index.delete_record(record_id)
                     orphaned.append(record_id)
                     logger.warning(
-                        f"Found record {record_id} at wrong location - index: {location.offset}, file: {file_offset}")
+                        f"Found record {record_id} at wrong location - index: {location.offset}, file: {file_location.offset}")
 
         # Find orphaned blocks (in file but not in index)
-        for record_id, (offset, size, is_committed) in all_records_in_file.items():
+        for record_id, (location_packet, is_committed) in all_records_in_file.items():
             if record_id not in all_records_in_index and is_committed:
                 # This is a committed record that's not in the index
                 # This shouldn't happen in normal operation, but could occur after corruption
-                logger.warning(f"Found orphaned committed record {record_id} at offset {offset} not in index")
-                # Optionally add it back to index
-                # self._loc_index.add_record(LocationItem(record_id=record_id, offset=offset, size=size))
+                logger.warning(f"Found orphaned committed record {record_id} at offset {location_packet.offset} not in index")
 
         if orphaned:
             logger.warning(f"Found {len(orphaned)} total inconsistent records: {orphaned}")

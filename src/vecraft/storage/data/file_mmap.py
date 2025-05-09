@@ -120,7 +120,7 @@ class MMapStorage(StorageEngine):
         location_item.validate_checksum()
         return result
 
-    def scan_all_records(self) -> Dict[str, Tuple[int, int, bool]]:
+    def scan_all_records(self) -> Dict[str, Tuple[LocationPacket, bool]]:
         """
         Comprehensive scan of the entire file to find all records.
 
@@ -136,7 +136,7 @@ class MMapStorage(StorageEngine):
         HEADER_FORMAT = '<5I'
         HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
-        all_records: Dict[str, Tuple[int, int, bool]] = {}
+        all_records: Dict[str, Tuple[LocationPacket, bool]] = {}
         data_len = len(self._mmap)
         offset = 0
 
@@ -186,7 +186,7 @@ class MMapStorage(StorageEngine):
             record_id = rid_bytes.decode('utf-8', errors='ignore')
 
             is_committed = (status == STATUS_COMMITTED)
-            all_records[record_id] = (offset, record_size, is_committed)
+            all_records[record_id] = (LocationPacket(record_id=record_id, offset=offset, size=record_size), is_committed)
 
             # skip over [status + entire packet]
             offset += 1 + record_size
