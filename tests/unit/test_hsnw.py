@@ -5,10 +5,10 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.core.vector_index_interface import VectorPacket
-from src.vecraft.data.exception import VectorDimensionMismatchException, UnsupportedMetricException
-from src.vecraft.vector_index.hnsw import DistanceMetric, HNSW
-from src.vecraft.vector_index.id_mapper import IdMapper
+from src.vecraft_db.core.data_model.exception import UnsupportedMetricException, VectorDimensionMismatchException
+from src.vecraft_db.core.data_model.index_packets import VectorPacket
+from src.vecraft_db.index.vector.hnsw import DistanceMetric, HNSW
+from src.vecraft_db.index.vector.id_mapper import IdMapper
 
 
 class TestHNSW(unittest.TestCase):

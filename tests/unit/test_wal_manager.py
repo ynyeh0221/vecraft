@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.wal.wal_manager import WALManager
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.wal.wal_manager import WALManager
 
 
 class TestWALManager(unittest.TestCase):

@@ -7,11 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from src.vecraft.api.vecraft_client import VecraftClient
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.data.exception import RecordNotFoundError, ChecksumValidationFailureError
-from src.vecraft.data.index_packets import CollectionSchema
-from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft_client.vecraft_client import VecraftClient
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.core.data_model.exception import RecordNotFoundError, ChecksumValidationFailureError
+from src.vecraft_db.core.data_model.index_packets import CollectionSchema
+from src.vecraft_db.core.data_model.query_packet import QueryPacket
 
 
 class TestVecraftClient(unittest.TestCase):
@@ -313,7 +313,7 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": ["even"]}
             )
         )
-        self.assertTrue(len(even_results) > 0)
+        self.assertGreater(len(even_results), 0)
 
         odd_results = self.client.search(
             collection=collection,
@@ -323,7 +323,7 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": ["odd"]}
             )
         )
-        self.assertTrue(len(odd_results) > 0)
+        self.assertGreater(len(odd_results), 0)
 
         # Batch delete even records
         for i, rec_id in enumerate(record_ids):
@@ -359,7 +359,7 @@ class TestVecraftClient(unittest.TestCase):
                 where={"tags": ["odd"]}
             )
         )
-        self.assertTrue(len(odd_results_after) > 0)
+        self.assertGreater(len(odd_results_after), 0)
 
     def test_complex_filtering_consistency(self):
         """Test complex filtering scenarios (multiple tags, nested conditions)."""
@@ -482,12 +482,12 @@ class TestVecraftClient(unittest.TestCase):
         # Run concurrent updates
         num_updates = 10
         with ThreadPoolExecutor(max_workers=5) as pool:
-            results = list(pool.map(update_task, range(1, num_updates + 1)))
+            list(pool.map(update_task, range(1, num_updates + 1)))
 
         # Verify record exists and has been updated
         final_record = self.client.get(collection, preimage.record_id)
         self.assertIsNotNone(final_record)
-        self.assertTrue(final_record.original_data["version"] > 0)
+        self.assertGreater(final_record.original_data["version"], 0)
 
         # The final version should be from one of our updates
         self.assertTrue(any(final_record.original_data["version"] == i for i in range(1, num_updates + 1)))
@@ -642,7 +642,7 @@ class TestVecraftClient(unittest.TestCase):
         print(f"Performed 3 searches in {search_time:.2f} seconds")
 
         # Assertions to verify functionality
-        self.assertTrue(len(results) <= 10)
+        self.assertLessEqual(len(results), 10)
         self.assertTrue(all(r.data_packet.metadata["category"] == "electronics" for r in filtered_results))
         self.assertTrue(all(r.data_packet.metadata["category"] == "electronics" and
                             r.data_packet.metadata["price_range"] == "high" for r in complex_results))
@@ -659,7 +659,7 @@ class TestVecraftClient(unittest.TestCase):
         data = {"text": "valid data"}
 
         # Insert the valid record
-        record_id = self.client.insert(
+        self.client.insert(
             collection=collection,
             packet=DataPacket.create_record(
                 record_id="test1",

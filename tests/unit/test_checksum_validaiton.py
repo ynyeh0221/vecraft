@@ -2,10 +2,10 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.data.index_packets import MetadataPacket, VectorPacket
-from src.vecraft.data.exception import ChecksumValidationFailureError
-from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError
+from src.vecraft_db.core.data_model.index_packets import VectorPacket, MetadataPacket
+from src.vecraft_db.core.data_model.query_packet import QueryPacket
 
 
 class ChecksumValidationTests(unittest.TestCase):
@@ -24,7 +24,6 @@ class ChecksumValidationTests(unittest.TestCase):
         self.assertTrue(data_packet.validate_checksum())
 
         # Tamper with the data without updating checksum
-        original_checksum = data_packet.checksum
         data_packet.original_data = {"text": "tampered data"}
 
         # Validation should now fail with exception
@@ -48,7 +47,6 @@ class ChecksumValidationTests(unittest.TestCase):
         self.assertTrue(query_packet.validate_checksum())
 
         # Tamper with the query vector without updating checksum
-        original_checksum = query_packet.checksum
         query_packet.query_vector = np.array([0.5, 0.6, 0.7, 0.8])
 
         # Validation should now fail with exception

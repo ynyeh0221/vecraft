@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.data.query_packet import QueryPacket
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.core.data_model.query_packet import QueryPacket
 
 
 class TestPackets(unittest.TestCase):

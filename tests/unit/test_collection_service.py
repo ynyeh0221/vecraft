@@ -8,16 +8,17 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 
-from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.core.storage_engine_interface import StorageIndexEngine
-from src.vecraft.core.user_doc_index_interface import DocIndexInterface
-from src.vecraft.core.user_metadata_index_interface import MetadataIndexInterface
-from src.vecraft.core.vector_index_interface import VectorPacket, Vector, Index
-from src.vecraft.core.wal_interface import WALInterface
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.data.index_packets import MetadataPacket, DocumentPacket, LocationPacket, CollectionSchema
-from src.vecraft.data.query_packet import QueryPacket
-from src.vecraft.engine.collection_service import CollectionService
+from src.vecraft_db.catalog.json_catalog import JsonCatalog
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.core.data_model.index_packets import LocationPacket, VectorPacket, Vector, MetadataPacket, \
+    DocumentPacket, CollectionSchema
+from src.vecraft_db.core.data_model.query_packet import QueryPacket
+from src.vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
+from src.vecraft_db.core.interface.user_doc_index_interface import DocIndexInterface
+from src.vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
+from src.vecraft_db.core.interface.vector_index_interface import Index
+from src.vecraft_db.core.interface.wal_interface import WALInterface
+from src.vecraft_db.engine.collection_service import CollectionService
 
 
 # Dummy implementations for testing
@@ -50,7 +51,7 @@ class DummyStorage(StorageIndexEngine):
         except Exception as e:
             # For append-only storage, mark as deleted instead of zeroing
             self.mark_deleted(location_item.record_id)
-            raise Exception(f"Failed to update index, marked as deleted: {e}")
+            raise ValueError(f"Failed to update index, marked as deleted: {e}")
 
         return actual_offset
 
@@ -71,6 +72,7 @@ class DummyStorage(StorageIndexEngine):
         return bytes(self._buffer[location_item.offset:location_item.offset + location_item.size])
 
     def flush(self) -> None:
+        # Not used in this test
         pass
 
     def get_record_location(self, record_id) -> Optional[LocationPacket]:
@@ -136,9 +138,11 @@ class DummyVectorIndex(Index):
         return [(rid, 0.0) for rid in ids[:k]]
 
     def build(self, items: List[VectorPacket]) -> None:
+        # Not used in this test
         pass
 
     def get_ids(self) -> Set[str]:
+        # Not used in this test
         pass
 
     def get_all_ids(self):
@@ -601,7 +605,7 @@ class TestCollectionService(unittest.TestCase):
         self.assertTrue(os.path.exists(f"{self.collection_name}.metasnap"))
         self.assertTrue(os.path.exists(f"{self.collection_name}.docsnap"))
 
-    @patch('src.vecraft.engine.collection_service.generate_tsne')
+    @patch('src.vecraft_db.engine.collection_service.generate_tsne')
     def test_generate_tsne_plot(self, mock_tsne):
         # Insert test records
         v1 = np.array([1, 2, 3], dtype=np.float32)

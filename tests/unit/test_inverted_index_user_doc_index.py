@@ -2,8 +2,8 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from src.vecraft.data.index_packets import DocumentPacket
-from src.vecraft.user_doc_index.inverted_index_user_doc_index import InvertedIndexDocIndex
+from src.vecraft_db.core.data_model.index_packets import DocumentPacket
+from src.vecraft_db.index.user_data.inverted_index_user_doc_index import InvertedIndexDocIndex
 
 
 class TestInvertedIndexDocIndex(unittest.TestCase):
@@ -16,7 +16,7 @@ class TestInvertedIndexDocIndex(unittest.TestCase):
 
         # Patch the DocumentFilterEvaluator in the index module
         self.evaluator_patcher = patch(
-            'src.vecraft.user_doc_index.inverted_index_user_doc_index.DocumentFilterEvaluator',
+            'src.vecraft_db.index.user_data.inverted_index_user_doc_index.DocumentFilterEvaluator',
             return_value=self.mock_evaluator
         )
         self.evaluator_patcher.start()

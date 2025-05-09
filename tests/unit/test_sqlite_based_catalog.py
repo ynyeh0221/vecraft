@@ -3,9 +3,9 @@ import shutil
 import tempfile
 import unittest
 
-from src.vecraft.catalog.sqlite_based_catalog import SqliteCatalog
-from src.vecraft.data.index_packets import CollectionSchema
-from src.vecraft.data.exception import CollectionNotExistedException, CollectionAlreadyExistedException
+from src.vecraft_db.catalog.sqlite_based_catalog import SqliteCatalog
+from src.vecraft_db.core.data_model.exception import CollectionAlreadyExistedException, CollectionNotExistedException
+from src.vecraft_db.core.data_model.index_packets import CollectionSchema
 
 
 class TestSqliteCatalog(unittest.TestCase):
@@ -313,7 +313,7 @@ class TestSqliteCatalog(unittest.TestCase):
 
         # Test search performance
         results = self.catalog.search_collections(name_pattern="large_test_5")
-        self.assertTrue(len(results) > 0)
+        self.assertGreater(len(results), 0)
 
         # Test statistics performance
         stats = self.catalog.get_statistics()

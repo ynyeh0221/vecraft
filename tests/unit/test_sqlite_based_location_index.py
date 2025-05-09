@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.vecraft.data.index_packets import LocationPacket
-from src.vecraft.storage.index.sqlite_based_location_index import SQLiteRecordLocationIndex
+from src.vecraft_db.core.data_model.index_packets import LocationPacket
+from src.vecraft_db.storage.sqlite_based_index import SQLiteRecordLocationIndex
 
 
 class TestSQLiteRecordLocationIndex(unittest.TestCase):

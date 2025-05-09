@@ -5,11 +5,11 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from src.vecraft.catalog.json_catalog import JsonCatalog
-from src.vecraft.data.data_packet import DataPacket
-from src.vecraft.data.exception import MetadataIndexBuildingException, VectorIndexBuildingException, \
-    StorageFailureException
-from src.vecraft.engine.collection_service import CollectionService
+from src.vecraft_db.catalog.json_catalog import JsonCatalog
+from src.vecraft_db.core.data_model.data_packet import DataPacket
+from src.vecraft_db.core.data_model.exception import StorageFailureException, MetadataIndexBuildingException, \
+    VectorIndexBuildingException
+from src.vecraft_db.engine.collection_service import CollectionService
 from tests.unit.test_collection_service import DummyStorage, DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
 
@@ -269,16 +269,12 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
         self.collection_service.insert(self.collection_name, insert_packet1)
 
-        # 2) Make metadata_index.update fail
-        # Replace the update method, not add, since we're overwriting an existing record
-        original_update = collection['meta_index'].update
-
         def failing_update(old_item, new_item):
             raise RuntimeError("meta fail on update")
 
         collection['meta_index'].update = failing_update
 
-        # 3) Attempt to overwrite with new data
+        # 2) Attempt to overwrite with new data
         vec2 = np.array([8, 8, 8, 8], dtype=np.float32)
         orig2 = {"val": 2}
         meta2 = {"tag": "new"}
@@ -293,7 +289,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         with self.assertRaises(MetadataIndexBuildingException):
             self.collection_service.insert(self.collection_name, insert_packet2)
 
-        # 4) After failure, the record should be exactly the original
+        # 3) After failure, the record should be exactly the original
         rec = self.collection_service.get(self.collection_name, record_id)
         self.assertEqual(orig1, rec.original_data)
         np.testing.assert_array_almost_equal(vec1, rec.vector)
@@ -321,9 +317,6 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         )
 
         self.collection_service.insert(self.collection_name, insert_packet1)
-
-        # Store original record for verification later
-        original_record = self.collection_service.get(self.collection_name, record_id)
 
         # 2) Replace the vector_index.add method entirely to make it fail
         def failing_add(item):

@@ -1,10 +1,11 @@
 import threading
 import unittest
 
+from src.vecraft_db.engine.locks import ReentrantRWLock
+
 
 class TestReentrantRWLock(unittest.TestCase):
     def setUp(self):
-        from src.vecraft.engine.locks import ReentrantRWLock
         self.lock = ReentrantRWLock()
 
     def test_multiple_readers(self):
