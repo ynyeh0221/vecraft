@@ -70,7 +70,7 @@ class VecraftClient:
             if kind == "hnsw":
                 params = vector_index_params or {}
                 return HNSW(dim=dim,
-                            M=params.get("M", 16),
+                            max_conn_per_element=params.get("M", 16),
                             ef_construction=params.get("ef_construction", 200))
             else:
                 raise ValueError(f"Unknown index kind: {kind}")

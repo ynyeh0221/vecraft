@@ -31,7 +31,7 @@ class HNSW:
             self,
             dim: Optional[int] = None,
             metric: Union[str, DistanceMetric] = DistanceMetric.EUCLIDEAN,
-            M: int = 16,
+            max_conn_per_element: int = 16,
             ef_construction: int = 200,
             normalize_vectors: bool = False,
             auto_resize_dim: bool = False,
@@ -43,7 +43,7 @@ class HNSW:
         Args:
             dim: Dimensionality of vectors. If None, will be inferred from first added vector.
             metric: Distance metric to use (EUCLIDEAN, INNER_PRODUCT, COSINE, or custom string)
-            M: Maximum number of connections per element (default 16)
+            max_conn_per_element: Maximum number of connections per element (default 16)
             ef_construction: Size of the dynamic candidate list during construction (default 200)
             normalize_vectors: Whether to normalize vectors (useful for cosine similarity)
             auto_resize_dim: If True, automatically resize vectors to match the record_vector dimension
@@ -62,7 +62,7 @@ class HNSW:
 
         self._metric = metric_value
         self._dim = dim
-        self._M = M
+        self._M = max_conn_per_element
         self._ef_construction = ef_construction
         self._normalize_vectors = normalize_vectors
         self._auto_resize_dim = auto_resize_dim
@@ -106,142 +106,138 @@ class HNSW:
         """
         Prepare a vector for indexing by converting it to numpy format,
         handling dimension mismatches, and applying normalization if needed.
-
-        Args:
-            vec: Input vector in any supported format
-
-        Returns:
-            Numpy array ready for indexing
         """
-        # Convert to numpy array if it's not already
-        if not isinstance(vec, np.ndarray):
-            np_vec = np.array(vec, dtype=np.float32)
-        else:
-            np_vec = vec.astype(np.float32)
-
-        # Ensure vector is 1D
-        if np_vec.ndim > 1:
-            np_vec = np_vec.flatten()
-
-        # guard against empty vectors
-        if np_vec.size == 0:
-            raise NullOrZeroVectorException("Cannot record_vector an empty vector; vector length must be > 0.")
-
-        # Handle dimension inference
-        if self._dim is None:
-            self._dim = len(np_vec)
-            self._initialize_index()
-        # Handle dimension mismatch
-        elif len(np_vec) != self._dim:
-            if self._auto_resize_dim:
-                # Resize the vector to match the expected dimension
-                if len(np_vec) < self._dim:
-                    # Pad shorter vectors
-                    padded = np.full(self._dim, self._pad_value, dtype=np.float32)
-                    padded[:len(np_vec)] = np_vec
-                    np_vec = padded
-                else:
-                    # Truncate longer vectors
-                    np_vec = np_vec[:self._dim]
-            else:
-                raise VectorDimensionMismatchException(
-                    f"Vector dimension mismatch. Expected {self._dim}, got {len(np_vec)}. "
-                    f"Set auto_resize_dim=True to automatically handle dimension mismatches."
-                )
-
-        # Normalize if required (e.g., for cosine similarity)
+        np_vec = self._to_numpy(vec)
+        np_vec = self._ensure_1d(np_vec)
+        self._guard_non_empty(np_vec)
+        np_vec = self._infer_or_handle_dim(np_vec)
         if self._normalize_vectors:
-            norm = np.linalg.norm(np_vec)
-            if norm > 0:
-                np_vec = np_vec / norm
+            np_vec = self._normalize(np_vec)
+        return np_vec
+
+    def _to_numpy(self, vec: Any) -> np.ndarray:
+        """Convert input to a float32 numpy array."""
+        if isinstance(vec, np.ndarray):
+            return vec.astype(np.float32)
+        return np.array(vec, dtype=np.float32)
+
+    def _ensure_1d(self, np_vec: np.ndarray) -> np.ndarray:
+        """Flatten any multi-dimensional array to 1D."""
+        return np_vec.flatten() if np_vec.ndim > 1 else np_vec
+
+    def _guard_non_empty(self, np_vec: np.ndarray):
+        """Raise if the vector has zero length."""
+        if np_vec.size == 0:
+            raise NullOrZeroVectorException(
+                "Cannot record_vector an empty vector; vector length must be > 0."
+            )
+
+    def _infer_or_handle_dim(self, np_vec: np.ndarray) -> np.ndarray:
+        """
+        If dimensionality is unknown, set it and initialize the index.
+        Otherwise, handle any mismatches (resize or error).
+        """
+        vec_len = len(np_vec)
+        if self._dim is None:
+            self._dim = vec_len
+            self._initialize_index()
+            return np_vec
+
+        if vec_len != self._dim:
+            return self._resize_or_error(np_vec, vec_len)
 
         return np_vec
 
+    def _resize_or_error(self, np_vec: np.ndarray, vec_len: int) -> np.ndarray:
+        """Either auto-resize the vector to match self._dim, or raise."""
+        if not self._auto_resize_dim:
+            raise VectorDimensionMismatchException(
+                f"Vector dimension mismatch. Expected {self._dim}, got {vec_len}. "
+                f"Set auto_resize_dim=True to automatically handle dimension mismatches."
+            )
+
+        # pad or truncate
+        if vec_len < self._dim:
+            padded = np.full(self._dim, self._pad_value, dtype=np.float32)
+            padded[:vec_len] = np_vec
+            return padded
+
+        return np_vec[:self._dim]
+
+    def _normalize(self, np_vec: np.ndarray) -> np.ndarray:
+        """L2-normalize the vector if norm > 0."""
+        norm = np.linalg.norm(np_vec)
+        return np_vec / norm if norm > 0 else np_vec
+
     def build(self, items: List[VectorPacket]) -> None:
         """
-        Build the record_vector from a list of IndexItems.
-
-        Args:
-            items: List of IndexItems containing record IDs and vectors
+        Build the index from a list of VectorPackets.
         """
         if not items:
             return
 
-        # If dimension is not set yet, infer from first vector
-        first_item = items[0]
-        first_vec = first_item.vector
+        # 1. Infer dimension (and init) from the first item if needed
+        self._infer_dim_from_first(items[0])
 
-        if self._dim is None:
-            # Convert to numpy to get dimension if needed
-            if not isinstance(first_vec, np.ndarray):
-                np_vec = np.array(first_vec, dtype=np.float32)
-            else:
-                np_vec = first_vec
+        # 2. Prepare data & id arrays
+        data, ids = self._prepare_batch(items)
 
-            # Ensure vector is 1D
-            if np_vec.ndim > 1:
-                np_vec = np_vec.flatten()
+        # 3. Grow the HNSW index if needed
+        self._maybe_resize_index(len(items))
 
-            self._dim = len(np_vec)
-            self._initialize_index()
-
-        # Prepare data in the format required by hnswlib
-        data = np.zeros((len(items), self._dim), dtype=np.float32)
-        ids = np.zeros(len(items), dtype=np.int32)
-
-        for i, item in enumerate(items):
-            # Prepare the vector and ensure it's the right format
-            vector = item.vector
-            if not isinstance(vector, np.ndarray):
-                vector = np.array(vector, dtype=np.float32)
-
-            # Handle dimension issues
-            if vector.ndim > 1:
-                vector = vector.flatten()
-
-            if len(vector) != self._dim:
-                if self._auto_resize_dim:
-                    # Resize the vector to match the expected dimension
-                    if len(vector) < self._dim:
-                        # Pad shorter vectors
-                        padded = np.full(self._dim, self._pad_value, dtype=np.float32)
-                        padded[:len(vector)] = vector
-                        vector = padded
-                    else:
-                        # Truncate longer vectors
-                        vector = vector[:self._dim]
-                else:
-                    raise VectorDimensionMismatchException(
-                        f"Vector dimension mismatch. Expected {self._dim}, got {len(vector)}. "
-                        f"Set auto_resize_dim=True to automatically handle dimension mismatches."
-                    )
-
-            # Normalize if required
-            if self._normalize_vectors:
-                norm = np.linalg.norm(vector)
-                if norm > 0:
-                    vector = vector / norm
-
-            # Add to data array
-            data[i] = vector
-
-            # Get internal ID for this record using IdMapper
-            record_id = item.record_id
-            internal_id = self._id_mapper.add_mapping(record_id)
-            ids[i] = internal_id
-
-        # Resize if necessary
-        if len(items) > self._max_elements:
-            self._max_elements = len(items) * 2
-            self._index.init_index(
-                max_elements=self._max_elements,
-                ef_construction=self._ef_construction,
-                M=self._M
-            )
-
-        # Add all vectors at once
+        # 4. Add into the index and update count
         self._index.add_items(data, ids)
         self._current_elements = len(items)
+
+    def _infer_dim_from_first(self, first_item: VectorPacket):
+        """Set self._dim and initialize the index if dimension is unset."""
+        if self._dim is not None:
+            return
+
+        vec = self._to_numpy(first_item.vector)
+        vec = self._ensure_1d(vec)
+        self._dim = len(vec)
+        self._initialize_index()
+
+    def _prepare_batch(self, items: List[VectorPacket]):
+        """
+        Build the (n×dim) data matrix and the id array.
+        """
+        n = len(items)
+        data = np.zeros((n, self._dim), dtype=np.float32)
+        ids  = np.zeros(n, dtype=np.int32)
+
+        for i, item in enumerate(items):
+            vec = self._prepare_item_vector(item.vector)
+            data[i] = vec
+            ids[i]  = self._id_mapper.add_mapping(item.record_id)
+
+        return data, ids
+
+    def _prepare_item_vector(self, vector: Any) -> np.ndarray:
+        """
+        Convert, flatten, resize (or error), then normalize.
+        """
+        np_vec = self._to_numpy(vector)
+        np_vec = self._ensure_1d(np_vec)
+
+        if len(np_vec) != self._dim:
+            np_vec = self._resize_or_error(np_vec, len(np_vec))
+
+        if self._normalize_vectors:
+            np_vec = self._normalize(np_vec)
+
+        return np_vec
+
+    def _maybe_resize_index(self, num_items: int):
+        """Double max_elements and re-init if capacity is too small."""
+        if num_items > self._max_elements:
+            self._max_elements = num_items * 2
+            self._index.init_index(
+                max_elements      = self._max_elements,
+                ef_construction   = self._ef_construction,
+                M                 = self._M
+            )
 
     def add(self, item: VectorPacket) -> None:
         """

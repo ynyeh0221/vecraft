@@ -37,7 +37,7 @@ class TestHNSW(unittest.TestCase):
         self.assertEqual(hnsw1._metric, "ip")
 
         # Test with cosine similarity and custom M and ef_construction
-        hnsw2 = HNSW(metric="cosine", M=32, ef_construction=100)
+        hnsw2 = HNSW(metric="cosine", max_conn_per_element=32, ef_construction=100)
         self.assertEqual(hnsw2._metric, "cosine")
         self.assertEqual(hnsw2._M, 32)
         self.assertEqual(hnsw2._ef_construction, 100)
@@ -206,7 +206,7 @@ class TestHNSW(unittest.TestCase):
     def test_serialization_deserialization(self):
         """Test serialization and deserialization of the record_vector."""
         # Initialize HNSW
-        hnsw = HNSW(dim=3, metric="cosine", M=16, ef_construction=100)
+        hnsw = HNSW(dim=3, metric="cosine", max_conn_per_element=16, ef_construction=100)
 
         # Add items
         hnsw.add_batch(self.items)
@@ -215,7 +215,7 @@ class TestHNSW(unittest.TestCase):
         serialized_data = hnsw.serialize()
 
         # Create a new instance with the same parameters
-        new_hnsw = HNSW(dim=3, metric="cosine", M=16, ef_construction=100)
+        new_hnsw = HNSW(dim=3, metric="cosine", max_conn_per_element=16, ef_construction=100)
 
         # Deserialize everything
         new_hnsw.deserialize(serialized_data)
@@ -637,7 +637,7 @@ class TestHNSW(unittest.TestCase):
         hnsw = HNSW(
             dim=5,
             metric=DistanceMetric.INNER_PRODUCT,
-            M=32,
+            max_conn_per_element=32,
             ef_construction=150,
             normalize_vectors=True,
             auto_resize_dim=True,
