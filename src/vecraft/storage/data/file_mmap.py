@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from src.vecraft.core.storage_engine_interface import StorageEngine
+from src.vecraft.data.data_packet import DataPacket
 from src.vecraft.data.index_packets import LocationPacket
 
 # Status byte constants
@@ -129,68 +130,23 @@ class MMapStorage(StorageEngine):
             where `offset` is the position of the status byte and `size`
             matches exactly the length of DataPacket.to_bytes().
         """
-        # DataPacket.to_bytes() writes a 5-byte prefix immediately after the status byte
-        PREFIX_SIZE = 5
-
-        # The header is five 4-byte unsigned ints (rid_len, orig_len, vec_len, meta_len, checksum_len)
-        HEADER_FORMAT = '<5I'
-        HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-
         all_records: Dict[str, Tuple[LocationPacket, bool]] = {}
         data_len = len(self._mmap)
         offset = 0
-
         while offset < data_len:
             status = self._mmap[offset]
-            # only 0 or 1 are valid “status” bytes
             if status not in (STATUS_UNCOMMITTED, STATUS_COMMITTED):
                 offset += 1
                 continue
-
-            # header actually starts after: [status(1) + prefix(PREFIX_SIZE)]
-            header_offset = offset + 1 + PREFIX_SIZE
-            # must-have space for the header
-            if header_offset + HEADER_SIZE > data_len:
-                offset += 1
-                continue
-
-            try:
-                header_bytes = self._mmap[header_offset: header_offset + HEADER_SIZE]
-                rid_len, orig_len, vec_len, meta_len, checksum_len = struct.unpack(
-                    HEADER_FORMAT, header_bytes
-                )
-            except struct.error:
-                offset += 1
-                continue
-
-            # total payload (record_id + original + vector + metadata + checksum)
-            payload_size = rid_len + orig_len + vec_len + meta_len + checksum_len
-            # full packet length (excluding the status byte)
-            record_size = PREFIX_SIZE + HEADER_SIZE + payload_size
-
-            # sanity‐check lengths
-            if (
-                    rid_len <= 0 or rid_len > 1000 or
-                    orig_len < 0 or orig_len > 10 * 1024 * 1024 or
-                    vec_len < 0 or vec_len > 1024 * 1024 or
-                    meta_len < 0 or meta_len > 1024 * 1024 or
-                    checksum_len <= 0 or checksum_len > 100 or
-                    header_offset + HEADER_SIZE + payload_size > data_len
-            ):
-                offset += 1
-                continue
-
-            # extract the record ID
-            rid_start = header_offset + HEADER_SIZE
-            rid_bytes = self._mmap[rid_start: rid_start + rid_len]
-            record_id = rid_bytes.decode('utf-8', errors='ignore')
-
             is_committed = (status == STATUS_COMMITTED)
-            all_records[record_id] = (LocationPacket(record_id=record_id, offset=offset, size=record_size), is_committed)
-
-            # skip over [status + entire packet]
-            offset += 1 + record_size
-
+            try:
+                packet, size = DataPacket.from_bytes_with_size(self._mmap[offset + 1:])
+            except (ValueError, struct.error):
+                offset += 1
+                continue
+            loc = LocationPacket(record_id=packet.record_id, offset=offset, size=size)
+            all_records[packet.record_id] = (loc, is_committed)
+            offset += 1 + size
         return all_records
 
     def mark_as_deleted(self, offset: int):

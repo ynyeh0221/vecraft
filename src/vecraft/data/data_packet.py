@@ -3,7 +3,7 @@ import json
 import struct
 from dataclasses import asdict, field, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional, Tuple
 
 import numpy as np
 
@@ -11,8 +11,11 @@ from src.vecraft.data.exception import ChecksumValidationFailureError, InvalidDa
 from src.vecraft.data.index_packets import DocumentPacket, VectorPacket, _prepare_field_bytes, _concat_bytes, \
     get_checksum_func, ChecksumFunc, MetadataPacket
 
-MAGIC_BYTES = b'VCRD'  # VeCraft Record Data
-FORMAT_VERSION = 1
+# Serialization constants
+MAGIC_BYTES: bytes = b'VCRD'
+FORMAT_VERSION: int = 1
+HEADER_FORMAT: str = '<4s B 5I'  # magic, version, lengths
+HEADER_SIZE: int = struct.calcsize(HEADER_FORMAT)
 
 @dataclass
 class DataPacket:
@@ -237,52 +240,35 @@ class DataPacket:
         - 1 byte: format version
         - Original format continues...
         """
-        record_id = self.record_id
-        orig = self.original_data
-        vec = self.vector
-        meta = self.metadata
-        checksum = self.checksum
-
-        rid_b = record_id.encode('utf-8')
-        doc = json.dumps(orig)
-        orig_b = doc.encode('utf-8')
-        vec_b = vec.tobytes()
-        meta_b = json.dumps(meta).encode('utf-8')
-        checksum_b = checksum.encode('utf-8')
-
-        header = struct.pack('<4s B 5I',
-                             MAGIC_BYTES,
-                             FORMAT_VERSION,
-                             len(record_id),
-                             len(orig_b),
-                             len(vec_b),
-                             len(meta_b),
-                             len(checksum_b))
+        rid_b = self.record_id.encode('utf-8')
+        orig_b = json.dumps(self.original_data).encode('utf-8') if self.original_data is not None else b''
+        vec_b = self.vector.tobytes() if self.vector is not None else b''
+        meta_b = json.dumps(self.metadata).encode('utf-8') if self.metadata is not None else b''
+        checksum_b = self.checksum.encode('utf-8')
+        header = struct.pack(
+            HEADER_FORMAT,
+            MAGIC_BYTES,
+            FORMAT_VERSION,
+            len(rid_b),
+            len(orig_b),
+            len(vec_b),
+            len(meta_b),
+            len(checksum_b)
+        )
         return header + rid_b + orig_b + vec_b + meta_b + checksum_b
 
     @staticmethod
     def from_bytes(data: bytes) -> 'DataPacket':
-        """
-        Reconstructs a DataPacket from bytes, validating magic header and version.
-        """
-        header_size = 4 + 1 + 5 * 4  # magic + version + 5 integers
-        if len(data) < header_size:
-            raise ValueError("Invalid data packet: too short")
-
+        # existing from_bytes implementation
         magic, version, rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
-            '<4s B 5I',
-            data[:header_size]
+            HEADER_FORMAT, data[:HEADER_SIZE]
         )
-
         if magic != MAGIC_BYTES:
             raise ValueError(f"Invalid magic bytes: expected {MAGIC_BYTES}, got {magic}")
-
         if version != FORMAT_VERSION:
             raise ValueError(f"Unsupported format version: {version}")
-
-        pos = header_size
-        returned_record_id_bytes = data[pos:pos + rid_len]
-        returned_record_id = str(returned_record_id_bytes, 'utf-8')
+        pos = HEADER_SIZE
+        record_id = data[pos:pos + rid_len].decode('utf-8')
         pos += rid_len
         orig_bytes = data[pos:pos + original_data_size]
         pos += original_data_size
@@ -291,20 +277,53 @@ class DataPacket:
         meta_bytes = data[pos:pos + metadata_size]
         pos += metadata_size
         checksum_bytes = data[pos:pos + checksum_size]
-        stored_checksum = str(checksum_bytes, 'utf-8')
-
-        data_packet = DataPacket.create_record(
-            record_id=returned_record_id,
+        stored_checksum = checksum_bytes.decode('utf-8')
+        packet = DataPacket.create_record(
+            record_id=record_id,
             original_data=json.loads(orig_bytes.decode('utf-8')),
             vector=np.frombuffer(vec_bytes, dtype=np.float32),
             metadata=json.loads(meta_bytes.decode('utf-8'))
         )
+        if stored_checksum != packet.checksum:
+            raise ChecksumValidationFailureError(
+                f"Checksum mismatch for {packet.record_id}: stored {stored_checksum}, computed {packet.checksum}"
+            )
+        return packet
 
-        if stored_checksum != data_packet.checksum:
-            error_message = f"Record id {data_packet.record_id}'s stored checksum {stored_checksum} does not match reconstructed checksum {data_packet.checksum}"
-            raise ChecksumValidationFailureError(error_message)
+    @staticmethod
+    def from_bytes_with_size(data: bytes) -> Tuple['DataPacket', int]:
+        """
+        Parse a DataPacket from the given bytes buffer.
 
-        return data_packet
+        This method reads and unpacks the header to extract field lengths, verifies
+        the magic bytes and format version, and computes the total packet size.
+        It then invokes `from_bytes` on the exact slice of the buffer to reconstruct
+        the DataPacket instance.
+
+        Args:
+            data: A bytes-like object beginning with a DataPacket header.
+
+        Returns:
+            Tuple of (DataPacket instance, total bytes consumed by packet).
+
+        Raises:
+            ValueError: If the buffer is too small for header or full packet,
+                        or if magic/version fields are invalid.
+        """
+        if len(data) < HEADER_SIZE:
+            raise ValueError("Buffer too small for header")
+        magic, version, rid_len, orig_len, vec_len, meta_len, checksum_len = struct.unpack(
+            HEADER_FORMAT, data[:HEADER_SIZE]
+        )
+        if magic != MAGIC_BYTES:
+            raise ValueError(f"Invalid magic bytes: {magic}")
+        if version != FORMAT_VERSION:
+            raise ValueError(f"Unsupported version: {version}")
+        total_size = HEADER_SIZE + rid_len + orig_len + vec_len + meta_len + checksum_len
+        if len(data) < total_size:
+            raise ValueError("Buffer too small for full packet")
+        packet = DataPacket.from_bytes(data[:total_size])
+        return packet, total_size
 
     def to_vector_packet(self) -> 'VectorPacket':
         """
