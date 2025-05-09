@@ -3,7 +3,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Callable
+from typing import Any, Dict, List, Optional, Set, Callable, Tuple
 
 import numpy as np
 
@@ -20,7 +20,7 @@ from src.vecraft_db.core.interface.user_doc_index_interface import DocIndexInter
 from src.vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft_db.core.interface.vector_index_interface import Index
 from src.vecraft_db.core.interface.wal_interface import WALInterface
-from src.vecraft_db.engine.locks import ReentrantRWLock
+from src.vecraft_db.core.lock.locks import ReentrantRWLock
 from src.vecraft_db.visualization.tsne import generate_tsne
 
 # Set up logger for this module
@@ -223,124 +223,107 @@ class CollectionService:
     def _apply_insert(self, name: str, data_packet: DataPacket) -> DataPacket:
         """Apply insert with improved storage engine atomicity."""
         res = self._collections[name]
-        rec_bytes = data_packet.to_bytes()
-        new_location = None
+        preimage, old_loc = self._prepare_preimage(name, data_packet, res)
+        new_loc = None
+        try:
+            new_loc = self._write_storage(res, data_packet)
+            self._update_meta_and_doc_indices(res, preimage, data_packet)
+            self._update_vector_index(res, data_packet)
+            return preimage
+        except Exception:
+            logger.error(
+                f"Error applying insert for record {data_packet.record_id}, rolling back",
+                exc_info=True
+            )
+            self._rollback_insert(res, data_packet, preimage, old_loc, new_loc)
+            raise
 
+    def _prepare_preimage(self, name: str, data_packet: DataPacket, res: dict):
         old_loc = res['storage'].get_record_location(data_packet.record_id)
         if old_loc:
-            logger.debug(f"Record {data_packet.record_id} already exists, performing update")
+            logger.debug(f"Record {data_packet.record_id} exists, performing update")
             preimage = self._get_internal(name, data_packet.record_id, res['storage'])
         else:
             logger.debug(f"Record {data_packet.record_id} is new")
             preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
+        return preimage, old_loc
 
-        updated_storage = updated_meta = updated_vec = updated_doc = False
-
+    def _write_storage(self, res: dict, data_packet: DataPacket) -> LocationPacket:
+        rec_bytes = data_packet.to_bytes()
+        new_offset = res['storage'].allocate(len(rec_bytes))
+        loc = LocationPacket(
+            record_id=data_packet.record_id,
+            offset=new_offset,
+            size=len(rec_bytes)
+        )
+        logger.debug(f"Writing record {data_packet.record_id} at offset {new_offset}")
         try:
-            # A) Atomic storage write with index update
-            try:
-                # Allocate new offset (includes space for status byte)
-                new_offset = res['storage'].allocate(len(rec_bytes))
-                new_location = LocationPacket(
-                    record_id=data_packet.record_id,
-                    offset=new_offset,
-                    size=len(rec_bytes)
-                )
-
-                logger.debug(f"Writing record {data_packet.record_id} to storage at offset {new_offset}")
-
-                # Use atomic write_and_index - writes with status=0 initially
-                res['storage'].write_and_index(rec_bytes, new_location)
-
-                updated_storage = True
-                logger.debug(f"Storage updated for record {data_packet.record_id}")
-            except Exception as e:
-                error_message = f"Storage update failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise StorageFailureException(error_message, e)
-
-            # B) user metadata index
-            try:
-                if not preimage.is_nonexistent():
-                    logger.debug(f"Updating metadata index for record {data_packet.record_id}")
-                    res['meta_index'].update(
-                        preimage.to_metadata_packet(),
-                        data_packet.to_metadata_packet()
-                    )
-                else:
-                    logger.debug(f"Adding new entry to metadata index for record {data_packet.record_id}")
-                    res['meta_index'].add(data_packet.to_metadata_packet())
-                updated_meta = True
-            except Exception as e:
-                error_message = f"Metadata index update failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise MetadataIndexBuildingException(error_message, e)
-
-            # C) user document index
-            try:
-                if not preimage.is_nonexistent():
-                    logger.debug(f"Updating document index for record {data_packet.record_id}")
-                    res['doc_index'].update(
-                        preimage.to_document_packet(),
-                        data_packet.to_document_packet()
-                    )
-                else:
-                    logger.debug(f"Adding new entry to document index for record {data_packet.record_id}")
-                    res['doc_index'].add(data_packet.to_document_packet())
-                updated_doc = True
-            except Exception as e:
-                error_message = f"Document index update failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise DocumentIndexBuildingException(error_message, e)
-
-            # D) vector index
-            try:
-                logger.debug(f"Updating vector index for record {data_packet.record_id}")
-                res['vec_index'].add(data_packet.to_vector_packet())
-                updated_vec = True
-                logger.debug(f"All indices updated for record {data_packet.record_id}")
-            except Exception as e:
-                error_message = f"Vector index update failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise VectorIndexBuildingException(error_message, e)
-
-            return preimage
-
+            res['storage'].write_and_index(rec_bytes, loc)
         except Exception as e:
-            logger.error(f"Error applying insert for record {data_packet.record_id}, rolling back: {str(e)}",
-                         exc_info=True)
+            msg = f"Storage update failed for record {data_packet.record_id}"
+            logger.debug(msg)
+            raise StorageFailureException(msg, e)
+        return loc
 
-            # Rollback logic - no need to zero out data since status=0 means uncommitted
-            if updated_vec:
-                logger.debug("Rolling back vector index changes")
-                res['vec_index'].delete(record_id=data_packet.record_id)
+    def _update_meta_and_doc_indices(self, res: dict, preimage: DataPacket, data_packet: DataPacket):
+        ops = [
+            ('meta_index', preimage.to_metadata_packet, data_packet.to_metadata_packet, MetadataIndexBuildingException),
+            ('doc_index', preimage.to_document_packet, data_packet.to_document_packet, DocumentIndexBuildingException),
+        ]
+        for idx_name, old_fn, new_fn, exc in ops:
+            index = res[idx_name]
+            old_pkt = old_fn()
+            new_pkt = new_fn()
+            try:
+                if preimage.is_nonexistent():
+                    index.add(new_pkt)
+                else:
+                    index.update(old_pkt, new_pkt)
+            except Exception as e:
+                msg = f"{idx_name} update failed for record {data_packet.record_id}"
+                logger.debug(msg)
+                raise exc(msg, e)
+
+    def _update_vector_index(self, res: dict, data_packet: DataPacket):
+        try:
+            logger.debug(f"Updating vector index for record {data_packet.record_id}")
+            res['vec_index'].add(data_packet.to_vector_packet())
+        except Exception as e:
+            msg = f"Vector index update failed for record {data_packet.record_id}"
+            logger.debug(msg)
+            raise VectorIndexBuildingException(msg, e)
+
+    def _rollback_insert(self, res: dict, data_packet: DataPacket,
+                         preimage: DataPacket, old_loc: LocationPacket, new_loc: LocationPacket):
+        # Rollback vector
+        try:
+            res['vec_index'].delete(record_id=data_packet.record_id)
+            if not preimage.is_nonexistent():
+                res['vec_index'].add(preimage.to_vector_packet())
+        except Exception:
+            logger.debug("Failed to rollback vector index")
+
+        # Rollback doc and meta
+        for idx_name, fn in [('doc_index', preimage.to_document_packet),
+                             ('meta_index', preimage.to_metadata_packet)]:
+            try:
+                idx = res[idx_name]
+                idx.delete(fn() if idx_name.endswith('index') else data_packet)
                 if not preimage.is_nonexistent():
-                    res['vec_index'].add(preimage.to_vector_packet())
+                    idx.add(fn())
+            except Exception:
+                logger.debug(f"Failed to rollback {idx_name}")
 
-            if updated_doc:
-                logger.debug("Rolling back document index changes")
-                res['doc_index'].delete(data_packet.to_document_packet())
-                if not preimage.is_nonexistent():
-                    res['doc_index'].add(preimage.to_document_packet())
-
-            if updated_meta:
-                logger.debug("Rolling back metadata index changes")
-                res['meta_index'].delete(data_packet.to_metadata_packet())
-                if not preimage.is_nonexistent():
-                    res['meta_index'].add(preimage.to_metadata_packet())
-
-            if updated_storage and new_location:
-                logger.debug("Rolling back storage changes")
-                # Just mark as deleted in index - the data remains with status=0
+        # Rollback storage
+        if new_loc:
+            try:
                 res['storage'].mark_deleted(data_packet.record_id)
                 res['storage'].delete_record(data_packet.record_id)
-
-                if old_loc is not None:
+                if old_loc:
                     old_loc.validate_checksum()
                     res['storage'].add_record(old_loc)
-
-            logger.error(f"Rollback complete for record {data_packet.record_id}")
-            raise
+            except Exception:
+                logger.debug("Failed to rollback storage")
 
     def _apply_delete(self, name: str, data_packet: DataPacket) -> DataPacket:
         res = self._collections[name]
@@ -511,72 +494,84 @@ class CollectionService:
                 raise
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
-        # Initialize collection with global lock if needed
+        # Ensure collection exists
         self._get_or_init_collection(collection)
-
-        # Use collection-specific lock for the operation
-        with self._collections[collection]['lock'].read_lock():
-
+        lock = self._collections[collection]['lock']
+        with lock.read_lock():
             logger.info(f"Searching from {collection} started")
             start_time = time.time()
 
-            query_packet.validate_checksum()
-            schema: CollectionSchema = self._collections[collection]['schema']
-            if len(query_packet.query_vector) != schema.dim:
-                err_msg = f"Query dimension mismatch: expected {schema.dim}, got {len(query_packet.query_vector)}"
-                logger.error(err_msg)
-                raise VectorDimensionMismatchException(err_msg)
+            schema = self._collections[collection]['schema']
+            self._validate_query_packet(query_packet, schema)
 
-            allowed_ids: Optional[Set[str]] = None
+            allowed_ids = self._apply_filters(collection, query_packet)
+            if allowed_ids == set():
+                logger.info("Filter returned empty result set, short-circuiting search")
+                return []
 
-            # 1) user metadata index
-            if query_packet.where:
-                logger.debug(f"Applying metadata filter: {query_packet.where}")
-                metadata_ids = self._collections[collection]['meta_index'].get_matching_ids(query_packet.where)
-                if metadata_ids is not None:
-                    allowed_ids = metadata_ids
-                    logger.debug(f"Metadata filter matched {len(allowed_ids) if allowed_ids else 0} records")
-                    if not allowed_ids:
-                        logger.info("Metadata filter returned empty result set, short-circuiting search")
-                        return []
-
-            # 2) user document index
-            if query_packet.where_document:
-                logger.debug("Applying document filter")
-                doc_ids = self._collections[collection]['doc_index'].get_matching_ids(allowed_ids, query_packet.where)
-                if doc_ids is not None:
-                    allowed_ids = doc_ids
-                    logger.debug(f"Document filter matched {len(allowed_ids) if allowed_ids else 0} records")
-                    if not allowed_ids:
-                        logger.info("Document filter returned empty result set, short-circuiting search")
-                        return []
-
-            # 3) vector index
-            logger.debug(f"Performing vector search with k={query_packet.k}")
-            vector_search_start = time.time()
-            raw_results = self._collections[collection]['vec_index'].search(
-                query_packet.query_vector,
-                query_packet.k,
-                allowed_ids=allowed_ids
-            )
-            logger.debug(f"Vector search returned {len(raw_results)} results in {time.time() - vector_search_start:.3f}s")
-
-            # 4) storage
-            logger.debug("Fetching full records for search results")
-            results: List[SearchDataPacket] = []
-            for rec_id, dist in raw_results:
-                rec = self.get(collection, rec_id)
-                if not rec:
-                    logger.warning(f"Record {rec_id} found in index but not in storage")
-                    continue
-                results.append(SearchDataPacket(data_packet=rec, distance=dist))
+            raw_results = self._vector_search(collection, query_packet, allowed_ids)
+            results = self._fetch_search_results(collection, raw_results)
 
             query_packet.validate_checksum()
-
             elapsed = time.time() - start_time
             logger.info(f"Searching from {collection} completed in {elapsed:.3f}s, returned {len(results)} results")
-
             return results
+
+    def _validate_query_packet(self, query_packet: QueryPacket, schema: CollectionSchema):
+        query_packet.validate_checksum()
+        if len(query_packet.query_vector) != schema.dim:
+            err = f"Query dimension mismatch: expected {schema.dim}, got {len(query_packet.query_vector)}"
+            logger.error(err)
+            raise VectorDimensionMismatchException(err)
+
+    def _apply_filters(self, collection: str, query_packet: QueryPacket) -> Optional[Set[str]]:
+        allowed = None
+        if query_packet.where:
+            allowed = self._apply_metadata_filter(collection, query_packet.where, allowed)
+            if allowed is not None and not allowed:
+                return set()
+        if query_packet.where_document:
+            allowed = self._apply_document_filter(collection, query_packet.where_document, allowed)
+            if allowed is not None and not allowed:
+                return set()
+        return allowed
+
+    def _apply_metadata_filter(self, collection: str, where: Any, allowed: Optional[Set[str]]) -> Optional[Set[str]]:
+        logger.debug(f"Applying metadata filter: {where}")
+        ids = self._collections[collection]['meta_index'].get_matching_ids(where)
+        if ids is not None:
+            logger.debug(f"Metadata filter matched {len(ids)} records")
+            return ids
+        return allowed
+
+    def _apply_document_filter(self, collection: str, where_doc: Any, allowed: Optional[Set[str]]) -> Optional[
+        Set[str]]:
+        logger.debug("Applying document filter")
+        ids = self._collections[collection]['doc_index'].get_matching_ids(allowed, where_doc)
+        if ids is not None:
+            logger.debug(f"Document filter matched {len(ids)} records")
+            return ids
+        return allowed
+
+    def _vector_search(self, collection: str, query_packet: QueryPacket, allowed: Optional[Set[str]]):
+        logger.debug(f"Performing vector search with k={query_packet.k}")
+        start = time.time()
+        results = self._collections[collection]['vec_index'].search(
+            query_packet.query_vector, query_packet.k, allowed_ids=allowed
+        )
+        logger.debug(f"Vector search returned {len(results)} results in {time.time() - start:.3f}s")
+        return results
+
+    def _fetch_search_results(self, collection: str, raw_results: List[Tuple[str, float]]) -> List[SearchDataPacket]:
+        logger.debug("Fetching full records for search results")
+        results: List[SearchDataPacket] = []
+        for rec_id, dist in raw_results:
+            rec = self.get(collection, rec_id)
+            if not rec:
+                logger.warning(f"Record {rec_id} found in index but not in storage")
+                continue
+            results.append(SearchDataPacket(data_packet=rec, distance=dist))
+        return results
 
     def get(self, collection: str, record_id: str) -> DataPacket:
         # Initialize collection with global lock if needed

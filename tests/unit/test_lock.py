@@ -1,7 +1,7 @@
 import threading
 import unittest
 
-from src.vecraft_db.engine.locks import ReentrantRWLock
+from src.vecraft_db.core.lock.locks import ReentrantRWLock
 
 
 class TestReentrantRWLock(unittest.TestCase):
