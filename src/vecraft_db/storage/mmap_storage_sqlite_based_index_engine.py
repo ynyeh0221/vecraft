@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 
 from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError, StorageFailureException
 from src.vecraft_db.core.data_model.index_packets import LocationPacket
@@ -97,69 +97,80 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
     def verify_consistency(self) -> List[str]:
         """Verify storage and index consistency at startup."""
         orphaned = []
+        orphaned.extend(self._vacuum_size_orphans())
 
-        # Get actual file size using public method
+        file_records = self._storage.scan_all_records()
+        idx_records = self._loc_index.get_all_record_locations()
+
+        orphaned.extend(self._remove_uncommitted_records(file_records))
+        orphaned.extend(self._remove_index_mismatches(file_records, idx_records))
+        self._warn_orphaned_blocks(file_records, idx_records)
+
+        self._log_consistency_result(orphaned)
+        return orphaned
+
+    def _vacuum_size_orphans(self) -> List[str]:
+        """Remove index entries pointing beyond the actual file size."""
         file_size = self._storage.get_file_size()
+        return self._loc_index.vacuum_orphan(file_size)
 
-        # First, find records in index that point beyond file size
-        orphaned_by_size = self._loc_index.vacuum_orphan(file_size)
-        orphaned.extend(orphaned_by_size)
-
-        # Get all records from comprehensive file scan
-        all_records_in_file = self._storage.scan_all_records()
-        logger.debug(f"all_records_in_file: {all_records_in_file}")
-
-        # Get all records from index
-        all_records_in_index = self._loc_index.get_all_record_locations()
-        logger.debug(f"all_records_in_index: {all_records_in_index}")
-
-        # Find uncommitted records in file
-        for record_id, (location_packet, is_committed) in all_records_in_file.items():
+    def _remove_uncommitted_records(self, file_records: Dict[str, Tuple[LocationPacket, bool]]) -> List[str]:
+        """Clean up uncommitted records: remove from index and mark storage."""
+        orphaned = []
+        for record_id, (loc_pkt, is_committed) in file_records.items():
             if not is_committed:
-                # This record is uncommitted
-                if record_id in all_records_in_index:
-                    # Remove from index
-                    self._loc_index.mark_deleted(record_id)
-                    self._loc_index.delete_record(record_id)
-
-                # Mark the storage location as invalid
-                self._storage.mark_as_deleted(location_packet.offset)
-
+                self._delete_index_entry(record_id)
+                self._storage.mark_as_deleted(loc_pkt.offset)
                 orphaned.append(record_id)
-                logger.warning(f"Found uncommitted record {record_id} at offset {location_packet.offset}")
+                logger.warning(f"Found uncommitted record {record_id} at offset {loc_pkt.offset}")
+        return orphaned
 
-        # Find records in index but not in file (or at wrong locations)
-        for record_id, location in all_records_in_index.items():
-            if record_id not in all_records_in_file:
-                # Record in index but not found in file scan
-                self._loc_index.mark_deleted(record_id)
-                self._loc_index.delete_record(record_id)
+    def _remove_index_mismatches(
+            self,
+            file_records: Dict[str, Tuple[LocationPacket, bool]],
+            idx_records: Dict[str, LocationPacket]
+    ) -> List[str]:
+        """Remove index entries for missing or dislocated records."""
+        orphaned = []
+        for record_id, idx_loc in idx_records.items():
+            file_entry = file_records.get(record_id)
+            if not file_entry:
+                self._delete_index_entry(record_id)
                 orphaned.append(record_id)
                 logger.warning(f"Found indexed record {record_id} not present in storage")
             else:
-                # Verify the offset matches
-                file_location, _ = all_records_in_file[record_id]
-                if file_location.offset != location.offset or file_location.size != location.size:
-                    # Mismatch between index and actual file location
-                    self._loc_index.mark_deleted(record_id)
-                    self._loc_index.delete_record(record_id)
+                file_loc, _ = file_entry
+                if file_loc.offset != idx_loc.offset or file_loc.size != idx_loc.size:
+                    self._delete_index_entry(record_id)
                     orphaned.append(record_id)
                     logger.warning(
-                        f"Found record {record_id} at wrong location - index: {location.offset}, file: {file_location.offset}")
+                        f"Found record {record_id} at wrong location - index: {idx_loc.offset}, file: {file_loc.offset}"
+                    )
+        return orphaned
 
-        # Find orphaned blocks (in file but not in index)
-        for record_id, (location_packet, is_committed) in all_records_in_file.items():
-            if record_id not in all_records_in_index and is_committed:
-                # This is a committed record that's not in the index
-                # This shouldn't happen in normal operation, but could occur after corruption
-                logger.warning(f"Found orphaned committed record {record_id} at offset {location_packet.offset} not in index")
+    def _warn_orphaned_blocks(
+            self,
+            file_records: Dict[str, Tuple[LocationPacket, bool]],
+            idx_records: Dict[str, LocationPacket]
+    ) -> None:
+        """Log committed records present in file but missing from index."""
+        for record_id, (loc_pkt, is_committed) in file_records.items():
+            if is_committed and record_id not in idx_records:
+                logger.warning(
+                    f"Found orphaned committed record {record_id} at offset {loc_pkt.offset} not in index"
+                )
 
+    def _delete_index_entry(self, record_id: str) -> None:
+        """Helper to mark and delete a record from the location index."""
+        self._loc_index.mark_deleted(record_id)
+        self._loc_index.delete_record(record_id)
+
+    def _log_consistency_result(self, orphaned: List[str]) -> None:
+        """Final logging after consistency check."""
         if orphaned:
             logger.warning(f"Found {len(orphaned)} total inconsistent records: {orphaned}")
         else:
             logger.info("Storage consistency check passed - no issues found")
-
-        return orphaned
 
     def close(self) -> None:
         self._storage.close()
