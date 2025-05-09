@@ -94,92 +94,146 @@ class DataPacketType:
     pass
 
 
+# Map command names to handler functions
+_COMMAND_HANDLERS = {
+    "list-collections":    "_handle_list_collections",
+    "create-collection":   "_handle_create_collection",
+    "insert":              "_handle_insert",
+    "get":                 "_handle_get",
+    "delete":              "_handle_delete",
+    "search":              "_handle_search",
+    "tsne-plot":           "_handle_tsne_plot",
+}
+
 def execute_command(client, args):
+    handler_name = _COMMAND_HANDLERS.get(args.command)
+    if not handler_name:
+        return False
+
     try:
-        if args.command == "list-collections":
-            print(json.dumps([item.name for item in client.list_collections()], indent=2))
-        elif args.command == "create-collection":
-            client.create_collection(CollectionSchema(name=args.name, dim=args.dim, vector_type=args.type))
-            print(f"Created collection '{args.name}'")
-        elif args.command == "insert":
-            data = json.loads(args.data)
-            meta = json.loads(args.metadata)
-            rec_id = client.insert(
-                collection=args.collection,
-                packet=DataPacket.create_record(record_id=args.id, vector=args.vector, original_data=data, metadata=meta or {}),
-            )
-            print(rec_id)
-        elif args.command == "get":
-            rec = client.get(args.collection, args.id)
-            print(json.dumps(rec.to_dict(), indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
-        elif args.command == "delete":
-            client.delete(args.collection, args.id)
-            print(f"Deleted record '{args.id}'")
-        elif args.command == "search":
-            where = json.loads(args.where)
-            where_document = json.loads(args.where_document)
-            results = client.search(
-                collection=args.collection,
-                packet=QueryPacket(args.vector, k=args.k, where=where or {}, where_document=where_document or {}),
-            )
-            results_dict = [result.to_dict() for result in results]
-            print(json.dumps(results_dict, indent=2, default=lambda o: o.tolist() if isinstance(o, np.ndarray) else o))
-        elif args.command == "tsne-plot":
-            # Execute the t-SNE plot generation
-            plot_path = client.generate_tsne_plot(
-                collection=args.collection,
-                record_ids=args.record_ids,
-                perplexity=args.perplexity,
-                random_state=args.random_state,
-                outfile=args.outfile
-            )
-            print(f"Generated t-SNE plot for collection '{args.collection}'")
-            print(f"Plot saved to: {plot_path}")
-        else:
-            return False
-        return True
+        globals()[handler_name](client, args)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
-        return True
+    return True
+
+
+def _handle_list_collections(client, args=None):
+    names = [col.name for col in client.list_collections()]
+    print(json.dumps(names, indent=2))
+
+
+def _handle_create_collection(client, args):
+    schema = CollectionSchema(name=args.name, dim=args.dim, vector_type=args.type)
+    client.create_collection(schema)
+    print(f"Created collection '{args.name}'")
+
+
+def _handle_insert(client, args):
+    data = json.loads(args.data)
+    meta = json.loads(args.metadata)
+    packet = DataPacket.create_record(
+        record_id=args.id,
+        vector=args.vector,
+        original_data=data,
+        metadata=meta or {},
+    )
+    rec_id = client.insert(collection=args.collection, packet=packet)
+    print(rec_id)
+
+
+def _handle_get(client, args):
+    rec = client.get(args.collection, args.id)
+    def _default(o):
+        return o.tolist() if isinstance(o, np.ndarray) else o
+    print(json.dumps(rec.to_dict(), indent=2, default=_default))
+
+
+def _handle_delete(client, args):
+    client.delete(args.collection, args.id)
+    print(f"Deleted record '{args.id}'")
+
+
+def _handle_search(client, args):
+    where = json.loads(args.where) or {}
+    where_doc = json.loads(args.where_document) or {}
+    packet = QueryPacket(args.vector, k=args.k, where=where, where_document=where_doc)
+    results = client.search(collection=args.collection, packet=packet)
+    def _default(o):
+        return o.tolist() if isinstance(o, np.ndarray) else o
+    print(json.dumps([r.to_dict() for r in results], indent=2, default=_default))
+
+
+def _handle_tsne_plot(client, args):
+    path = client.generate_tsne_plot(
+        collection=args.collection,
+        record_ids=args.record_ids,
+        perplexity=args.perplexity,
+        random_state=args.random_state,
+        outfile=args.outfile,
+    )
+    print(f"Generated t-SNE plot for collection '{args.collection}'")
+    print(f"Plot saved to: {path}")
 
 
 def main():
     parser = get_parser()
-    # First parse only --root to init client
-    if len(sys.argv) > 1 and sys.argv[1] not in ["-h", "--help"] and not sys.argv[1].startswith("-"):
-        args = parser.parse_args()
-        if not args.command:
-            parser.print_help()
-            sys.exit(0)
-        client = VecraftClient(root=args.root)
-        execute_command(client, args)
+    if _has_direct_command_args():
+        _run_direct(parser)
     else:
-        # interactive mode
-        print("Entering interactive mode (type 'help' for commands, 'exit' to quit)")
-        client = VecraftClient(root=os.environ.get("VCRAFT_ROOT", os.getcwd()))
-        parser = get_parser()
-        while True:
-            try:
-                line = input("vecraft> ")
-            except EOFError:
-                break
-            if not line or line.strip().lower() in ["exit", "quit"]:
-                break
-            if line.strip().lower() in ["help", "?", "h"]:
-                parser.print_help()
+        _run_interactive(parser)
+
+def _has_direct_command_args() -> bool:
+    # non-flag first argument signals a one-off command invocation
+    return len(sys.argv) > 1 and not sys.argv[1].startswith('-')
+
+def _run_direct(parser):
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+    client = VecraftClient(root=args.root)
+    execute_command(client, args)
+
+def _run_interactive(parser):
+    print("Entering interactive mode (type 'help' for commands, 'exit' to quit)")
+    client = VecraftClient(root=os.environ.get("VCRAFT_ROOT", os.getcwd()))
+
+    while True:
+        try:
+            line = input("vecraft> ")
+        except EOFError:
+            break
+
+        line = line.strip()
+        if not line or _is_exit_command(line):
+            break
+
+        if _is_help_command(line):
+            parser.print_help()
+            continue
+
+        try:
+            parts = shlex.split(line)
+            args = parser.parse_args(parts)
+            if not args.command:
+                print("No command given. Type 'help' to see available commands.")
                 continue
-            try:
-                parts = shlex.split(line)
-                args = parser.parse_args(parts)
-                if not args.command:
-                    print("No command given. Type 'help' to see available commands.")
-                    continue
-                execute_command(client, args)
-            except SystemExit as e:
-                # argparse parse error
-                print(f"Error: {e}", file=sys.stderr)
-                continue
-        print("Bye!")
+            execute_command(client, args)
+
+        except SystemExit as e:
+            # Reraise help or explicit exits so the app actually stops;
+            # otherwise treat as a parse error and continue.
+            if e.code == 0:
+                raise
+            print(f"Error: {e}", file=sys.stderr)
+
+    print("Bye!")
+
+def _is_exit_command(line: str) -> bool:
+    return line.lower() in ("exit", "quit")
+
+def _is_help_command(line: str) -> bool:
+    return line.lower() in ("help", "?", "h")
 
 
 def entry_point():
