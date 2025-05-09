@@ -1,7 +1,7 @@
 import unittest
 
 from src.vecraft_db.core.data_model.index_packets import MetadataPacket
-from src.vecraft_db.index.user_metadata.user_metadata_index import InvertedIndexMetadataIndex
+from src.vecraft_db.index.user_metadata.inverted_based_user_metadata_index import InvertedIndexMetadataIndex
 
 
 class TestMetadataIndex(unittest.TestCase):

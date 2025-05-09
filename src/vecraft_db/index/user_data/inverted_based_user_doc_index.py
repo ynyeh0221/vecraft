@@ -136,44 +136,61 @@ class InvertedIndexDocIndex(DocIndexInterface):
         item.validate_checksum()
 
     def _remove_from_indices(self, record_id):
-        """Remove document from all indices"""
-        # Remove from field index
-        if record_id in self._doc_fields:
-            for field, value in self._doc_fields[record_id].items():
-                if isinstance(value, set):
-                    # Handle case where we stored individual items
-                    for item in value:
-                        if field in self._field_index and item in self._field_index[field]:
-                            self._field_index[field][item].discard(record_id)
-                            # Clean up empty sets
-                            if not self._field_index[field][item]:
-                                del self._field_index[field][item]
-                else:
-                    # Handle scalar value case
-                    if field in self._field_index and value in self._field_index[field]:
-                        self._field_index[field][value].discard(record_id)
-                        # Clean up empty sets
-                        if not self._field_index[field][value]:
-                            del self._field_index[field][value]
+        """Remove document from all indices."""
+        self._remove_doc_fields(record_id)
+        self._remove_doc_terms(record_id)
 
-                # Clean up empty field entries
-                if field in self._field_index and not self._field_index[field]:
-                    del self._field_index[field]
+    def _remove_doc_fields(self, record_id):
+        """Remove a record’s entries from the field‐based indices."""
+        if record_id not in self._doc_fields:
+            return
 
-            # Remove doc fields tracking
-            del self._doc_fields[record_id]
+        for field, value in self._doc_fields[record_id].items():
+            self._remove_field_index_entries(record_id, field, value)
 
-        # Remove from term index
-        if record_id in self._doc_terms:
-            for term in self._doc_terms[record_id]:
-                if term in self._term_index:
-                    self._term_index[term].discard(record_id)
-                    # Clean up empty sets
-                    if not self._term_index[term]:
-                        del self._term_index[term]
+        del self._doc_fields[record_id]
 
-            # Remove doc terms tracking
-            del self._doc_terms[record_id]
+    def _remove_field_index_entries(self, record_id, field, value):
+        """
+        Remove one field→value entry (or set of values) for a record,
+        cleaning up empty buckets as we go.
+        """
+        # Normalize to an iterable of “items”
+        items = value if isinstance(value, set) else {value}
+
+        for item in items:
+            field_bucket = self._field_index.get(field)
+            if not field_bucket or item not in field_bucket:
+                continue
+
+            s = field_bucket[item]
+            s.discard(record_id)
+            if not s:
+                del field_bucket[item]
+
+        # If that field has no more values, drop the entire field
+        if field in self._field_index and not self._field_index[field]:
+            del self._field_index[field]
+
+    def _remove_doc_terms(self, record_id):
+        """Remove a record’s entries from the term‐based index."""
+        if record_id not in self._doc_terms:
+            return
+
+        for term in self._doc_terms[record_id]:
+            self._remove_term_index_entry(record_id, term)
+
+        del self._doc_terms[record_id]
+
+    def _remove_term_index_entry(self, record_id, term):
+        """Remove a single term→record mapping, cleaning up if empty."""
+        if term not in self._term_index:
+            return
+
+        s = self._term_index[term]
+        s.discard(record_id)
+        if not s:
+            del self._term_index[term]
 
     def get_matching_ids(self,
                          allowed_ids: Optional[Set[str]] = None,
