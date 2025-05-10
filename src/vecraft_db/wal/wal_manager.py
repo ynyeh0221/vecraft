@@ -12,35 +12,35 @@ from src.vecraft_db.core.interface.wal_interface import WALInterface
 
 class WALManager(WALInterface):
     """
-        Write-Ahead Logging manager with two-phase commit support.
+    Write-Ahead Logging manager with two-phase commit support.
 
-        This class implements a WAL mechanism with two-phase commit protocol to ensure
-        data durability and crash recovery. It provides multiprocess safety through
-        file locking and maintains atomicity of operations.
+    This class implements a WAL mechanism with two-phase commit protocol to ensure
+    data durability and crash recovery. It provides multiprocess safety through
+    file locking and maintains atomicity of operations.
 
-        The WAL works in two phases:
-        1. Prepare phase: Data is written to WAL but not committed
-        2. Commit phase: A commit marker is written to finalize the transaction
+    The WAL works in two phases:
+    1. Prepare phase: Data is written to WAL but not committed
+    2. Commit phase: A commit marker is written to finalize the transaction
 
-        Only data with commit markers will be replayed during recovery.
+    Only data with commit markers will be replayed during recovery.
 
-        Attributes:
-            _file (Path): Path to the WAL file
+    Attributes:
+        _file (Path): Path to the WAL file
 
-        Example:
-            >>> wal = WALManager(Path("/tmp/database.wal"))
-            >>> data_packet = DataPacket(record_id="123", data={"key": "value"})
-            >>>
-            >>> # Two-phase commit
-            >>> wal.append(data_packet, phase="prepare")
-            >>> # ... perform actual data operations ...
-            >>> wal.commit("123")
-            >>>
-            >>> # Recovery after crash
-            >>> def handler(record):
-            ...     print(f"Replaying: {record}")
-            >>> count = wal.replay(handler)
-        """
+    Example:
+        >>> wal = WALManager(Path("/tmp/database.wal"))
+        >>> data_packet = DataPacket(record_id="123", data={"key": "value"})
+        >>>
+        >>> # Two-phase commit
+        >>> wal.append(data_packet, phase="prepare")
+        >>> # ... perform actual data operations ...
+        >>> wal.commit("123")
+        >>>
+        >>> # Recovery after crash
+        >>> def handler(record):
+        ...     print(f"Replaying: {record}")
+        >>> count = wal.replay(handler)
+    """
     def __init__(self, wal_path: Path):
         self._file = wal_path
 
