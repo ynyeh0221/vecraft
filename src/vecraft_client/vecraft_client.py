@@ -18,7 +18,7 @@ from src.vecraft_db.core.data_model.index_packets import CollectionSchema
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
 from src.vecraft_db.core.data_model.search_data_packet import SearchDataPacket
 from src.vecraft_db.engine.vector_db import VectorDB
-from src.vecraft_db.index.user_data.inverted_based_user_doc_index import InvertedIndexDocIndex
+from src.vecraft_db.index.user_data.inverted_based_user_data_index import InvertedIndexDocIndex
 from src.vecraft_db.index.user_metadata.inverted_based_user_metadata_index import InvertedIndexMetadataIndex
 from src.vecraft_db.index.vector.hnsw import HNSW
 from src.vecraft_db.query.executor import Executor

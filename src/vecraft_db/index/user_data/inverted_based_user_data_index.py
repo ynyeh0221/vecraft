@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Optional, Set, Dict, Any
 
 from src.vecraft_db.core.data_model.index_packets import DocumentPacket
-from src.vecraft_db.core.interface.user_doc_index_interface import DocIndexInterface
+from src.vecraft_db.core.interface.user_data_index_interface import DocIndexInterface
 from src.vecraft_db.index.user_data.document_filter_evaluator import DocumentFilterEvaluator
 
 

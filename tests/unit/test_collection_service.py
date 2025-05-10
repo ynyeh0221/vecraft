@@ -14,7 +14,7 @@ from src.vecraft_db.core.data_model.index_packets import LocationPacket, VectorP
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
 from src.vecraft_db.core.interface.catalog_interface import Catalog
 from src.vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
-from src.vecraft_db.core.interface.user_doc_index_interface import DocIndexInterface
+from src.vecraft_db.core.interface.user_data_index_interface import DocIndexInterface
 from src.vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
 from src.vecraft_db.core.interface.vector_index_interface import Index
 from src.vecraft_db.core.interface.wal_interface import WALInterface
