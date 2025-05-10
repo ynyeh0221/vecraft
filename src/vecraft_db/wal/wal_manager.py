@@ -11,11 +11,56 @@ from src.vecraft_db.core.interface.wal_interface import WALInterface
 
 
 class WALManager(WALInterface):
+    """
+        Write-Ahead Logging manager with two-phase commit support.
+
+        This class implements a WAL mechanism with two-phase commit protocol to ensure
+        data durability and crash recovery. It provides multiprocess safety through
+        file locking and maintains atomicity of operations.
+
+        The WAL works in two phases:
+        1. Prepare phase: Data is written to WAL but not committed
+        2. Commit phase: A commit marker is written to finalize the transaction
+
+        Only data with commit markers will be replayed during recovery.
+
+        Attributes:
+            _file (Path): Path to the WAL file
+
+        Example:
+            >>> wal = WALManager(Path("/tmp/database.wal"))
+            >>> data_packet = DataPacket(record_id="123", data={"key": "value"})
+            >>>
+            >>> # Two-phase commit
+            >>> wal.append(data_packet, phase="prepare")
+            >>> # ... perform actual data operations ...
+            >>> wal.commit("123")
+            >>>
+            >>> # Recovery after crash
+            >>> def handler(record):
+            ...     print(f"Replaying: {record}")
+            >>> count = wal.replay(handler)
+        """
     def __init__(self, wal_path: Path):
         self._file = wal_path
 
     def append(self, data_packet: DataPacket, phase: str = "prepare") -> None:
-        """Append a JSON-record with phase marker, flush & fsync."""
+        """
+        Append a data packet to the WAL with phase marker.
+
+        This method writes the data packet to the WAL file with a phase marker
+        for two-phase commit. To write is immediately flushed and fsync'd to
+        ensure durability. File locking is used for multiprocess safety.
+
+        Args:
+            data_packet (DataPacket): The data packet to append
+            phase (str, optional): Phase marker ("prepare" or "commit").
+                                 Defaults to "prepare".
+
+        Note:
+            The method automatically adds a "_phase" field to the record
+            to track its commit status during recovery.
+        """
         # Add phase marking for two-phase commit
         record = data_packet.to_dict()
         record["_phase"] = phase
@@ -32,7 +77,16 @@ class WALManager(WALInterface):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     def commit(self, record_id: str) -> None:
-        """Write a commit marker for a specific record."""
+        """
+        Write a commit marker for a specific record.
+
+        This method writes a commit marker to the WAL to indicate that a record
+        should be considered committed. Only records with commit markers will be
+        replayed during recovery.
+
+        Args:
+            record_id (str): The ID of the record to commit
+        """
         commit_record = {"record_id": record_id, "_phase": "commit"}
 
         with open(self._file, 'a', encoding='utf-8') as f:
@@ -47,8 +101,25 @@ class WALManager(WALInterface):
 
     def replay(self, handler: Callable[[dict], None]) -> int:
         """
-        Safe replay: rename WAL first, then read, only delete on success.
-        Only replay entries with commit markers.
+        Replay committed entries from the WAL.
+
+        This method safely replays the WAL by:
+        1. Renaming the WAL file to prevent new writes during replay
+        2. Reading and parsing all entries
+        3. Applying only committed entries to the handler
+        4. Deleting the WAL file on success or restoring it on failure
+
+        Only entries that have corresponding commit markers will be replayed.
+
+        Args:
+            handler (Callable[[dict], None]): Function to handle each committed entry
+
+        Returns:
+            int: Number of entries replayed
+
+        Raises:
+            Exception: Any exception during replay will cause the WAL file to be
+                      restored and the exception re-raised
         """
         if not self._file.exists():
             return 0
@@ -106,6 +177,12 @@ class WALManager(WALInterface):
         return count
 
     def clear(self) -> None:
-        """Manually clear the WAL file."""
+        """
+        Clear the WAL file.
+
+        This method removes the WAL file if it exists. Use with caution as
+        this will delete all uncommitted and committed entries that haven't
+        been replayed.
+        """
         if self._file.exists():
             self._file.unlink()
