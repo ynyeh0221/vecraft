@@ -1,4 +1,7 @@
 import logging
+import os
+import pickle
+import tempfile
 from enum import Enum
 from typing import List, Tuple, Union, Optional, Any, Set
 
@@ -502,9 +505,6 @@ class HNSW:
         Returns:
             bytes: Binary representation of the record_vector
         """
-        import pickle
-        import tempfile
-        import os
 
         # Handle the case when record_vector is not initialized
         if self._index is None:
@@ -520,9 +520,24 @@ class HNSW:
                 'id_mapper': self._id_mapper,
             })
 
+        # Handle the case when index is initialized but empty
+        if self._current_elements == 0:
+            return pickle.dumps({
+                'initialized': True,
+                'empty': True,  # Special flag for empty index
+                'dim': self._dim,
+                'metric': self._metric,
+                'max_elements': self._max_elements,
+                'current_elements': 0,
+                'ef_construction': self._ef_construction,
+                'M': self._M,
+                'normalize_vectors': self._normalize_vectors,
+                'auto_resize_dim': self._auto_resize_dim,
+                'pad_value': self._pad_value,
+                'id_mapper': self._id_mapper,
+            })
+
         # Create temporary directory and file to save the record_vector
-        # Must use the filesystem as an intermediary because hnswlib's save_index method
-        # only accepts file paths
         with tempfile.TemporaryDirectory() as temp_dir:
             index_file = os.path.join(temp_dir, "record_vector.bin")
 
@@ -536,6 +551,7 @@ class HNSW:
             # Package the record_vector data and other parameters into a state object
             state = {
                 'initialized': True,
+                'empty': False,
                 'index_data': index_data,
                 'dim': self._dim,
                 'metric': self._metric,
@@ -549,26 +565,11 @@ class HNSW:
                 'id_mapper': self._id_mapper,
             }
 
-            # Temporary directory and file will be automatically deleted when exiting the with block
             return pickle.dumps(state)
 
     def deserialize(self, data: bytes) -> None:
         """
         Deserialize the record_vector from a byte representation.
-
-        Due to hnswlib API limitations, the load_index method only accepts file paths
-        rather than memory objects. Therefore, we need to create temporary files,
-        write the record_vector data to the temporary file, and then load the record_vector from the file.
-        This process includes:
-        1. Parsing the serialized state object
-        2. Setting basic parameters
-        3. Creating a temporary directory and file
-        4. Writing the record_vector data to the temporary file
-        5. Initializing the record_vector and loading from the temporary file
-        6. Setting record_vector parameters
-
-        Args:
-            data (bytes): Binary representation of the record_vector
         """
         import pickle
         import tempfile
@@ -592,11 +593,18 @@ class HNSW:
 
         # Handle the case when record_vector was not initialized
         if not state.get('initialized', True):
+            self._index = None
+            return
+
+        # Handle the case when index was initialized but empty
+        if state.get('empty', False):
+            # Initialize an empty index
+            self._initialize_index()
+            self._max_elements = state['max_elements']
+            self._current_elements = 0
             return
 
         # Create temporary directory and file to load the record_vector
-        # Must use the filesystem as an intermediary because hnswlib's load_index method
-        # only accepts file paths
         with tempfile.TemporaryDirectory() as temp_dir:
             index_file = os.path.join(temp_dir, "record_vector.bin")
 
@@ -614,5 +622,3 @@ class HNSW:
 
             # Set search parameters
             self._index.set_ef(max(self._ef_construction, 50))
-
-            # Temporary directory and file will be automatically deleted when exiting the with block

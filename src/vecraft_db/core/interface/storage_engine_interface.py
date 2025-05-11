@@ -184,3 +184,7 @@ class StorageIndexEngine(StorageEngine, RecordLocationIndex, ABC):
 
     def verify_consistency(self):
         ...
+
+    def write_and_index(self, data, real_loc):
+        """Atomic operation for storage write and storage location index update."""
+        pass

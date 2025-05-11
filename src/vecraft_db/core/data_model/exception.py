@@ -325,3 +325,49 @@ class TsnePlotGeneratingFailureException(Exception):
         if details:
             return f"{self.message} ({', '.join(details)})"
         return self.message
+
+class WriteConflictException(Exception):
+    """Raised when a write-write conflict is detected"""
+
+    def __init__(self, message, collection=None, record_id=None, cause: Exception = None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
+
+class ReadWriteConflictException(Exception):
+    """Raised when a read-write conflict is detected (for full snapshot isolation)"""
+
+    def __init__(self, message, collection=None, record_id=None, cause: Exception = None):
+        self.collection = collection
+        self.record_id = record_id
+        self.message = message
+        self.cause = cause
+        super().__init__(self.message)
+
+    def __str__(self):
+        details = []
+        if self.collection is not None:
+            details.append(f"collection={self.collection}")
+        if self.record_id is not None:
+            details.append(f"record id={self.record_id}")
+        if self.cause is not None:
+            details.append(f"cause={self.cause}")
+
+        if details:
+            return f"{self.message} ({', '.join(details)})"
+        return self.message
