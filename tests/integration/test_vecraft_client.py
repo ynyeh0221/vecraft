@@ -26,8 +26,152 @@ class TestVecraftClient(unittest.TestCase):
 
     def tearDown(self):
         """Tear down test fixtures after each test method."""
+        # Clean up any snapshot files created during tests
+        snapshot_patterns = ["*.idxsnap", "*.metasnap", "*.docsnap", "*.tempsnap"]
+        for pattern in snapshot_patterns:
+            for snap_file in Path.cwd().glob(pattern):
+                try:
+                    snap_file.unlink()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+
         # Clean up the temporary directory
         shutil.rmtree(self.test_dir)
+
+    def test_load_snapshot(self):
+        """Test that data persists through snapshots and is correctly loaded."""
+        collection = "snapshot_test"
+
+        # Create collection
+        if collection not in self.client.list_collections():
+            self.client.create_collection(
+                CollectionSchema(name=collection, dim=16, vector_type="float32")
+            )
+
+        # Insert some records with structured data
+        rng = np.random.default_rng(42)
+        records = []
+        for i in range(10):
+            data = {
+                "text": f"record_{i}",
+                "index": i,
+                "description": f"This is test record number {i}"
+            }
+            vector = rng.random(16).astype(np.float32)
+
+            rec_id = self.client.insert(
+                collection=collection,
+                packet=DataPacket.create_record(
+                    record_id=f"rec_{i}",
+                    vector=vector,
+                    original_data=data,
+                    metadata={"category": f"cat_{i % 3}", "index": i}
+                )
+            )
+            records.append((rec_id.record_id, vector, data))
+
+        # Force flush to create snapshots
+        self.client.db.flush()
+
+        # Create new client instance to test snapshot loading
+        new_client = VecraftClient(root=str(self.test_dir))
+
+        # Test 1: Verify basic retrieval works (storage is loaded)
+        for rec_id, original_vector, original_data in records:
+            fetched = new_client.get(collection, rec_id)
+            self.assertEqual(original_data, fetched.original_data)
+
+        # Test 2: Verify vector index is loaded correctly
+        # Do exact match search for first record
+        first_results = new_client.search(
+            collection=collection,
+            packet=QueryPacket(
+                query_vector=records[0][1],  # First record's vector
+                k=1
+            )
+        )
+        self.assertEqual(1, len(first_results))
+        self.assertEqual(records[0][0], first_results[0].data_packet.record_id)
+        self.assertTrue(np.isclose(first_results[0].distance, 0.0, atol=1e-6))
+
+        # Test 3: Verify metadata index is loaded correctly
+        cat_1_results = new_client.search(
+            collection=collection,
+            packet=QueryPacket(
+                query_vector=rng.random(16).astype(np.float32),
+                k=10,
+                where={"category": "cat_1"}
+            )
+        )
+
+        # Should find records with index 1, 4, 7 (i % 3 == 1)
+        expected_indices = {1, 4, 7}
+        found_indices = {r.data_packet.original_data["index"] for r in cat_1_results}
+        self.assertEqual(expected_indices, found_indices)
+
+        # Test 4: Test numeric filtering (metadata index functionality)
+        high_index_results = new_client.search(
+            collection=collection,
+            packet=QueryPacket(
+                query_vector=rng.random(16).astype(np.float32),
+                k=10,
+                where={"index": {"$gte": 7}}
+            )
+        )
+
+        # Should find records with index 7, 8, 9
+        high_indices = {r.data_packet.original_data["index"] for r in high_index_results}
+        self.assertEqual({7, 8, 9}, high_indices)
+
+        # Test 5: Operations after loading from snapshots
+        # Insert a new record
+        new_data = {"text": "new_record", "index": 99}
+        new_vector = rng.random(16).astype(np.float32)
+
+        preimage = new_client.insert(
+            collection=collection,
+            packet=DataPacket.create_record(
+                record_id="new_rec",
+                vector=new_vector,
+                original_data=new_data,
+                metadata={"category": "new_cat", "index": 99}
+            )
+        )
+        self.assertEqual("new_rec", preimage.record_id)
+
+        # Verify it can be retrieved
+        fetched_new = new_client.get(collection, "new_rec")
+        self.assertEqual(new_data, fetched_new.original_data)
+
+        # Delete an old record
+        new_client.delete(collection=collection, record_id="rec_0")
+
+        # Verify deletion
+        with self.assertRaises(RecordNotFoundError):
+            new_client.get(collection, "rec_0")
+
+        # Test 6: Persistence through another restart
+        new_client.db.flush()
+        final_client = VecraftClient(root=str(self.test_dir))
+
+        # Verify changes persisted
+        with self.assertRaises(RecordNotFoundError):
+            final_client.get(collection, "rec_0")
+
+        final_fetched = final_client.get(collection, "new_rec")
+        self.assertEqual(new_data, final_fetched.original_data)
+
+        # Final count verification
+        all_results = final_client.search(
+            collection=collection,
+            packet=QueryPacket(
+                query_vector=rng.random(16).astype(np.float32),
+                k=20
+            )
+        )
+
+        # Should have 10 original - 1 deleted + 1 new = 10 records
+        self.assertEqual(10, len(all_results))
 
     def test_persistence_across_restarts(self):
         """Verify that records are reconstructed correctly after restarting the client."""
