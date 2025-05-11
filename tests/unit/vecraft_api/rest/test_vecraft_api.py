@@ -4,9 +4,9 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 from fastapi.testclient import TestClient
 
-from src.vecraft_api.data_model_utils import DataModelUtils
-from src.vecraft_api.data_models import DataPacketModel, NumpyArray, QueryPacketModel, InsertRequest, SearchRequest
-from src.vecraft_api.vecraft_api import VecraftAPI
+from src.vecraft_api.rest.data_model_utils import DataModelUtils
+from src.vecraft_api.rest.data_models import DataPacketModel, NumpyArray, QueryPacketModel, InsertRequest, SearchRequest
+from src.vecraft_api.rest.vecraft_rest_api_server import VecraftAPI
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError, RecordNotFoundError
 from src.vecraft_db.core.data_model.search_data_packet import SearchDataPacket

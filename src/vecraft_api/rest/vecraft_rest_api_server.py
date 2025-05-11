@@ -4,8 +4,8 @@ import os
 import stat
 from fastapi import FastAPI, HTTPException
 
-from src.vecraft_api.data_model_utils import DataModelUtils
-from src.vecraft_api.data_models import DataPacketModel, InsertRequest, SearchRequest
+from src.vecraft_api.rest.data_model_utils import DataModelUtils
+from src.vecraft_api.rest.data_models import DataPacketModel, InsertRequest, SearchRequest
 from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError, RecordNotFoundError
 
 
@@ -21,7 +21,7 @@ class VecraftAPI:
             os.makedirs(root, mode=0o700, exist_ok=True)
 
         # Import inside init so tests can patch VecraftClient
-        from src.vecraft_client.vecraft_client import VecraftClient
+        from src.vecraft_db.vecraft_client.vecraft_client import VecraftClient
         self.client = VecraftClient(root, vector_index_params)
 
         self.app = FastAPI(

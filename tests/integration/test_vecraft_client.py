@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.vecraft_client.vecraft_client import VecraftClient
+from src.vecraft_db.client.vecraft_client import VecraftClient
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.exception import RecordNotFoundError, ChecksumValidationFailureError
 from src.vecraft_db.core.data_model.index_packets import CollectionSchema

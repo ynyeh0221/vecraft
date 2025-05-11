@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.vecraft_api.data_model_utils import DataModelUtils
-from src.vecraft_api.data_models import DataPacketModel, NumpyArray, QueryPacketModel
+from src.vecraft_api.rest.data_model_utils import DataModelUtils
+from src.vecraft_api.rest.data_models import DataPacketModel, NumpyArray, QueryPacketModel
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
 

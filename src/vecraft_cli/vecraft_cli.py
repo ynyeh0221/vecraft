@@ -6,7 +6,7 @@ import sys
 
 import numpy as np
 
-from src.vecraft_client.vecraft_client import VecraftClient
+from src.vecraft_db.client.vecraft_client import VecraftClient
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.index_packets import CollectionSchema
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
@@ -117,7 +117,7 @@ def execute_command(client, args):
     return True
 
 
-def _handle_list_collections(client, args=None):
+def _handle_list_collections(client, args=None): # NOSONAR
     names = [col.name for col in client.list_collections()]
     print(json.dumps(names, indent=2))
 
