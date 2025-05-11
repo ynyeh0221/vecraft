@@ -13,7 +13,7 @@ from src.vecraft_db.core.data_model.index_packets import LocationPacket
 from src.vecraft_db.core.interface.catalog_interface import Catalog
 from src.vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
 from src.vecraft_db.engine.collection_service import CollectionService
-from tests.unit.test_collection_service import DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
+from tests.unit.vecraft_db.test_collection_service import DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
 
 
