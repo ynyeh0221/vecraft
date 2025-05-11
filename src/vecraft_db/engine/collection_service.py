@@ -68,6 +68,10 @@ class CollectionService:
 
         logger.info("CollectionService initialized with MVCC")
 
+    # ------------------------
+    # GET/INIT COLLECTION
+    # ------------------------
+
     def _get_or_init_collection(self, name: str):
         """Initialize collection with consistency check on startup."""
         # Fast-path: if already initialized, do nothing
@@ -150,6 +154,10 @@ class CollectionService:
 
             logger.info(f"Collection {name} initialized successfully")
 
+    # ------------------------
+    # SAVE/LOAD SNAPSHOTS
+    # ------------------------
+
     def _save_snapshots(self, name: str, version: CollectionVersion):
         """Save snapshots to main files atomically via tempsnaps."""
         logger.info(f"Saving snapshots for collection {name}")
@@ -190,6 +198,10 @@ class CollectionService:
         logger.info(f"Snapshots not found for collection {name}")
         return False
 
+    # ------------------------
+    # REPLAY
+    # ------------------------
+
     def _replay_entry(self, entry: dict, version: CollectionVersion) -> None:
         """Only replay entries that have been committed."""
         # Remove the _phase marker before creating DataPacket
@@ -214,6 +226,77 @@ class CollectionService:
             logger.error(f"Error replaying {data_packet.type} operation for {data_packet.record_id}: {str(e)}",
                          exc_info=True)
             raise
+
+    # ------------------------
+    # INSERT API
+    # ------------------------
+
+    def insert(self, collection: str, data_packet: DataPacket) -> DataPacket:
+        """Insert with two-phase commit to WAL and MVCC isolation."""
+        max_retries = 1
+        for _ in range(max_retries):
+            self._get_or_init_collection(collection)
+            version = self._mvcc_manager.begin_transaction(collection)
+            wrapped_storage = StorageWrapper(version.storage, version)
+            original_storage = version.storage
+            version.storage = wrapped_storage
+
+            try:
+                # WAL prepare, apply insert, WAL commit
+                version.wal.append(data_packet, phase="prepare")
+                preimage = self._apply_insert(version, data_packet)
+                version.wal.commit(data_packet.record_id)
+
+                # Finish
+                data_packet.validate_checksum()
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=True)
+                return preimage
+
+            except WriteConflictException:
+                # rollback and retry
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=False)
+                continue
+
+            except Exception:
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=False)
+                raise
+
+        raise WriteConflictException(f"Insert {data_packet.record_id} failed after {max_retries} retries")
+
+    def _rollback_insert(self, version: CollectionVersion, data_packet: DataPacket,
+                         preimage: DataPacket, old_loc: LocationPacket, new_loc: LocationPacket):
+        # Rollback vector
+        try:
+            version.vec_index.delete(record_id=data_packet.record_id)
+            if not preimage.is_nonexistent():
+                version.vec_index.add(preimage.to_vector_packet())
+        except Exception:
+            logger.debug("Failed to rollback vector index")
+
+        # Rollback doc and meta
+        for idx_name, fn in [('doc_index', preimage.to_document_packet),
+                             ('meta_index', preimage.to_metadata_packet)]:
+            try:
+                idx = getattr(version, idx_name)
+                idx.delete(fn() if idx_name.endswith('index') else data_packet)
+                if not preimage.is_nonexistent():
+                    idx.add(fn())
+            except Exception:
+                logger.debug(f"Failed to rollback {idx_name}")
+
+        # Rollback storage
+        if new_loc:
+            try:
+                version.storage.mark_deleted(data_packet.record_id)
+                version.storage.delete_record(data_packet.record_id)
+                if old_loc:
+                    old_loc.validate_checksum()
+                    version.storage.add_record(old_loc)
+            except Exception:
+                logger.debug("Failed to rollback storage")
 
     def _apply_insert(self, version: CollectionVersion, data_packet: DataPacket) -> DataPacket:
         """Apply insert with improved storage engine atomicity."""
@@ -293,37 +376,44 @@ class CollectionService:
             logger.debug(msg)
             raise VectorIndexBuildingException(msg, e)
 
-    def _rollback_insert(self, version: CollectionVersion, data_packet: DataPacket,
-                         preimage: DataPacket, old_loc: LocationPacket, new_loc: LocationPacket):
-        # Rollback vector
-        try:
-            version.vec_index.delete(record_id=data_packet.record_id)
-            if not preimage.is_nonexistent():
-                version.vec_index.add(preimage.to_vector_packet())
-        except Exception:
-            logger.debug("Failed to rollback vector index")
+    # ------------------------
+    # DELETE API
+    # ------------------------
 
-        # Rollback doc and meta
-        for idx_name, fn in [('doc_index', preimage.to_document_packet),
-                             ('meta_index', preimage.to_metadata_packet)]:
-            try:
-                idx = getattr(version, idx_name)
-                idx.delete(fn() if idx_name.endswith('index') else data_packet)
-                if not preimage.is_nonexistent():
-                    idx.add(fn())
-            except Exception:
-                logger.debug(f"Failed to rollback {idx_name}")
+    def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
+        """Delete with two-phase commit to WAL and MVCC isolation."""
+        max_retries = 1
+        for _ in range(max_retries):
+            self._get_or_init_collection(collection)
+            version = self._mvcc_manager.begin_transaction(collection)
+            wrapped_storage = StorageWrapper(version.storage, version)
+            original_storage = version.storage
+            version.storage = wrapped_storage
 
-        # Rollback storage
-        if new_loc:
             try:
-                version.storage.mark_deleted(data_packet.record_id)
-                version.storage.delete_record(data_packet.record_id)
-                if old_loc:
-                    old_loc.validate_checksum()
-                    version.storage.add_record(old_loc)
+                # WAL prepare, apply to delete, WAL commit
+                version.wal.append(data_packet, phase="prepare")
+                preimage = self._apply_delete(version, data_packet)
+                version.wal.commit(data_packet.record_id)
+
+                # Finish
+                data_packet.validate_checksum()
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=True)
+                return preimage
+
+            except WriteConflictException:
+                # rollback and retry
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=False)
+                continue
+
             except Exception:
-                logger.debug("Failed to rollback storage")
+                version.storage = original_storage
+                self._mvcc_manager.end_transaction(collection, version, commit=False)
+                raise
+
+        raise WriteConflictException(f"Delete {data_packet.record_id} failed after {max_retries} retries")
 
     def _apply_delete(self, version: CollectionVersion, data_packet: DataPacket) -> DataPacket:
         # Record that we're modifying this record
@@ -416,75 +506,9 @@ class CollectionService:
             logger.error(f"Rollback complete for record {record_id}")
             raise
 
-    def insert(self, collection: str, data_packet: DataPacket) -> DataPacket:
-        """Insert with two-phase commit to WAL and MVCC isolation."""
-        max_retries = 1
-        for _ in range(max_retries):
-            self._get_or_init_collection(collection)
-            version = self._mvcc_manager.begin_transaction(collection)
-            wrapped_storage = StorageWrapper(version.storage, version)
-            original_storage = version.storage
-            version.storage = wrapped_storage
-
-            try:
-                # WAL prepare, apply insert, WAL commit
-                version.wal.append(data_packet, phase="prepare")
-                preimage = self._apply_insert(version, data_packet)
-                version.wal.commit(data_packet.record_id)
-
-                # Finish
-                data_packet.validate_checksum()
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=True)
-                return preimage
-
-            except WriteConflictException:
-                # rollback and retry
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=False)
-                continue
-
-            except Exception:
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=False)
-                raise
-
-        raise WriteConflictException(f"Insert {data_packet.record_id} failed after {max_retries} retries")
-
-    def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
-        """Delete with two-phase commit to WAL and MVCC isolation."""
-        max_retries = 1
-        for _ in range(max_retries):
-            self._get_or_init_collection(collection)
-            version = self._mvcc_manager.begin_transaction(collection)
-            wrapped_storage = StorageWrapper(version.storage, version)
-            original_storage = version.storage
-            version.storage = wrapped_storage
-
-            try:
-                # WAL prepare, apply to delete, WAL commit
-                version.wal.append(data_packet, phase="prepare")
-                preimage = self._apply_delete(version, data_packet)
-                version.wal.commit(data_packet.record_id)
-
-                # Finish
-                data_packet.validate_checksum()
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=True)
-                return preimage
-
-            except WriteConflictException:
-                # rollback and retry
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=False)
-                continue
-
-            except Exception:
-                version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=False)
-                raise
-
-        raise WriteConflictException(f"Delete {data_packet.record_id} failed after {max_retries} retries")
+    # ------------------------
+    # SEARCH API
+    # ------------------------
 
     def search(self, collection: str, query_packet: QueryPacket) -> List[SearchDataPacket]:
         self._get_or_init_collection(collection)
@@ -571,6 +595,10 @@ class CollectionService:
             results.append(SearchDataPacket(data_packet=rec, distance=dist))
         return results
 
+    # ------------------------
+    # GET API
+    # ------------------------
+
     def get(self, collection: str, record_id: str) -> DataPacket:
         self._get_or_init_collection(collection)
 
@@ -613,89 +641,9 @@ class CollectionService:
 
         return data_packet
 
-    def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
-        """
-        Flush in-memory indexes to files.
-
-        Args:
-            name: Collection name
-            version: Collection version to flush
-            to_temp_files: If True, save to .tempsnap files and then atomically replace
-                           the main snapshots; otherwise write directly to the main files.
-        """
-        metadata = self._collection_metadata[name]
-
-        tempfile_suffix = '.tempsnap'
-        if to_temp_files:
-            # preserve the original suffix and append ".tempsnap"
-            vec_path = metadata['vec_snap'].with_suffix(metadata['vec_snap'].suffix + tempfile_suffix)
-            meta_path = metadata['meta_snap'].with_suffix(metadata['meta_snap'].suffix + tempfile_suffix)
-            doc_path = metadata['doc_snap'].with_suffix(metadata['doc_snap'].suffix + tempfile_suffix)
-        else:
-            vec_path = metadata['vec_snap']
-            meta_path = metadata['meta_snap']
-            doc_path = metadata['doc_snap']
-
-        try:
-            # serialize & write
-            vec_data = version.vec_index.serialize()
-            vec_path.write_bytes(vec_data)
-
-            meta_data = version.meta_index.serialize()
-            meta_path.write_bytes(meta_data)
-
-            doc_data = version.doc_index.serialize()
-            doc_path.write_bytes(doc_data)
-
-            # fsync each
-            for p in (vec_path, meta_path, doc_path):
-                with open(p, 'rb') as f:
-                    os.fsync(f.fileno())
-
-            # atomic replace tempsnap → main
-            if to_temp_files:
-                os.replace(vec_path, metadata['vec_snap'])
-                os.replace(meta_path, metadata['meta_snap'])
-                os.replace(doc_path, metadata['doc_snap'])
-
-        except Exception:
-            # clean up on error
-            if to_temp_files:
-                for temp_file in (vec_path, meta_path, doc_path):
-                    if temp_file.exists():
-                        temp_file.unlink()
-            raise
-
-    def flush(self):
-        # Get consistent snapshot of collection names
-        with self._metadata_lock:
-            collections = list(self._collection_metadata.keys())
-
-        logger.info(f"Flushing {len(collections)} collections: {collections}")
-
-        # Flush each collection
-        for name in collections:
-            # Skip if collection is removed between listing and flushing
-            if name not in self._collection_metadata:
-                logger.warning(f"Collection {name} no longer exists, skipping flush")
-                continue
-
-            version = self._mvcc_manager.get_current_version(name)
-            if not version:
-                logger.warning(f"No current version for collection {name}, skipping flush")
-                continue
-
-            logger.info(f"Flushing {name} started")
-            start_time = time.time()
-
-            logger.debug(f"Flushing storage for collection {name}")
-            version.storage.flush()
-
-            logger.debug(f"Saving snapshots for collection {name}")
-            self._save_snapshots(name, version)
-
-            elapsed = time.time() - start_time
-            logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+    # ------------------------
+    # GENERATE TSNE PLOT API
+    # ------------------------
 
     def generate_tsne_plot(
             self,
@@ -779,3 +727,91 @@ class CollectionService:
             error_message = f"Error generating t-SNE plot for collection {name}: {e}"
             logger.error(error_message)
             raise TsnePlotGeneratingFailureException(error_message, name, e)
+
+    # ------------------------
+    # FLUSH
+    # ------------------------
+
+    def flush(self):
+        # Get consistent snapshot of collection names
+        with self._metadata_lock:
+            collections = list(self._collection_metadata.keys())
+
+        logger.info(f"Flushing {len(collections)} collections: {collections}")
+
+        # Flush each collection
+        for name in collections:
+            # Skip if collection is removed between listing and flushing
+            if name not in self._collection_metadata:
+                logger.warning(f"Collection {name} no longer exists, skipping flush")
+                continue
+
+            version = self._mvcc_manager.get_current_version(name)
+            if not version:
+                logger.warning(f"No current version for collection {name}, skipping flush")
+                continue
+
+            logger.info(f"Flushing {name} started")
+            start_time = time.time()
+
+            logger.debug(f"Flushing storage for collection {name}")
+            version.storage.flush()
+
+            logger.debug(f"Saving snapshots for collection {name}")
+            self._save_snapshots(name, version)
+
+            elapsed = time.time() - start_time
+            logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+
+    def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
+        """
+        Flush in-memory indexes to files.
+
+        Args:
+            name: Collection name
+            version: Collection version to flush
+            to_temp_files: If True, save to .tempsnap files and then atomically replace
+                           the main snapshots; otherwise write directly to the main files.
+        """
+        metadata = self._collection_metadata[name]
+
+        tempfile_suffix = '.tempsnap'
+        if to_temp_files:
+            # preserve the original suffix and append ".tempsnap"
+            vec_path = metadata['vec_snap'].with_suffix(metadata['vec_snap'].suffix + tempfile_suffix)
+            meta_path = metadata['meta_snap'].with_suffix(metadata['meta_snap'].suffix + tempfile_suffix)
+            doc_path = metadata['doc_snap'].with_suffix(metadata['doc_snap'].suffix + tempfile_suffix)
+        else:
+            vec_path = metadata['vec_snap']
+            meta_path = metadata['meta_snap']
+            doc_path = metadata['doc_snap']
+
+        try:
+            # serialize & write
+            vec_data = version.vec_index.serialize()
+            vec_path.write_bytes(vec_data)
+
+            meta_data = version.meta_index.serialize()
+            meta_path.write_bytes(meta_data)
+
+            doc_data = version.doc_index.serialize()
+            doc_path.write_bytes(doc_data)
+
+            # fsync each
+            for p in (vec_path, meta_path, doc_path):
+                with open(p, 'rb') as f:
+                    os.fsync(f.fileno())
+
+            # atomic replace tempsnap → main
+            if to_temp_files:
+                os.replace(vec_path, metadata['vec_snap'])
+                os.replace(meta_path, metadata['meta_snap'])
+                os.replace(doc_path, metadata['doc_snap'])
+
+        except Exception:
+            # clean up on error
+            if to_temp_files:
+                for temp_file in (vec_path, meta_path, doc_path):
+                    if temp_file.exists():
+                        temp_file.unlink()
+            raise
