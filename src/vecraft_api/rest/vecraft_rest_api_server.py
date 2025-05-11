@@ -3,13 +3,14 @@ from functools import wraps
 import os
 import stat
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from src.vecraft_api.rest.data_model_utils import DataModelUtils
 from src.vecraft_api.rest.data_models import DataPacketModel, InsertRequest, SearchRequest
 from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError, RecordNotFoundError
 
 
-class VecraftAPI:
+class VecraftRestAPI:
     def __init__(self, root: str, vector_index_params: Optional[Dict[str, Any]] = None):
         # Ensure the root directory exists with safe permissions (owner-only)
         if os.path.exists(root):
@@ -29,6 +30,21 @@ class VecraftAPI:
             description="RESTful API for Vecraft vector database operations",
             version="1.0.0"
         )
+
+        # Liveness probe: indicates the app is up
+        @self.app.get("/healthz", include_in_schema=False)
+        async def healthz():
+            return JSONResponse({"status": "ok"})
+
+        # Readiness probe: indicates the app is ready to serve
+        @self.app.get("/readyz", include_in_schema=False)
+        async def readyz():
+            # TODO implement deeper checks # NOSONAR
+            try:
+                return JSONResponse({"status": "ready"})
+            except Exception:
+                raise HTTPException(status_code=503, detail="not ready")
+
         self._setup_routes()
 
     def _setup_routes(self):

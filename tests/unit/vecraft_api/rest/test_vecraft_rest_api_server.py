@@ -6,13 +6,13 @@ from fastapi.testclient import TestClient
 
 from src.vecraft_api.rest.data_model_utils import DataModelUtils
 from src.vecraft_api.rest.data_models import DataPacketModel, NumpyArray, QueryPacketModel, InsertRequest, SearchRequest
-from src.vecraft_api.rest.vecraft_rest_api_server import VecraftAPI
+from src.vecraft_api.rest.vecraft_rest_api_server import VecraftRestAPI
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureError, RecordNotFoundError
 from src.vecraft_db.core.data_model.search_data_packet import SearchDataPacket
 
 
-class TestVecraftAPI(unittest.TestCase):
+class TestVecraftRestAPI(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures before each test method."""
         # Create test data
@@ -36,7 +36,7 @@ class TestVecraftAPI(unittest.TestCase):
         self.mock_client_class.return_value = self.mock_client
 
         # Initialize the API with the mocked client
-        self.api = VecraftAPI(root="/tmp/vecraft", vector_index_params={"dim": 5}) # NOSONAR
+        self.api = VecraftRestAPI(root="/tmp/vecraft", vector_index_params={"dim": 5}) # NOSONAR
 
         # Replace the client with our controlled mock
         self.api.client = self.mock_client
@@ -311,6 +311,18 @@ class TestVecraftAPI(unittest.TestCase):
         original_vector = original_model.vector.to_numpy()
         result_vector = result_model.vector.to_numpy()
         np.testing.assert_array_almost_equal(original_vector, result_vector)
+
+    def test_healthz_endpoint(self):
+        """Liveness probe should return status ok."""
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_readyz_endpoint(self):
+        """Readiness probe should return status ready."""
+        response = self.client.get("/readyz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready"})
 
 
 if __name__ == '__main__':
