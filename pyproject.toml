@@ -16,7 +16,8 @@ dependencies = [
     "fastapi~=0.110.0",
     "pyyaml~=6.0.1",
     "prometheus-client~=0.20.0",
-    "kubernetes~=32.0.1"
+    "kubernetes~=32.0.1",
+    "kopf~=1.36.0"
 ]
 
 [tool.setuptools.packages.find]
