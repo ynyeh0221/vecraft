@@ -36,10 +36,21 @@ jobs:
           pip install --force-reinstall --no-deps hnswlib
 
       - name: Run unit tests with coverage
-        timeout-minutes: 15
         run: |
           source .venv/bin/activate
-          pytest tests -v --timeout=60 --cov=. --cov-report=lcov:coverage.lcov --cov-report=xml:coverage.xml
+          pytest \
+            vecraft_data_model/tests \
+            vecraft_db/tests \
+            vecraft_rest_client/tests \
+            vecraft_operator/tests \
+            tests \
+            -v --timeout=60 \
+            --cov=vecraft_data_model \
+            --cov=vecraft_db \
+            --cov=vecraft_rest_client \
+            --cov=vecraft_operator \
+            --cov-report=lcov:coverage.lcov \
+            --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
