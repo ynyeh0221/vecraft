@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 from fastapi.testclient import TestClient
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from src.vecraft_api.rest.data_model_utils import DataModelUtils
 from src.vecraft_api.rest.data_models import DataPacketModel, NumpyArray, QueryPacketModel, InsertRequest, SearchRequest
@@ -327,6 +328,48 @@ class TestVecraftRestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ready"})
 
+    def test_metrics_endpoint(self):
+        """Test the metrics endpoint returns Prometheus metrics correctly."""
+        # First make some API calls to generate metrics
+        # Insert operation to increment counter
+        test_model = self.create_test_data_packet_model()
+        test_packet = DataModelUtils.convert_to_data_packet(test_model)
+        self.mock_client.insert.return_value = test_packet
+        insert_request = InsertRequest(packet=test_model)
+
+        self.client.post(
+            f"/collections/{self.test_collection}/insert",
+            json=insert_request.dict(by_alias=True, exclude_none=True)
+        )
+
+        # Now call the metrics endpoint
+        response = self.client.get("/metrics")
+
+        # Check response status code
+        self.assertEqual(response.status_code, 200)
+
+        # Check content type
+        self.assertEqual(response.headers["content-type"], CONTENT_TYPE_LATEST)
+
+        # Check that the response contains expected metrics
+        content = response.content.decode('utf-8')
+
+        # Verify counter metrics are present
+        self.assertIn('vecraft_insert_total', content)
+
+        # Verify that insert counter was incremented
+        self.assertIn('vecraft_insert_total 1.0', content)
+
+        # Verify other metrics exist
+        self.assertIn('vecraft_search_total', content)
+        self.assertIn('vecraft_get_total', content)
+        self.assertIn('vecraft_delete_total', content)
+
+        # Verify histogram metrics exist
+        self.assertIn('vecraft_insert_latency_bucket', content)
+        self.assertIn('vecraft_search_latency_bucket', content)
+        self.assertIn('vecraft_get_latency_bucket', content)
+        self.assertIn('vecraft_delete_latency_bucket', content)
 
 if __name__ == '__main__':
     unittest.main()

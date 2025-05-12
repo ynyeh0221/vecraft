@@ -148,7 +148,7 @@ class VecraftRestAPI:
                 preimage = self.client.delete(collection, record_id)
                 return DataModelUtils.convert_from_data_packet(preimage)
 
-        @self.app.get("/metrics", include_in_schema=False)
+        @self.app.get("/metrics")
         async def metrics():
             # TODO Get metrics for collection sizes # NOSONAR
 
