@@ -40,12 +40,14 @@ jobs:
           source .venv/bin/activate
           pytest \
             vecraft_data_model/tests \
+            vecraft_exception_model/tests \
             vecraft_db/tests \
             vecraft_rest_client/tests \
             vecraft_operator/tests \
             tests \
             -v --timeout=60 \
             --cov=vecraft_data_model \
+            --cov=vecraft_exception_model \
             --cov=vecraft_db \
             --cov=vecraft_rest_client \
             --cov=vecraft_operator \
