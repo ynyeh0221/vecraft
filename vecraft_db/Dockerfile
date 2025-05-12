@@ -1,39 +1,44 @@
+# 1. Use official Python runtime as parent image
 FROM python:3.11-slim
 
-# Install build dependencies for C++ extensions
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends g++ && \
-    rm -rf /var/lib/apt/lists/*
-
+# 2. Set application directory (avoids accidental root context)
 WORKDIR /app
 
-# Copy only requirements first to leverage Docker caching
+# 3. Install build dependencies for C++ extensions
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# 4. Copy only metadata to leverage Docker caching
 COPY pyproject.toml setup.py setup.cfg README.md ./
-# If you have a requirements.txt file, copy it here too
-# COPY requirements.txt ./
 
-# Handle hnswlib separately first
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --force-reinstall --no-deps hnswlib
+# 5. Upgrade pip and install all Python dependencies in a single RUN,
+#    with packages sorted alphanumerically and no extra layers
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --force-reinstall --no-deps hnswlib \
+    && pip install --no-cache-dir \
+       fastapi~=0.110.0 \
+       httpx~=0.27.0 \
+       matplotlib~=3.9.4 \
+       numpy~=2.0.2 \
+       prometheus-client~=0.20.0 \
+       pydantic~=2.11.3 \
+       pyyaml~=6.0.1 \
+       scikit-learn~=1.6.1 \
+       scipy \
+       typer~=0.15.2
 
-# Install dependencies in smaller groups to avoid timeout/cancellation
-# Group 1: Core numeric and scientific libraries
-RUN pip install --no-cache-dir numpy~=2.0.2 scipy
-
-# Group 2: ML and visualization
-RUN pip install --no-cache-dir scikit-learn~=1.6.1 matplotlib~=3.9.4
-
-# Group 3: API and utilities
-RUN pip install --no-cache-dir pydantic~=2.11.3 typer~=0.15.2 fastapi~=0.110.0 httpx~=0.27.0
-
-# Group 4: Remaining dependencies
-RUN pip install --no-cache-dir pyyaml~=6.0.1 prometheus-client~=0.20.0
-
-# Now copy the rest of the code
+# 6. Copy application source code
+#    Ensure sensitive files (e.g., .env, credentials, .git) are excluded via .dockerignore
 COPY . .
 
-# Finally install the package itself, without reinstalling dependencies
+# 7. Create and switch to a non-root user
+RUN useradd --create-home appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# 8. Install the application itself without touching already-installed dependencies
 RUN pip install --no-cache-dir -e . --no-dependencies
 
-# Set default command
+# 9. Default command (override as needed)
 ENTRYPOINT ["true"]

@@ -77,7 +77,6 @@ jobs:
     strategy:
       matrix:
         service:
-          - vecraft_operator
           - vecraft_db
 
     steps:
