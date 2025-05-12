@@ -10,7 +10,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # 4. Copy only metadata to leverage Docker caching
-COPY pyproject.toml setup.py setup.cfg README.md ./
+COPY pyproject.toml README.md ./
 
 # 5. Upgrade pip and install all Python dependencies in a single RUN,
 #    with packages sorted alphanumerically and no extra layers
