@@ -17,7 +17,7 @@ core = CoreV1Api()
 @kopf.on.create('vecraft.io', 'v1alpha1', 'vecraftdatabases')
 def create_vecraft(spec, name, namespace, logger, **kwargs):
     root = spec['root']
-    image = spec.get('image', 'myrepo/vecraft-rest:latest')
+    image = spec.get('image', 'ghcr.io/ynyeh0221/vecraft:main')
     replicas = spec.get('replicas', 1)
     labels = {'app': 'vecraft', 'instance': name}
 
