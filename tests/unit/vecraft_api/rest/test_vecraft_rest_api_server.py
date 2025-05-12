@@ -48,6 +48,12 @@ class TestVecraftRestAPI(unittest.TestCase):
         """Clean up after each test method."""
         self.mock_client_patcher.stop()
 
+        # Clean up prometheus registry
+        from prometheus_client import REGISTRY
+        collectors = list(REGISTRY._collector_to_names.keys())
+        for collector in collectors:
+            REGISTRY.unregister(collector)
+
     def create_test_data_packet_model(self):
         """Helper to create a test DataPacketModel."""
         return DataPacketModel(

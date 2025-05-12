@@ -7,6 +7,8 @@ from typing import Dict, Any, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter, Histogram, Gauge
 
 from src.vecraft_api.rest.data_model_utils import DataModelUtils
 from src.vecraft_api.rest.data_models import DataPacketModel, InsertRequest, SearchRequest
@@ -56,6 +58,16 @@ class VecraftRestAPI:
             except Exception:
                 raise HTTPException(status_code=503, detail="not ready")
 
+        self.search_counter = Counter('vecraft_search_total', 'Total number of search operations')
+        self.insert_counter = Counter('vecraft_insert_total', 'Total number of insert operations')
+        self.get_counter = Counter('vecraft_get_total', 'Total number of get operations')
+        self.delete_counter = Counter('vecraft_delete_total', 'Total number of delete operations')
+        self.search_latency = Histogram('vecraft_search_latency', 'Search operation latency')
+        self.insert_latency = Histogram('vecraft_insert_latency', 'Insert operation latency')
+        self.get_latency = Histogram('vecraft_get_latency', 'Get operation latency')
+        self.delete_latency = Histogram('vecraft_delete_latency', 'Delete operation latency')
+        self.collection_size = Gauge('vecraft_collection_size', 'Number of records in collection', ['collection'])
+
         self._setup_routes()
 
     def _setup_routes(self):
@@ -91,31 +103,54 @@ class VecraftRestAPI:
         @self.app.post("/collections/{collection}/insert", response_model=DataPacketModel)
         @with_error_handling()
         async def insert(collection: str, request: InsertRequest):
-            packet = DataModelUtils.convert_to_data_packet(request.packet)
-            preimage = self.client.insert(collection, packet)
-            return DataModelUtils.convert_from_data_packet(preimage)
+            # increase counter
+            self.insert_counter.inc()
+
+            with self.insert_latency.time():
+                packet = DataModelUtils.convert_to_data_packet(request.packet)
+                preimage = self.client.insert(collection, packet)
+                return DataModelUtils.convert_from_data_packet(preimage)
 
         @self.app.post("/collections/{collection}/search", response_model=List[Dict[str, Any]])
         @with_error_handling()
         async def search(collection: str, request: SearchRequest):
-            query_packet = DataModelUtils.convert_to_query_packet(request.query)
-            results = self.client.search(collection, query_packet)
-            return [
-                {
-                    "data_packet": DataModelUtils.convert_from_data_packet(r.data_packet).dict(),
-                    "distance": r.distance
-                }
-                for r in results
-            ]
+            # increase counter
+            self.search_counter.inc()
+
+            with self.search_latency.time():
+                query_packet = DataModelUtils.convert_to_query_packet(request.query)
+                results = self.client.search(collection, query_packet)
+                return [
+                    {
+                        "data_packet": DataModelUtils.convert_from_data_packet(r.data_packet).dict(),
+                        "distance": r.distance
+                    }
+                    for r in results
+                ]
 
         @self.app.get("/collections/{collection}/records/{record_id}", response_model=DataPacketModel)
         @with_error_handling()
         async def get_record(collection: str, record_id: str):
-            result = self.client.get(collection, record_id)
-            return DataModelUtils.convert_from_data_packet(result)
+            # increase counter
+            self.get_counter.inc()
+
+            with self.get_latency.time():
+                result = self.client.get(collection, record_id)
+                return DataModelUtils.convert_from_data_packet(result)
 
         @self.app.delete("/collections/{collection}/records/{record_id}", response_model=DataPacketModel)
         @with_error_handling()
         async def delete_record(collection: str, record_id: str):
-            preimage = self.client.delete(collection, record_id)
-            return DataModelUtils.convert_from_data_packet(preimage)
+            # increase counter
+            self.delete_counter.inc()
+
+            with self.delete_latency.time():
+                preimage = self.client.delete(collection, record_id)
+                return DataModelUtils.convert_from_data_packet(preimage)
+
+        @self.app.get("/metrics", include_in_schema=False)
+        async def metrics():
+            # TODO Get metrics for collection sizes # NOSONAR
+
+            data = await asyncio.to_thread(generate_latest)
+            return Response(content=data, media_type=CONTENT_TYPE_LATEST)
