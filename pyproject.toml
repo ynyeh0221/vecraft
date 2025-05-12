@@ -26,4 +26,4 @@ include = ["src", "src.*"]
 python = "^3.11"
 
 [project.scripts]
-vecraft = "src.vecraft_cli.vecraft_cli:entry_point"
+vecraft = "vecraft_db.cli.vecraft_cli:entry_point"

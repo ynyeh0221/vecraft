@@ -14,14 +14,13 @@ permissions:
   packages: write
 
 jobs:
-  build_and_publish:
+  test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -32,18 +31,14 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          # Install the package in development mode
           pip install -e .
-          # Install test dependencies with coverage
           pip install pytest pytest-timeout pytest-cov
-          # Ensure hnswlib is properly built
           pip install --force-reinstall --no-deps hnswlib
 
       - name: Run unit tests with coverage
         timeout-minutes: 15
         run: |
           source .venv/bin/activate
-          # Run tests with coverage reporting for both Coveralls and SonarCloud
           pytest tests -v --timeout=60 --cov=. --cov-report=lcov:coverage.lcov --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Coveralls
@@ -61,57 +56,45 @@ jobs:
           args: >
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
-      - name: Login with PAT
-        run: echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+  build_and_publish:
+    needs: test
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
 
-      - name: Create Dockerfile
+    strategy:
+      matrix:
+        service:
+          - vecraft_operator
+          - vecraft_db
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Log in with PAT
         run: |
-          # First, check your pyproject.toml configuration
-          cat pyproject.toml
-          
-          cat > Dockerfile << 'EOF'
-          FROM python:3.11-slim
+          echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-          WORKDIR /app
-
-          # Install required system dependencies
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential \
-              && apt-get clean \
-              && rm -rf /var/lib/apt/lists/*
-
-          # Copy your project files
-          COPY . /app/
-
-          # Install your package in standard mode
-          RUN pip install --no-cache-dir .
-          
-          # Create a volume for data persistence
-          VOLUME /data
-
-          # Set the working directory to /data by default
-          WORKDIR /data
-
-          # Set environment variable for data location
-          ENV VCRAFT_ROOT=/data
-
-          # Default command: show help
-          # Use explicitly the full path to the installed script 
-          ENTRYPOINT ["/usr/local/bin/vecraft"]
-          CMD ["--help"]
-          EOF
-
-      - name: Build Docker image
+      - name: Build Docker image for ${{ matrix.service }}
         run: |
-          docker build . -t ghcr.io/${{ github.repository }}:latest
-          docker tag ghcr.io/${{ github.repository }}:latest ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          docker build \
+            ./${{ matrix.service }} \
+            -f ./${{ matrix.service }}/Dockerfile \
+            -t ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
+          docker tag \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.ref_name }}
 
-      - name: Verify Docker image
+      - name: Verify Docker image for ${{ matrix.service }}
         run: |
-          # Test that the CLI is accessible in the image
-          docker run --rm ghcr.io/${{ github.repository }}:latest --help
+          docker run --rm \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest --help
 
-      - name: Push Docker image
+      - name: Push Docker image for ${{ matrix.service }}
         run: |
-          docker push ghcr.io/${{ github.repository }}:latest
-          docker push ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          docker push ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
+          docker push ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.ref_name }}
