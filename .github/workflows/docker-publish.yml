@@ -83,7 +83,8 @@ jobs:
         run: |
           docker build \
             -f ./${{ matrix.service }}/Dockerfile \
-            -t ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
+            -t ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest \
+            .
           docker tag \
             ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest \
             ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.ref_name }}
