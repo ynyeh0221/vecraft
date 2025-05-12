@@ -7,12 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
-from src.vecraft_db.client.vecraft_client import VecraftClient
-from src.vecraft_db.core.data_model.data_packet import DataPacket
-from src.vecraft_db.core.data_model.exception import RecordNotFoundError, ChecksumValidationFailureError
-from src.vecraft_db.core.data_model.index_packets import CollectionSchema
-from src.vecraft_db.core.data_model.query_packet import QueryPacket
-from src.vecraft_db.core.lock.mvcc_manager import WriteConflictException
+from vecraft_data_model.data_packet import DataPacket
+from vecraft_data_model.index_packets import CollectionSchema
+from vecraft_data_model.query_packet import QueryPacket
+from vecraft_db.client.vecraft_client import VecraftClient
+from vecraft_db.core.lock.mvcc_manager import WriteConflictException
+from vecraft_exception_model.exception import RecordNotFoundError, ChecksumValidationFailureError
 
 
 class TestVecraftClient(unittest.TestCase):
