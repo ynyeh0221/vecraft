@@ -82,7 +82,6 @@ jobs:
       - name: Build Docker image for ${{ matrix.service }}
         run: |
           docker build \
-            ./${{ matrix.service }} \
             -f ./${{ matrix.service }}/Dockerfile \
             -t ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
           docker tag \
