@@ -19,3 +19,6 @@ class WALInterface(Protocol):
 
     def clear(self) -> None:
         ...
+
+    def close(self):
+        ...

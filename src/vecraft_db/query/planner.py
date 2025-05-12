@@ -2,7 +2,8 @@ from typing import Optional, List
 
 from src.vecraft_db.core.data_model.data_packet import DataPacket
 from src.vecraft_db.core.data_model.query_packet import QueryPacket
-from src.vecraft_db.query.plan_nodes import PlanNode, InsertNode, DeleteNode, GetNode, SearchNode, TSNENode
+from src.vecraft_db.query.plan_nodes import PlanNode, InsertNode, DeleteNode, GetNode, SearchNode, TSNENode, \
+    ShutdownNode
 
 
 class Planner:
@@ -39,3 +40,6 @@ class Planner:
                        random_state: int = 42,
                        outfile: str = "tsne.png") -> PlanNode:
         return TSNENode(collection, record_ids, perplexity, random_state, outfile)
+
+    def plan_shutdown(self):
+        return ShutdownNode()

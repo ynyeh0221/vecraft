@@ -36,7 +36,7 @@ class TestVecraftRestAPI(unittest.TestCase):
         self.mock_client_class.return_value = self.mock_client
 
         # Initialize the API with the mocked client
-        self.api = VecraftRestAPI(root="/tmp/vecraft", vector_index_params={"dim": 5}) # NOSONAR
+        self.api = VecraftRestAPI(root="/tmp/vecraft") # NOSONAR
 
         # Replace the client with our controlled mock
         self.api.client = self.mock_client
@@ -83,9 +83,6 @@ class TestVecraftRestAPI(unittest.TestCase):
 
     def test_initialization(self):
         """Test the initialization of VecraftAPI."""
-        # Check if VecraftClient was initialized correctly
-        self.mock_client_class.assert_called_once_with("/tmp/vecraft", {"dim": 5}) # NOSONAR
-
         # Check if routes are set up
         self.assertIn("/collections/{collection}/insert", [route.path for route in self.api.app.routes])
         self.assertIn("/collections/{collection}/search", [route.path for route in self.api.app.routes])

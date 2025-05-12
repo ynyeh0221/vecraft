@@ -815,3 +815,66 @@ class CollectionService:
                     if temp_file.exists():
                         temp_file.unlink()
             raise
+
+    # ------------------------
+    # CLOSE
+    # ------------------------
+
+    def close(self) -> None:
+        """
+        Flush everything, then close and fsync all file handles.
+
+        Should be called in SIGTERM → FastAPI lifespan shutdown.
+        """
+        logger.info("CollectionService closing ...")
+        self.flush()
+
+        names = self._get_collection_names()
+        self._close_all_collections(names)
+
+        self._shutdown_catalog()
+        self._shutdown_mvcc()
+
+        logger.info("CollectionService closed successfully")
+
+    def _get_collection_names(self) -> list[str]:
+        with self._metadata_lock:
+            return list(self._collection_metadata.keys())
+
+    def _close_all_collections(self, names: list[str]) -> None:
+        for name in names:
+            version = self._mvcc_manager.get_current_version(name)
+            if not version:
+                continue
+            self._close_wal(name, version)
+            self._close_storage(name, version)
+            self._close_indexes(version)
+
+    def _close_wal(self, name: str, version) -> None:
+        try:
+            version.wal.close()
+        except Exception as e:
+            logger.warning(f"WAL close failed for {name}: {e}")
+
+    def _close_storage(self, name: str, version) -> None:
+        try:
+            version.storage.close()
+        except Exception as e:
+            logger.warning(f"Storage close failed for {name}: {e}")
+
+    def _close_indexes(self, version) -> None:
+        for idx in (version.vec_index, version.meta_index, version.doc_index):
+            if hasattr(idx, "close"):
+                try:
+                    idx.close()
+                except Exception as e:
+                    logger.warning(f"Index close failed ({idx}): {e}")
+
+    def _shutdown_catalog(self) -> None:
+        try:
+            self._catalog.shutdown()
+        except Exception as e:
+            logger.warning(f"Catalog shutdown failed: {e}")
+
+    def _shutdown_mvcc(self) -> None:
+        self._mvcc_manager.shutdown()

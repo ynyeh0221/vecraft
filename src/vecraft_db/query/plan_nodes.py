@@ -67,3 +67,8 @@ class TSNENode(PlanNode):
     def execute(self, context: Dict[str, Any]) -> str:
         db = context['vector_db']
         return db.generate_tsne_plot(self.collection, self.record_ids, self.perplexity, self.random_state, self.outfile)
+
+class ShutdownNode(PlanNode):
+    def execute(self, context: Dict[str, Any]) -> None:
+        db = context['vector_db']
+        return db.close()

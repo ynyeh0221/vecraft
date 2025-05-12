@@ -22,3 +22,6 @@ class Catalog(ABC):
     @abstractmethod
     def get_schema(self, name: str) -> CollectionSchema:
         ...
+
+    def shutdown(self):
+        ...

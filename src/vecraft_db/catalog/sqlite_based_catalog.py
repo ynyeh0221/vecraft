@@ -250,3 +250,32 @@ class SqliteCatalog(Catalog):
             }
 
             return stats
+
+    def shutdown(self) -> None:
+        """
+        Close SQLite catalog:
+        1. **WAL checkpoint**
+           Merge WAL log into the main database file to avoid leaving dirty WAL.
+        2. **fsync parent directory**
+           Ensure directory entry changes are persisted.
+        3. **Idempotent**: Multiple calls are safe with no exceptions.
+        """
+        try:
+            with self._get_connection() as conn:
+                # Try to execute a WAL checkpoint
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.OperationalError:
+                    # Ignore if DB is not in WAL mode
+                    pass
+            # fsync the directory containing the DB file
+            import os
+            dir_fd = os.open(str(self._db_path.parent), os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception as e:
+            # Only log warnings during shutdown phase, don't interrupt other resource closing
+            import logging
+            logging.getLogger(__name__).warning("SqliteCatalog shutdown warning: %s", e)

@@ -173,5 +173,27 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
             logger.info("Storage consistency check passed - no issues found")
 
     def close(self) -> None:
-        self._storage.close()
-        self._loc_index.close()
+        """
+        Flush and close the underlying mmap file and SQLite connection.
+        Key behaviors
+        1. **Idempotent**: Multiple calls won't throw exceptions.
+        2. **Sequence**: First `flush()` then close, ensuring data is persisted to disk.
+        3. **Fault-tolerant**: Any step failing only logs a warning, without affecting subsequent steps.
+        """
+        # 1) First persist any data that might still be in memory
+        try:
+            self._storage.flush()
+        except Exception as e:
+            logger.warning("Storage flush failed during close: %s", e)
+        # 2) Close mmap / file handles
+        try:
+            if hasattr(self._storage, "close"):
+                self._storage.close()
+        except Exception as e:
+            logger.warning("Storage close failed: %s", e)
+        # 3) Close SQLite connection
+        try:
+            if hasattr(self._loc_index, "close"):
+                self._loc_index.close()
+        except Exception as e:
+            logger.warning("Location‑index close failed: %s", e)

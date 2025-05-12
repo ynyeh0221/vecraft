@@ -107,6 +107,7 @@ class MVCCManager:
         >>> mvcc.commit_version("users", version)
     """
     def __init__(self, storage_factories: Dict[str, Any] = None, index_factories: Dict[str, Any] = None):
+        self._is_shutting_down = False
         self._lock = threading.RLock()
         self._versions: Dict[str, Dict[int, CollectionVersion]] = defaultdict(dict)
         self._current_version: Dict[str, int] = {}
@@ -370,12 +371,16 @@ class MVCCManager:
             A new CollectionVersion for the transaction
         """
         with self._lock:
+            if getattr(self, "_is_shutting_down", False):
+                raise RuntimeError("MVCCManager is shutting down. Would not begin new transaction.")
+
             current = self.get_current_version(collection_name)
             new_version = self.create_version(collection_name, current)
             self._active_transactions[collection_name].add(new_version.version_id)
             new_version.ref_count += 1
             logger.debug(
-                f"Begin transaction: created version {new_version.version_id} for collection {collection_name}")
+                f"Begin transaction: created version {new_version.version_id} for collection {collection_name}"
+            )
             return new_version
 
     def end_transaction(self, collection_name: str, version: CollectionVersion, commit: bool = True):
@@ -474,3 +479,39 @@ class MVCCManager:
             if vid not in to_keep:
                 logger.debug(f"Cleaning up version {vid} for collection {collection_name}")
                 del self._versions[collection_name][vid]
+
+    def shutdown(self,
+                 wait: bool = True,
+                 timeout: float = 30.0,
+                 poll_interval: float = 0.1) -> None:
+        """
+        Shutdown cleanup.
+        1. Set the `_is_shutting_down` flag to reject new transactions.
+        2. Optionally wait for all ongoing transactions to complete, up to `timeout` seconds.
+        3. Clean up historical versions that don't need to be retained, freeing memory.
+        Args:
+            wait (bool): Whether to wait for active transactions to complete; if False, only logs and returns
+            timeout (float): Maximum wait time in seconds
+            poll_interval (float): Polling interval
+        """
+        with self._lock:
+            # Mark shutdown, subsequent begin_transaction will raise exceptions
+            self._is_shutting_down = True
+        if wait:
+            logger.info("MVCCManager shutdown: waiting for active transactions to complete ...")
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                with self._lock:
+                    if all(len(tx_set) == 0 for tx_set in self._active_transactions.values()):
+                        break
+                time.sleep(poll_interval)
+            else:
+                active_detail = {c: list(v) for c, v in self._active_transactions.items() if v}
+                logger.warning(
+                    "MVCCManager shutdown: timeout with active transactions still present: %s", active_detail
+                )
+        # Finally do a full cleanup
+        with self._lock:
+            for collection_name in list(self._versions.keys()):
+                self._cleanup_old_versions(collection_name)
+        logger.info("MVCCManager has stopped and completed version cleanup")

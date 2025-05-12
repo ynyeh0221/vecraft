@@ -257,3 +257,7 @@ class VecraftClient:
         plan = self.planner.plan_tsne_plot(collection, record_ids, perplexity, random_state, outfile)
         plot = self.executor.execute(plan)
         return plot
+
+    def close(self):
+        """Graceful shutdown Vecraft db"""
+        self.planner.plan_shutdown()

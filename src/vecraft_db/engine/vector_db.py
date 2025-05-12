@@ -70,3 +70,7 @@ class VectorDB:
     def flush(self):
         """Flush collection service's data and indices to disk."""
         self._collection_service.flush()
+
+    def close(self):
+        """Graceful shutdown collection service."""
+        self._collection_service.close()

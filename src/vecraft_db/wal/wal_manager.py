@@ -186,3 +186,29 @@ class WALManager(WALInterface):
         """
         if self._file.exists():
             self._file.unlink()
+
+    def close(self) -> None:
+        """
+        Fully flush to disk and release all resources related to the WAL.
+        * Idempotent: Multiple calls will not cause errors.
+        * Safe: Returns quietly even if the WAL file is deleted or the directory doesn't exist.
+        """
+        try:
+            # If the WAL file exists, do a 0-byte append write + fsync
+            if self._file.exists():
+                with open(self._file, "ab") as f:
+                    f.flush()
+                    os.fsync(f.fileno())
+            # fsync the parent directory to ensure renames/deletions are also persisted
+            dir_fd = os.open(str(self._file.parent), os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except FileNotFoundError:
+            # File or directory has been removed, treat as already closed
+            pass
+        except Exception as e:
+            # Only log the error, avoid interrupting other cleanup logic during shutdown phase
+            import logging
+            logging.getLogger(__name__).warning(f"WAL close failed: {e}")

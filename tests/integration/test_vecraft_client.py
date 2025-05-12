@@ -26,6 +26,9 @@ class TestVecraftClient(unittest.TestCase):
 
     def tearDown(self):
         """Tear down test fixtures after each test method."""
+        # Shutdown vecraft client
+        self.client.close()
+
         # Clean up any snapshot files created during tests
         snapshot_patterns = ["*.idxsnap", "*.metasnap", "*.docsnap", "*.tempsnap"]
         for pattern in snapshot_patterns:

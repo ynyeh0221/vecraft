@@ -1,7 +1,9 @@
+import asyncio
 import os
 import stat
+from contextlib import asynccontextmanager
 from functools import wraps
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -12,7 +14,7 @@ from src.vecraft_db.core.data_model.exception import ChecksumValidationFailureEr
 
 
 class VecraftRestAPI:
-    def __init__(self, root: str, vector_index_params: Optional[Dict[str, Any]] = None):
+    def __init__(self, root: str):
         # Ensure the root directory exists with safe permissions (owner-only)
         if os.path.exists(root):
             # Remove group and other write permissions
@@ -24,12 +26,20 @@ class VecraftRestAPI:
 
         # Import inside init so tests can patch K8sAwareVecraftClient
         from src.vecraft_db.client.k8s_aware_vecraft_client import K8sAwareVecraftClient
-        self.client = K8sAwareVecraftClient(root, vector_index_params)
+        self.client = K8sAwareVecraftClient(root)
+
+        @asynccontextmanager
+        async def lifespan():
+            # ==== Startup ====
+            yield
+            # ==== Shutdown ====
+            await asyncio.to_thread(self.client.close)
 
         self.app = FastAPI(
             title="Vecraft Vector Database API",
             description="RESTful API for Vecraft vector database operations",
-            version="1.0.0"
+            version="1.0.0",
+            lifespan=lifespan
         )
 
         # Liveness probe: indicates the app is up
