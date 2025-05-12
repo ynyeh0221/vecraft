@@ -30,7 +30,7 @@ class TestVecraftRestAPI(unittest.TestCase):
         self.test_checksum_algorithm = "sha256"
 
         # Create a mock for VecraftClient
-        self.mock_client_patcher = patch('src.vecraft_db.client.vecraft_client.VecraftClient')
+        self.mock_client_patcher = patch('src.vecraft_db.client.k8s_aware_vecraft_client.K8sAwareVecraftClient')
         self.mock_client_class = self.mock_client_patcher.start()
         self.mock_client = MagicMock()
         self.mock_client_class.return_value = self.mock_client

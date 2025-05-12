@@ -1,7 +1,8 @@
-from typing import Dict, Any, List, Optional
-from functools import wraps
 import os
 import stat
+from functools import wraps
+from typing import Dict, Any, List, Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -21,9 +22,9 @@ class VecraftRestAPI:
         else:
             os.makedirs(root, mode=0o700, exist_ok=True)
 
-        # Import inside init so tests can patch VecraftClient
-        from src.vecraft_db.client.vecraft_client import VecraftClient
-        self.client = VecraftClient(root, vector_index_params)
+        # Import inside init so tests can patch K8sAwareVecraftClient
+        from src.vecraft_db.client.k8s_aware_vecraft_client import K8sAwareVecraftClient
+        self.client = K8sAwareVecraftClient(root, vector_index_params)
 
         self.app = FastAPI(
             title="Vecraft Vector Database API",
