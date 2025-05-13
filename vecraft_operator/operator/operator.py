@@ -1,9 +1,11 @@
 import kopf
 import kubernetes
 from kubernetes.client import AppsV1Api, CoreV1Api
-from kubernetes.client import (V1StatefulSet, V1StatefulSetSpec, V1PodTemplateSpec,
-                                V1ObjectMeta, V1PodSpec, V1Container, V1Service,
-                                V1ServiceSpec, V1ServicePort, V1LabelSelector)
+from kubernetes.client import (
+    V1StatefulSet, V1StatefulSetSpec, V1PodTemplateSpec,
+    V1ObjectMeta, V1PodSpec, V1Container, V1Service,
+    V1ServiceSpec, V1ServicePort, V1LabelSelector,
+)
 
 # Load in-cluster config (or fallback to local kubeconfig)
 try:
@@ -15,29 +17,49 @@ apps = AppsV1Api()
 core = CoreV1Api()
 
 @kopf.on.create('vecraft.io', 'v1alpha1', 'vecraftdatabases')
-def create_vecraft(spec, name, namespace, logger, **kwargs):
-    root = spec['root']
-    image = spec.get('image', 'ghcr.io/ynyeh0221/vecraft:main')
+@kopf.on.resume('vecraft.io', 'v1alpha1', 'vecraftdatabases')
+def reconcile_vecraft(spec, name, namespace, logger, **kwargs):
+    """
+    Ensures that the headless Service and StatefulSet match the CR spec.
+    This handler runs on creation and on operator resume, using a patch (force)
+    for true create-or-update semantics.
+    """
+    root     = spec['root']
+    image    = spec.get('image', 'ghcr.io/ynyeh0221/vecraft:main')
     replicas = spec.get('replicas', 1)
-    labels = {'app': 'vecraft', 'instance': name}
+    labels   = {'app': 'vecraft', 'instance': name}
 
-    # Headless Service for StatefulSet
-    headless = V1Service(
-        metadata=V1ObjectMeta(name=name, namespace=namespace,
-                              owner_references=[kopf.owner_reference(**kwargs)]),
+    # Build headless Service manifest
+    svc = V1Service(
+        metadata=V1ObjectMeta(
+            name=name,
+            namespace=namespace,
+            owner_references=[kopf.owner_reference(**kwargs)],
+        ),
         spec=V1ServiceSpec(
             cluster_ip='None',
             selector=labels,
-            ports=[V1ServicePort(port=80, target_port=8000)]
+            ports=[V1ServicePort(port=80, target_port=8000)],
         )
     )
-    core.create_namespaced_service(namespace=namespace, body=headless)
-    logger.info(f"Created headless Service {name}")
 
-    # Create StatefulSet
+    # Patch (create-or-update) the Service
+    core.patch_namespaced_service(
+        name=name,
+        namespace=namespace,
+        body=svc,
+        field_manager='vecraft-operator',
+        force=True,
+    )
+    logger.info(f"Ensured headless Service '{name}'")
+
+    # Build StatefulSet manifest
     sts = V1StatefulSet(
-        metadata=V1ObjectMeta(name=name, namespace=namespace,
-                              owner_references=[kopf.owner_reference(**kwargs)]),
+        metadata=V1ObjectMeta(
+            name=name,
+            namespace=namespace,
+            owner_references=[kopf.owner_reference(**kwargs)],
+        ),
         spec=V1StatefulSetSpec(
             replicas=replicas,
             selector=V1LabelSelector(match_labels=labels),
@@ -49,32 +71,41 @@ def create_vecraft(spec, name, namespace, logger, **kwargs):
                         name='vecraft',
                         image=image,
                         args=['--root', root],
-                        ports=[{'containerPort': 8000}]
+                        ports=[{'containerPort': 8000}],
                     )
                 ])
             )
         )
     )
-    apps.create_namespaced_stateful_set(namespace=namespace, body=sts)
-    logger.info(f"Created StatefulSet {name}")
 
+    # Patch (create-or-update) the StatefulSet
+    apps.patch_namespaced_stateful_set(
+        name=name,
+        namespace=namespace,
+        body=sts,
+        field_manager='vecraft-operator',
+        force=True,
+    )
+    logger.info(f"Ensured StatefulSet '{name}'")
+
+    # Return some status info (optional)
     return {'statefulset': name, 'service': name}
 
+
 @kopf.on.update('vecraft.io', 'v1alpha1', 'vecraftdatabases')
-def update_vecraft(spec, status, name, namespace, logger, **kwargs):
-    replicas = spec.get('replicas')
-    image = spec.get('image')
-    patch = {'spec': {}}
-    if replicas is not None:
-        patch['spec']['replicas'] = replicas
-    if image:
-        patch['spec']['template'] = {
-            'spec': {'containers': [{'name': 'vecraft', 'image': image}]}
-        }
-    if patch['spec']:
-        apps.patch_namespaced_stateful_set(name=name, namespace=namespace, body=patch)
-        logger.info(f"Updated StatefulSet {name}")
+def on_update(spec, status, name, namespace, logger, **kwargs):
+    """
+    On spec changes, make sure we reconcile again.
+    You can pump the update into the same reconcile logic:
+    """
+    # Simply call the reconcile function to re-patch with new spec
+    return reconcile_vecraft(spec, name, namespace, logger, **kwargs)
+
 
 @kopf.on.delete('vecraft.io', 'v1alpha1', 'vecraftdatabases')
-def delete_vecraft(spec, name, namespace, logger, **kwargs):
-    logger.info(f"VecraftDatabase {name} deleted; resources will be garbage-collected.")
+def on_delete(spec, name, namespace, logger, **kwargs):
+    """
+    No deletion logic needed—ownerReferences will garbage-collect the
+    Service and StatefulSet.
+    """
+    logger.info(f"VecraftDatabase '{name}' deleted; resources will be cleaned up by Kubernetes.")
