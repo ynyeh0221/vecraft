@@ -9,11 +9,11 @@ kubernetes.config.load_kube_config = lambda: None
 from kubernetes.client import V1Service, V1StatefulSet
 
 from vecraft_operator.operator.operator import (
-    create_vecraft,
-    update_vecraft,
-    delete_vecraft,
+    reconcile_vecraft,
+    on_update,
+    on_delete,
     core,
-    apps
+    apps,
 )
 
 class TestVecraftOperator(unittest.TestCase):
@@ -23,17 +23,18 @@ class TestVecraftOperator(unittest.TestCase):
         self.spec = {'root': '/data', 'replicas': 2, 'image': 'test/image:latest'}
         self.logger = MagicMock()
         self.owner_ref = {'uid': 'dummy-uid'}
+        # Kopf.owner_reference is called with **kwargs, so we set body.metadata.uid here
         self.kwargs = {'body': {'metadata': {'uid': 'dummy-uid'}}}
 
     @patch('vecraft_operator.operator.operator.kopf.owner_reference', create=True)
-    @patch.object(core, 'create_namespaced_service')
-    @patch.object(apps, 'create_namespaced_stateful_set')
-    def test_create_vecraft(self, mock_create_ss, mock_create_svc, mock_owner_ref):
-        # Mock owner_reference to return a dummy reference
+    @patch.object(core, 'patch_namespaced_service')
+    @patch.object(apps, 'patch_namespaced_stateful_set')
+    def test_reconcile_vecraft(self, mock_patch_sts, mock_patch_svc, mock_owner_ref):
+        # owner_reference should return our dummy
         mock_owner_ref.return_value = self.owner_ref
 
-        # Call the creation handler
-        result = create_vecraft(
+        # Call the reconcile (create & resume) handler
+        result = reconcile_vecraft(
             spec=self.spec,
             name=self.name,
             namespace=self.namespace,
@@ -41,102 +42,64 @@ class TestVecraftOperator(unittest.TestCase):
             **self.kwargs
         )
 
-        # Assert headless Service creation
-        mock_create_svc.assert_called_once()
-        svc_call = mock_create_svc.call_args[1]
-        self.assertEqual(svc_call['namespace'], self.namespace)
-        svc_body = svc_call['body']
+        # Service: patch_namespaced_service called once
+        mock_patch_svc.assert_called_once()
+        _, svc_kwargs = mock_patch_svc.call_args
+        self.assertEqual(svc_kwargs['name'], self.name)
+        self.assertEqual(svc_kwargs['namespace'], self.namespace)
+        svc_body = svc_kwargs['body']
         self.assertIsInstance(svc_body, V1Service)
         self.assertEqual(svc_body.metadata.name, self.name)
         self.assertEqual(svc_body.spec.cluster_ip, 'None')
         self.assertEqual(svc_body.spec.selector, {'app': 'vecraft', 'instance': self.name})
-        self.logger.info.assert_any_call(f"Created headless Service {self.name}")
+        self.assertEqual(svc_kwargs['field_manager'], 'vecraft-operator')
+        self.assertTrue(svc_kwargs['force'])
+        self.logger.info.assert_any_call(f"Ensured headless Service '{self.name}'")
 
-        # Assert StatefulSet creation
-        mock_create_ss.assert_called_once()
-        sts_call = mock_create_ss.call_args[1]
-        self.assertEqual(sts_call['namespace'], self.namespace)
-        sts_body = sts_call['body']
+        # StatefulSet: patch_namespaced_stateful_set called once
+        mock_patch_sts.assert_called_once()
+        _, sts_kwargs = mock_patch_sts.call_args
+        self.assertEqual(sts_kwargs['name'], self.name)
+        self.assertEqual(sts_kwargs['namespace'], self.namespace)
+        sts_body = sts_kwargs['body']
         self.assertIsInstance(sts_body, V1StatefulSet)
         self.assertEqual(sts_body.metadata.name, self.name)
-        self.logger.info.assert_any_call(f"Created StatefulSet {self.name}")
+        self.assertEqual(sts_kwargs['field_manager'], 'vecraft-operator')
+        self.assertTrue(sts_kwargs['force'])
+        self.logger.info.assert_any_call(f"Ensured StatefulSet '{self.name}'")
 
-        # Verify return value
+        # Return value
         self.assertEqual(result, {'statefulset': self.name, 'service': self.name})
 
+    @patch('vecraft_operator.operator.operator.kopf.owner_reference', create=True)
+    @patch.object(core, 'patch_namespaced_service')
     @patch.object(apps, 'patch_namespaced_stateful_set')
-    def test_update_vecraft_no_changes(self, mock_patch):
-        # No spec changes should result in no patch call
-        update_vecraft(
-            spec={}, status=None,
-            name=self.name, namespace=self.namespace,
-            logger=self.logger
-        )
-        mock_patch.assert_not_called()
+    def test_on_update_delegates_to_reconcile(self, mock_patch_sts, mock_patch_svc, mock_owner_ref):
+        # Make sure on_update simply calls reconcile_vecraft under the covers
+        mock_owner_ref.return_value = self.owner_ref
 
-    @patch.object(apps, 'patch_namespaced_stateful_set')
-    def test_update_vecraft_replicas_only(self, mock_patch):
-        spec = {'replicas': 5}
-        update_vecraft(
-            spec=spec, status=None,
-            name=self.name, namespace=self.namespace,
-            logger=self.logger
-        )
-        mock_patch.assert_called_once_with(
+        on_update(
+            spec=self.spec,
+            status=None,
             name=self.name,
             namespace=self.namespace,
-            body={'spec': {'replicas': 5}}
+            logger=self.logger,
+            **self.kwargs
         )
-        self.logger.info.assert_called_with(f"Updated StatefulSet {self.name}")
 
-    @patch.object(apps, 'patch_namespaced_stateful_set')
-    def test_update_vecraft_image_only(self, mock_patch):
-        spec = {'image': 'new/image:tag'}
-        update_vecraft(
-            spec=spec, status=None,
-            name=self.name, namespace=self.namespace,
-            logger=self.logger
-        )
-        mock_patch.assert_called_once_with(
-            name=self.name,
-            namespace=self.namespace,
-            body={'spec': {'template': {'spec': {'containers': [
-                {'name': 'vecraft', 'image': 'new/image:tag'}
-            ]}}}}
-        )
-        self.logger.info.assert_called_with(f"Updated StatefulSet {self.name}")
+        # Both resources should be patched again
+        mock_patch_svc.assert_called()
+        mock_patch_sts.assert_called()
 
-    @patch.object(apps, 'patch_namespaced_stateful_set')
-    def test_update_vecraft_both(self, mock_patch):
-        spec = {'replicas': 3, 'image': 'another/image:tag'}
-        update_vecraft(
-            spec=spec, status=None,
-            name=self.name, namespace=self.namespace,
-            logger=self.logger
-        )
-        mock_patch.assert_called_once_with(
-            name=self.name,
-            namespace=self.namespace,
-            body={
-                'spec': {
-                    'replicas': 3,
-                    'template': {'spec': {'containers': [
-                        {'name': 'vecraft', 'image': 'another/image:tag'}
-                    ]}}
-                }
-            }
-        )
-        self.logger.info.assert_called_with(f"Updated StatefulSet {self.name}")
-
-    def test_delete_vecraft_logs(self):
-        delete_vecraft(
+    def test_on_delete_logs_cleanup(self):
+        on_delete(
             spec=self.spec,
             name=self.name,
             namespace=self.namespace,
             logger=self.logger
         )
-        self.logger.info.assert_called_with(
-            f"VecraftDatabase {self.name} deleted; resources will be garbage-collected."
+        self.logger.info.assert_called_once_with(
+            f"VecraftDatabase '{self.name}' deleted; resources will be cleaned up by Kubernetes."
         )
 
 if __name__ == '__main__':
