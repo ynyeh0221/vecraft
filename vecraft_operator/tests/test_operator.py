@@ -30,10 +30,10 @@ class TestVecraftOperator(unittest.TestCase):
     @patch.object(core, 'patch_namespaced_service')
     @patch.object(apps, 'patch_namespaced_stateful_set')
     def test_reconcile_vecraft(self, mock_patch_sts, mock_patch_svc, mock_owner_ref):
-        # owner_reference should return our dummy
+        # owner_reference should return dummy-uid
         mock_owner_ref.return_value = self.owner_ref
 
-        # Call the reconcile (create & resume) handler
+        # Call the reconcile (create and resume) handler
         result = reconcile_vecraft(
             spec=self.spec,
             name=self.name,
