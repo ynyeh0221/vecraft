@@ -19,7 +19,7 @@
 #     openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes
 
 # 1. Use official Python runtime as parent image
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # 2. Set application directory (avoids accidental root context)
 WORKDIR /app
