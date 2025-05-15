@@ -11,9 +11,9 @@ from fastapi.responses import Response
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter, Histogram, Gauge
 
 from vecraft_data_model.data_model_utils import DataModelUtils
-from vecraft_data_model.data_models import InsertRequest, DataPacketModel, SearchRequest
+from vecraft_data_model.data_models import InsertRequest, DataPacketModel, SearchRequest, CreateCollectionRequest
+from vecraft_data_model.index_packets import CollectionSchema
 from vecraft_exception_model.exception import RecordNotFoundError, ChecksumValidationFailureError
-
 
 class VecraftRestAPI:
     def __init__(self, root: str):
@@ -31,7 +31,7 @@ class VecraftRestAPI:
         self.client = K8sAwareVecraftClient(root)
 
         @asynccontextmanager
-        async def lifespan():
+        async def lifespan(app: FastAPI):
             # ==== Startup ====
             yield
             # ==== Shutdown ====
@@ -100,6 +100,32 @@ class VecraftRestAPI:
                 return wrapper
             return decorator
 
+        @self.app.post("/collections/{collection}/create")
+        @with_error_handling()
+        async def create_collection(collection: str, request: CreateCollectionRequest):
+            try:
+                collection_schema = CollectionSchema(
+                    name=collection,
+                    dim=request.dim,
+                    vector_type=request.vector_type,
+                    checksum_algorithm=request.checksum_algorithm
+                )
+
+                self.client.create_collection(collection_schema)
+
+                return {
+                    "status": "created",
+                    "collection": collection_schema.to_dict()
+                }
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Collection creation failed: {str(e)}")
+
+        @self.app.get("/collections")
+        @with_error_handling()
+        async def list_collections():
+            collections = self.client.list_collections()
+            return [c.to_dict() for c in collections]
+
         @self.app.post("/collections/{collection}/insert", response_model=DataPacketModel)
         @with_error_handling()
         async def insert(collection: str, request: InsertRequest):
@@ -154,3 +180,5 @@ class VecraftRestAPI:
 
             data = await asyncio.to_thread(generate_latest)
             return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+app = VecraftRestAPI(root="./vecraft-data").app

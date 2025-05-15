@@ -15,6 +15,11 @@ from vecraft_exception_model.exception import ChecksumValidationFailureError, Re
 
 class TestVecraftRestAPI(unittest.TestCase):
     def setUp(self):
+        from prometheus_client import REGISTRY
+        collectors = list(REGISTRY._collector_to_names.keys())
+        for collector in collectors:
+            REGISTRY.unregister(collector)
+
         """Set up test fixtures before each test method."""
         # Create test data
         self.test_collection = "test_collection"
@@ -227,7 +232,7 @@ class TestVecraftRestAPI(unittest.TestCase):
             self.assertIn("Checksum validation failed", result["detail"])
 
     def test_error_handling_record_not_found(self):
-        """Test error handling for record not found."""
+        """Test error handling for record isn't found."""
         # Setup mocks to raise RecordNotFoundError
         self.mock_client.get.side_effect = RecordNotFoundError(f"Record {self.test_record_id} not found")
 
@@ -303,7 +308,7 @@ class TestVecraftRestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         result = response.json()
 
-        # Create a model from the response and compare with original
+        # Create a model from the response and compare with the original
         result_model = DataPacketModel(**result)
 
         # Check core fields match
@@ -330,7 +335,7 @@ class TestVecraftRestAPI(unittest.TestCase):
 
     def test_metrics_endpoint(self):
         """Test the metrics endpoint returns Prometheus metrics correctly."""
-        # First make some API calls to generate metrics
+        # First, make some API calls to generate metrics
         # Insert operation to increment counter
         test_model = self.create_test_data_packet_model()
         test_packet = DataModelUtils.convert_to_data_packet(test_model)
@@ -354,7 +359,7 @@ class TestVecraftRestAPI(unittest.TestCase):
         # Check that the response contains expected metrics
         content = response.content.decode('utf-8')
 
-        # Verify counter metrics are present
+        # Verify counter-metrics are present
         self.assertIn('vecraft_insert_total', content)
 
         # Verify that insert counter was incremented
@@ -370,6 +375,56 @@ class TestVecraftRestAPI(unittest.TestCase):
         self.assertIn('vecraft_search_latency_bucket', content)
         self.assertIn('vecraft_get_latency_bucket', content)
         self.assertIn('vecraft_delete_latency_bucket', content)
+
+    def test_create_collection_route(self):
+        """Test creating a new collection."""
+        # Mock create_collection 方法，避免实际写入
+        self.mock_client.create_collection.return_value.to_dict.return_value = {
+            "name": self.test_collection,
+            "dim": 5,
+            "vector_type": "float",
+            "checksum_algorithm": "sha256",
+            "checksum": "dummy"
+        }
+
+        payload = {
+            "dim": 5,
+            "vector_type": "float",
+            "checksum_algorithm": "sha256"
+        }
+
+        response = self.client.post(
+            f"/collections/{self.test_collection}/create",
+            json=payload
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "created")
+        self.assertEqual(response.json()["collection"]["name"], self.test_collection)
+
+        self.mock_client.create_collection.assert_called_once()
+
+    def test_list_collections_route(self):
+        """Test listing all collections."""
+        mock_schema = MagicMock()
+        mock_schema.to_dict.return_value = {
+            "name": self.test_collection,
+            "dim": 5,
+            "vector_type": "float",
+            "checksum_algorithm": "sha256",
+            "checksum": "dummy"
+        }
+        self.mock_client.list_collections.return_value = [mock_schema]
+
+        response = self.client.get("/collections")
+
+        self.assertEqual(response.status_code, 200)
+        collections = response.json()
+        self.assertEqual(len(collections), 1)
+        self.assertEqual(collections[0]["name"], self.test_collection)
+
+        self.mock_client.list_collections.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

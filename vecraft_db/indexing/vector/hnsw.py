@@ -44,7 +44,7 @@ class HNSW:
         Initialize enhanced HNSW record_vector with flexible dimension handling.
 
         Args:
-            dim: Dimensionality of vectors. If None, will be inferred from first added vector.
+            dim: Dimensionality of vectors. If None is inferred from the first added vector.
             metric: Distance metric to use (EUCLIDEAN, INNER_PRODUCT, COSINE, or custom string)
             max_conn_per_element: Maximum number of connections per element (default 16)
             ef_construction: Size of the dynamic candidate list during construction (default 200)
@@ -75,7 +75,7 @@ class HNSW:
         # user-provided string record IDs and internal integer IDs
         self._id_mapper = IdMapper()
 
-        # These will be initialized when first vector is added
+        # These will be initialized when the first vector is added
         self._index = None
         self._max_elements = 1000
         self._current_elements = 0
@@ -118,18 +118,21 @@ class HNSW:
             np_vec = self._normalize(np_vec)
         return np_vec
 
-    def _to_numpy(self, vec: Any) -> np.ndarray:
+    @staticmethod
+    def _to_numpy(vec: Any) -> np.ndarray:
         """Convert input to a float32 numpy array."""
         if isinstance(vec, np.ndarray):
             return vec.astype(np.float32)
         return np.array(vec, dtype=np.float32)
 
-    def _ensure_1d(self, np_vec: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def _ensure_1d(np_vec: np.ndarray) -> np.ndarray:
         """Flatten any multi-dimensional array to 1D."""
         return np_vec.flatten() if np_vec.ndim > 1 else np_vec
 
-    def _guard_non_empty(self, np_vec: np.ndarray):
-        """Raise if the vector has zero length."""
+    @staticmethod
+    def _guard_non_empty(np_vec: np.ndarray):
+        """Raise if the vector has zero lengths."""
         if np_vec.size == 0:
             raise NullOrZeroVectorException(
                 "Cannot record_vector an empty vector; vector length must be > 0."
@@ -167,7 +170,8 @@ class HNSW:
 
         return np_vec[:self._dim]
 
-    def _normalize(self, np_vec: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def _normalize(np_vec: np.ndarray) -> np.ndarray:
         """L2-normalize the vector if norm > 0."""
         norm = np.linalg.norm(np_vec)
         return np_vec / norm if norm > 0 else np_vec
@@ -305,7 +309,7 @@ class HNSW:
         # Validate checksum
         [item.validate_checksum() for item in items]
 
-        # If dimension is not set yet, infer from first vector
+        # If the dimension is not set yet, infer from the first vector
         if self._dim is None:
             first_item = items[0]
             first_vec = first_item.vector
@@ -326,7 +330,7 @@ class HNSW:
         # Resize if necessary
         new_total = self._current_elements + len(items)
         if new_total > self._max_elements:
-            new_size = max(self._max_elements * 2, new_total * 1.5)
+            new_size = max(self._max_elements * 2, new_total * 2)
             self._index.resize_index(int(new_size))
             self._max_elements = int(new_size)
 
@@ -414,7 +418,7 @@ class HNSW:
                 internal_id = labels[0][i]
                 # Convert internal ID to record ID
                 record_id = self._id_mapper.get_record_id(internal_id)
-                if record_id:  # Make sure record exists (not deleted)
+                if record_id:  # Make sure the record exists (not deleted)
                     distance = float(distances[0][i])
 
                     # For inner product or cosine, smaller values are worse (convert to similarity)
@@ -499,7 +503,7 @@ class HNSW:
         1. Creating a temporary directory and file
         2. Saving the record_vector to the temporary file
         3. Reading the file contents as byte data
-        4. Packaging the record_vector data and other parameters into a state object
+        4. Packaging the record_vector data and other parameters into state object
         5. Serializing the state object with pickle
 
         Returns:
@@ -537,7 +541,7 @@ class HNSW:
                 'id_mapper': self._id_mapper,
             })
 
-        # Create temporary directory and file to save the record_vector
+        # Create a temporary directory and file to save the record_vector
         with tempfile.TemporaryDirectory() as temp_dir:
             index_file = os.path.join(temp_dir, "record_vector.bin")
 
@@ -604,7 +608,7 @@ class HNSW:
             self._current_elements = 0
             return
 
-        # Create temporary directory and file to load the record_vector
+        # Create a temporary directory and file to load the record_vector
         with tempfile.TemporaryDirectory() as temp_dir:
             index_file = os.path.join(temp_dir, "record_vector.bin")
 

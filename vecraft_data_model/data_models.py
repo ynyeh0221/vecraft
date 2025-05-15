@@ -1,5 +1,5 @@
 import base64
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal, Union
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -12,14 +12,14 @@ class NumpyArray(BaseModel):
     shape: List[int] = Field(..., description="Array shape")
 
     def to_numpy(self) -> np.ndarray:
-        """Convert to numpy array"""
+        """Convert to a numpy array"""
         raw = base64.b64decode(self.b64.encode('ascii'))
         dtype = np.dtype(self.dtype)
         return np.frombuffer(raw, dtype=dtype).reshape(self.shape)
 
     @classmethod
     def from_numpy(cls, array: np.ndarray) -> 'NumpyArray':
-        """Create from numpy array"""
+        """Create from a numpy array"""
         return cls(
             b64=base64.b64encode(array.tobytes()).decode('ascii'),
             dtype=str(array.dtype),
@@ -46,6 +46,12 @@ class QueryPacketModel(BaseModel):
     where_document: Optional[Dict[str, Any]] = Field(None, description="Document filter")
     checksum_algorithm: str = Field(default='sha256', description="Checksum algorithm")
     checksum: Optional[str] = Field(None, description="Customer-provided checksum for validation")
+
+
+class CreateCollectionRequest(BaseModel):
+    dim: int
+    vector_type: Literal["float", "binary"] = "float"
+    checksum_algorithm: Union[str, None] = "sha256"
 
 
 class InsertRequest(BaseModel):
