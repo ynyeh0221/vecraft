@@ -259,6 +259,7 @@ class DataPacket:
 
     @staticmethod
     def from_bytes(data: bytes) -> 'DataPacket':
+        # Unpack header
         magic, version, rid_len, original_data_size, vector_size, metadata_size, checksum_size = struct.unpack(
             HEADER_FORMAT, data[:HEADER_SIZE]
         )
@@ -266,6 +267,8 @@ class DataPacket:
             raise InvalidDataException(f"Invalid magic bytes: expected {MAGIC_BYTES}, got {magic}")
         if version != FORMAT_VERSION:
             raise InvalidDataException(f"Unsupported format version: {version}")
+
+        # Extract fields
         pos = HEADER_SIZE
         record_id = data[pos:pos + rid_len].decode('utf-8')
         pos += rid_len
@@ -277,11 +280,18 @@ class DataPacket:
         pos += metadata_size
         checksum_bytes = data[pos:pos + checksum_size]
         stored_checksum = checksum_bytes.decode('utf-8')
+
+        # Decode fields if present, else set to None
+        original_data = json.loads(orig_bytes.decode('utf-8')) if original_data_size > 0 else None
+        vector = np.frombuffer(vec_bytes, dtype=np.float32) if vector_size > 0 else None
+        metadata = json.loads(meta_bytes.decode('utf-8')) if metadata_size > 0 else None
+
+        # Reconstruct DataPacket and validate checksum
         packet = DataPacket.create_record(
             record_id=record_id,
-            original_data=json.loads(orig_bytes.decode('utf-8')),
-            vector=np.frombuffer(vec_bytes, dtype=np.float32),
-            metadata=json.loads(meta_bytes.decode('utf-8'))
+            original_data=original_data,
+            vector=vector,
+            metadata=metadata
         )
         if stored_checksum != packet.checksum:
             raise ChecksumValidationFailureError(

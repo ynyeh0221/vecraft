@@ -21,10 +21,54 @@ class TestPackets(unittest.TestCase):
 
         self.assertEqual(data_packet, reconstructed_packet)
 
+    def test_data_packet_dict_data_only(self):
+        data_packet = DataPacket.create_record(
+            record_id="packet_1",
+            original_data={"x": 1, "y": "abc"},
+            vector=np.array([1, 2, 3], dtype=np.float32)
+        )
+        data_packet_bytes = data_packet.to_dict()
+        reconstructed_packet = DataPacket.from_dict(data_packet_bytes)
+
+        self.assertEqual(data_packet, reconstructed_packet)
+
+    def test_data_packet_dict_metadata_only(self):
+        data_packet = DataPacket.create_record(
+            record_id="packet_1",
+            vector=np.array([1, 2, 3], dtype=np.float32),
+            metadata={"test_key": "test_value"}
+        )
+        data_packet_bytes = data_packet.to_dict()
+        reconstructed_packet = DataPacket.from_dict(data_packet_bytes)
+
+        self.assertEqual(data_packet, reconstructed_packet)
+
     def test_data_packet_bytes(self):
         data_packet = DataPacket.create_record(
             record_id="packet_1",
             original_data={"x": 1, "y": "abc"},
+            vector=np.array([1, 2, 3], dtype=np.float32),
+            metadata={"test_key": "test_value"}
+        )
+        data_packet_bytes = data_packet.to_bytes()
+        reconstructed_packet = DataPacket.from_bytes(data_packet_bytes)
+
+        self.assertEqual(data_packet, reconstructed_packet)
+
+    def test_data_packet_bytes_data_only(self):
+        data_packet = DataPacket.create_record(
+            record_id="packet_1",
+            original_data={"x": 1, "y": "abc"},
+            vector=np.array([1, 2, 3], dtype=np.float32)
+        )
+        data_packet_bytes = data_packet.to_bytes()
+        reconstructed_packet = DataPacket.from_bytes(data_packet_bytes)
+
+        self.assertEqual(data_packet, reconstructed_packet)
+
+    def test_data_packet_bytes_metadata_only(self):
+        data_packet = DataPacket.create_record(
+            record_id="packet_1",
             vector=np.array([1, 2, 3], dtype=np.float32),
             metadata={"test_key": "test_value"}
         )
