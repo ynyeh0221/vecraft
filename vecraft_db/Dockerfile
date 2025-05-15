@@ -17,6 +17,7 @@ COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --force-reinstall --no-deps hnswlib \
     && pip install --no-cache-dir \
+       gunicorn~=21.2.0 \
        fastapi~=0.110.0 \
        httpx~=0.27.0 \
        matplotlib~=3.9.4 \
@@ -40,5 +41,5 @@ USER appuser
 # 8. Install the application itself without touching already-installed dependencies
 RUN pip install --no-cache-dir -e . --no-dependencies
 
-# 9. Default command (override as needed)
-ENTRYPOINT ["true"]
+# 9. Start FastAPI server
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "vecraft_db.rest.vecraft_rest_api_server:app", "--bind", "0.0.0.0:8080", "--workers", "4"]
