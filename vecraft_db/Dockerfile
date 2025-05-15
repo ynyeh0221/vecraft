@@ -41,5 +41,6 @@ USER appuser
 # 8. Install the application itself without touching already-installed dependencies
 RUN pip install --no-cache-dir -e . --no-dependencies
 
-# 9. Start FastAPI server
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "vecraft_db.rest.vecraft_rest_api_server:app", "--bind", "0.0.0.0:8080", "--workers", "4"]
+# 9. Define entrypoint and default CMD to allow argument overrides
+ENTRYPOINT ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "vecraft_db.rest.vecraft_rest_api_server:app"]
+CMD ["--bind", "0.0.0.0:8080", "--workers", "4"]
