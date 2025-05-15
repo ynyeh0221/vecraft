@@ -3,7 +3,7 @@ import os
 import pickle
 import tempfile
 from enum import Enum
-from typing import List, Tuple, Union, Optional, Any, Set
+from typing import List, Tuple, Optional, Any, Set
 
 import numpy as np
 

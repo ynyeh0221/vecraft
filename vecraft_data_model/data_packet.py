@@ -3,7 +3,7 @@ import json
 import struct
 from dataclasses import asdict, field, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Union, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 

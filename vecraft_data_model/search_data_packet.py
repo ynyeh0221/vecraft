@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Union, List
+from typing import Any, Dict, List
 
 from vecraft_data_model.checksum_util import ChecksumFunc, get_checksum_func, _prepare_field_bytes, _concat_bytes
 from vecraft_data_model.data_packet import DataPacket

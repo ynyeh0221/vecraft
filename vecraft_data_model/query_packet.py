@@ -1,6 +1,6 @@
 import base64
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, List
 
 import numpy as np
 

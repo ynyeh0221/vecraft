@@ -1,7 +1,8 @@
 import hashlib
 import json
+from typing import Any, Dict, List, Callable
+
 import zlib
-from typing import Any, Dict, Union, List, Callable
 
 # Type for checksum function: takes bytes -> hex string
 ChecksumFunc = Callable[[bytes], str]
