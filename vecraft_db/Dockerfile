@@ -1,3 +1,23 @@
+# To enable HTTP/2 support, consider one of the following approaches:
+#
+# Option 1: Use uvicorn directly with HTTP/2 support (requires HTTPS)
+# - Install: RUN pip install --no-cache-dir uvicorn[standard]
+# - Add SSL certificate files: cert.pem and key.pem inside a certs/ directory
+# - Update ENTRYPOINT and CMD:
+#     ENTRYPOINT ["uvicorn", "vecraft_db.rest.vecraft_rest_api_server:app"]
+#     CMD ["--host", "0.0.0.0", "--port", "8080", "--http", "h2", "--ssl-keyfile", "certs/key.pem", "--ssl-certfile", "certs/cert.pem"]
+#
+# Option 2: Use Hypercorn as the ASGI server (supports HTTP/2 and HTTP/3)
+# - Install: RUN pip install --no-cache-dir hypercorn
+# - Add SSL certificate files: cert.pem and key.pem inside a certs/ directory
+# - Update ENTRYPOINT and CMD:
+#     ENTRYPOINT ["hypercorn", "vecraft_db.rest.vecraft_rest_api_server:app"]
+#     CMD ["--bind", "0.0.0.0:8080", "--certfile", "certs/cert.pem", "--keyfile", "certs/key.pem", "--alpn-protocols", "h2"]
+#
+# Note: HTTP/2 generally requires TLS (HTTPS). Most browsers won't use HTTP/2 over plain HTTP.
+# For development, you can generate a self-signed certificate:
+#     openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes
+
 # 1. Use official Python runtime as parent image
 FROM python:3.11-slim
 
