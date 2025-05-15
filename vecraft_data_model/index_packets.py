@@ -6,7 +6,7 @@ import numpy as np
 from vecraft_data_model.checksum_util import ChecksumFunc, get_checksum_func, _concat_bytes, _prepare_field_bytes
 from vecraft_exception_model.exception import ChecksumValidationFailureError
 
-# Define Vector type
+# Define a Vector type
 Vector = np.ndarray
 
 
@@ -15,7 +15,7 @@ class VectorPacket:
     """Vector with associated ID, document content, and metadata."""
     record_id: str
     vector: Vector
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -70,7 +70,7 @@ class DocumentPacket:
     """A wrapper for record ID and its associated document content."""
     record_id: str
     document: str
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -118,7 +118,7 @@ class MetadataPacket:
     """A wrapper for record ID and its associated metadata."""
     record_id: str
     metadata: Dict[str, Any]
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -172,7 +172,7 @@ class LocationPacket:
     record_id: str  # ID of the record this location refers to
     offset: int  # Starting byte position in storage
     size: int  # Size in bytes of the record
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     # The checksum field will be initialized in __post_init__
     checksum: str = field(init=False)
@@ -261,14 +261,14 @@ class CollectionSchema:
         name (str): The name of the collection.
         dim (int): The dimensionality of vectors in the collection.
         vector_type (str): The type of vectors stored in the collection.
-        checksum_algorithm (Union[str, ChecksumFunc]): The algorithm used to calculate the checksum,
+        checksum_algorithm (str | ChecksumFunc): The algorithm used to calculate the checksum,
                                                       default is 'sha256'.
         checksum (str): Automatically calculated checksum for validating data integrity.
     """
     name: str
     dim: int
     vector_type: str
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     checksum: str = field(init=False)
 

@@ -33,7 +33,7 @@ class HNSW:
     def __init__(
             self,
             dim: Optional[int] = None,
-            metric: Union[str, DistanceMetric] = DistanceMetric.EUCLIDEAN,
+            metric: str | DistanceMetric = DistanceMetric.EUCLIDEAN,
             max_conn_per_element: int = 16,
             ef_construction: int = 200,
             normalize_vectors: bool = False,

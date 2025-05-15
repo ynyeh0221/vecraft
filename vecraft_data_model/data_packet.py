@@ -29,7 +29,7 @@ class DataPacket:
     Attributes:
         type (DataPacketType): The type of data packet, which can be RECORD, TOMBSTONE, or NONEXISTENT.
         record_id (str): The unique identifier for the record.
-        checksum_algorithm (Union[str, ChecksumFunc]): The algorithm used to calculate the checksum,
+        checksum_algorithm (str | ChecksumFunc): The algorithm used to calculate the checksum,
                                                        default is 'sha256'.
         original_data (Any): The original data, which can be of any type.
         vector (Optional[np.ndarray]): Vector data, an optional numpy array.
@@ -43,7 +43,7 @@ class DataPacket:
 
     type: DataPacketType
     record_id: str
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
     original_data: Any = None
     vector: Optional[np.ndarray] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -53,11 +53,11 @@ class DataPacket:
     def __post_init__(self):
         """
         Automatically calculates the checksum after initialization.
-        Also validates field combinations based on packet type.
+        Also validates field combinations based on a packet type.
 
         Process:
-        1. Validates that required fields are present for the packet type
-        2. Uses the specified checksum algorithm to process the serialized field data
+        1. Validates that required fields are present for packet type
+        2. Use the specified checksum algorithm to process the serialized field data
 
         Raises:
             ValueError: If the field combination doesn't match the packet type requirements
@@ -98,7 +98,7 @@ class DataPacket:
 
     @staticmethod
     def create_record(record_id: str,
-                      checksum_algorithm: Union[str, ChecksumFunc] = 'sha256',
+                      checksum_algorithm: str | ChecksumFunc = 'sha256',
                       original_data: Any = None,
                       vector: Optional[np.ndarray] = None,
                       metadata: Optional[Dict[str, Any]] = None) -> "DataPacket":
@@ -112,7 +112,7 @@ class DataPacket:
         )
 
     @staticmethod
-    def create_tombstone(record_id: str, checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'):
+    def create_tombstone(record_id: str, checksum_algorithm: str | ChecksumFunc = 'sha256'):
         return DataPacket(
             type=DataPacket.DataPacketType.TOMBSTONE,
             record_id=record_id,
@@ -123,7 +123,7 @@ class DataPacket:
         )
 
     @staticmethod
-    def create_nonexistent(record_id: str, checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'):
+    def create_nonexistent(record_id: str, checksum_algorithm: str | ChecksumFunc = 'sha256'):
         return DataPacket(
             type=DataPacket.DataPacketType.NONEXISTENT,
             record_id=record_id,
@@ -238,7 +238,7 @@ class DataPacket:
         Format:
         - 4 bytes: magic bytes ('VCRD')
         - 1 byte: format version
-        - Original format continues...
+        - the Original format continues...
         """
         rid_b = self.record_id.encode('utf-8')
         orig_b = json.dumps(self.original_data).encode('utf-8') if self.original_data is not None else b''

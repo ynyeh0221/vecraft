@@ -1,5 +1,5 @@
 import base64
-from typing import Dict, Any, List, Optional, Literal, Union
+from typing import Dict, Any, List, Optional, Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -51,7 +51,7 @@ class QueryPacketModel(BaseModel):
 class CreateCollectionRequest(BaseModel):
     dim: int
     vector_type: Literal["float", "binary"] = "float"
-    checksum_algorithm: Union[str, None] = "sha256"
+    checksum_algorithm: str | None = "sha256"
 
 
 class InsertRequest(BaseModel):

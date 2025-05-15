@@ -14,7 +14,7 @@ class QueryPacket:
     k: int
     where: Optional[Dict[str, Any]] = None
     where_document: Optional[Dict[str, Any]] = None
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     checksum: str = field(init=False)
 

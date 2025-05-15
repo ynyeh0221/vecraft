@@ -14,7 +14,7 @@ class SearchDataPacket:
     """
     data_packet: DataPacket
     distance: float
-    checksum_algorithm: Union[str, ChecksumFunc] = 'sha256'
+    checksum_algorithm: str | ChecksumFunc = 'sha256'
 
     # The checksum field will be initialized in __post_init__
     checksum: str = field(init=False)
