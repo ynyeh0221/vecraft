@@ -14,8 +14,11 @@ logger = logging.getLogger(__name__)
 class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
     """
     Storage engine with atomic write-and-index operations.
-    """
 
+    Combines an append-only mmap data store with an SQLite-based location index,
+    ensuring that raw data writes and index updates occur atomically, and
+    providing rollback on failure.
+    """
     def __init__(
             self,
             data_path: str,
@@ -27,12 +30,40 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         self._loc_index = SQLiteRecordLocationIndex(Path(index_path))
 
     def allocate(self, size: int) -> int:
-        """Allocate space and return offset."""
+        """
+        Reserve space for a new record.
+
+        Delegates to underlying MMapStorage.allocate().
+
+        Args:
+            size (int): Number of bytes to allocate.
+        Returns:
+            int: Offset in the data file for the new record's status byte.
+        """
         return self._storage.allocate(size)
 
     def write_and_index(self, data: bytes, location_item: LocationPacket) -> int:
-        """Atomic write to storage and index."""
+        """
+        Atomically write raw bytes and update the location index.
 
+        1. Write to the mmap as UNCOMMITTED.
+        2. Validates that no record_id mismatch occurs.
+        3. Marks any existing index entry as deleted.
+        4. Adds the new LocationPacket to the SQLite index.
+        5. Marks the mmap entry as COMMITTED.
+
+        If any step fails, rolls back any index changes and leaves
+        the raw data as uncommitted (to be cleaned up at startup).
+
+        Args:
+            data (bytes): Payload to write.
+            location_item (LocationPacket): Contains record_id, offset, and size.
+        Returns:
+            int: Actual offset returned by the underlying storage write.
+        Raises:
+            ChecksumValidationFailureError: If record_id checksum mismatch is detected.
+            StorageFailureException: If index updates or commits fail.
+        """
         # Write to storage (initially uncommitted)
         actual_offset = self._storage.write(data, location_item)
 
@@ -68,34 +99,100 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         return actual_offset
 
     def write(self, data: bytes, location_item: LocationPacket) -> int:
+        """
+        Disabled: use write_and_index for proper atomic semantics.
+        """
         raise ValueError("Please use write_and_index instead")
 
     def read(self, location_item: LocationPacket) -> bytes:
+        """
+        Read raw bytes for a committed record.
+
+        Delegates to the underlying MMapStorage.read().
+
+        Args:
+            location_item (LocationPacket): Contains record_id, offset, and size.
+        Returns:
+            bytes: The stored payload.
+        """
         return self._storage.read(location_item)
 
     def flush(self) -> None:
+        """
+        Flush any in-memory buffers to disk.
+
+        Delegates to MMapStorage.flush().
+        """
         self._storage.flush()
 
     def get_record_location(self, record_id: str) -> Optional[LocationPacket]:
+        """
+        Look up the LocationPacket for a given record_id.
+
+        Args:
+            record_id (str): Unique ID of the record.
+        Returns:
+            Optional[LocationPacket]: Location metadata, or None if missing.
+        """
         return self._loc_index.get_record_location(record_id)
 
     def get_all_record_locations(self) -> Dict[str, LocationPacket]:
+        """
+        Retrieve all active record locations from the index.
+
+        Returns:
+            Dict[str, LocationPacket]: Mapping of record_id to metadata.
+        """
         return self._loc_index.get_all_record_locations()
 
     def get_deleted_locations(self) -> List[LocationPacket]:
+        """
+        Retrieve locations of records marked deleted.
+
+        Returns:
+            List[LocationPacket]: Offsets of freed/deleted slots.
+        """
         return self._loc_index.get_deleted_locations()
 
     def add_record(self, location_item: LocationPacket) -> None:
+        """
+        Insert or update a record location in the index without writing data.
+
+        Args:
+            location_item (LocationPacket): New location metadata.
+        """
         self._loc_index.add_record(location_item)
 
     def delete_record(self, record_id: str) -> None:
+        """
+        Remove a record from the index immediately (data cleanup at commit).
+
+        Args:
+            record_id (str): Unique ID to delete.
+        """
         self._loc_index.delete_record(record_id)
 
     def mark_deleted(self, record_id: str) -> None:
+        """
+        Mark a record as logically deleted in the index.
+
+        Args:
+            record_id (str): Unique ID to mark.
+        """
         self._loc_index.mark_deleted(record_id)
 
     def verify_consistency(self) -> List[str]:
-        """Verify storage and index consistency at startup."""
+        """
+        Verify on-disk data and index consistency at startup.
+
+        1. Remove index entries beyond file size.
+        2. Cleanup uncommitted data.
+        3. Remove mismatched index entries.
+        4. Log orphaned committed blocks.
+
+        Returns:
+            List[str]: IDs of records cleaned up or orphaned.
+        """
         orphaned = []
         orphaned.extend(self._vacuum_size_orphans())
 
