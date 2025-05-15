@@ -5,7 +5,7 @@ import httpx
 import numpy as np
 
 from vecraft_data_model.data_model_utils import DataModelUtils
-from vecraft_data_model.data_models import DataPacketModel, NumpyArray, QueryPacketModel
+from vecraft_data_model.data_models import DataPacketModel, NumpyArray, QueryPacketModel, CreateCollectionRequest
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_data_model.query_packet import QueryPacket
 from vecraft_data_model.search_data_packet import SearchDataPacket
@@ -13,7 +13,7 @@ from vecraft_rest_client.vecraft_rest_api_client import VecraftFastAPIClient
 
 
 class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self): # NOSONAR
+    async def asyncSetUp(self): #NOSONAR
         """Set up test fixtures before each test method."""
         # Setup test vectors
         rng = np.random.default_rng(42)  # Use seeded generator for reproducibility
@@ -73,10 +73,10 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
         self.mock_session = AsyncMock()
         self.client.session = self.mock_session
 
-    async def asyncTearDown(self): # NOSONAR
+    async def asyncTearDown(self): #NOSONAR
         """Clean up after each test method."""
         if self.client and self.client.session:
-            # Ensure session is closed
+            # Ensure the session is closed
             await self.client.session.aclose()
 
     async def test_context_manager(self):
@@ -93,6 +93,50 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
 
             # Verify session was closed
             mock_client.aclose.assert_called_once()
+
+    async def test_create_collection(self):
+        """Test the create_collection method."""
+        # Mock the session post method
+        mock_response = AsyncMock()
+        mock_response.raise_for_status.return_value = None
+        expected = {"status": "created", "collection": {"name": self.test_collection, "dim": 5, "vector_type": "float",
+                                                        "checksum_algorithm": "sha256", "checksum": "abc123"}}
+        mock_response.json.return_value = expected
+        self.client.session.post.return_value = mock_response
+
+        # Call method
+        result = await self.client.create_collection(
+            collection=self.test_collection,
+            dim=5,
+            vector_type="float",
+            checksum_algorithm="sha256"
+        )
+
+        self.assertEqual(result, expected)
+        self.client.session.post.assert_called_once_with(
+            f"https://testserver/collections/{self.test_collection}/create",
+            json=CreateCollectionRequest(dim=5, vector_type="float", checksum_algorithm="sha256").dict()
+        )
+
+    async def test_list_collections(self):
+        """Test the list_collections method."""
+        # Mock the session get method
+        mock_response = AsyncMock()
+        mock_response.raise_for_status.return_value = None
+        expected = [
+            {"name": "col1", "dim": 3, "vector_type": "float", "checksum_algorithm": "sha256", "checksum": "xyz"},
+            {"name": "col2", "dim": 5, "vector_type": "binary", "checksum_algorithm": "sha256", "checksum": "def"}
+        ]
+        mock_response.json.return_value = expected
+        self.client.session.get.return_value = mock_response
+
+        # Call method
+        result = await self.client.list_collections()
+
+        self.assertEqual(result, expected)
+        self.client.session.get.assert_called_once_with(
+            "https://testserver/collections"
+        )
 
     async def test_insert(self):
         """Test the insert method."""

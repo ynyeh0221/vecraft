@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from vecraft_db.cli.vecraft_cli import _run_interactive, _run_direct
-from vecraft_db.cli.vecraft_cli import (
+from vecraft_cli.vecraft_cli import _run_interactive, _run_direct
+from vecraft_cli.vecraft_cli import (
     parse_vector,
     get_parser,
     execute_command,

@@ -1,8 +1,8 @@
 import inspect
-from typing import List
+from typing import List, Dict, Any
 
 from vecraft_data_model.data_model_utils import DataModelUtils
-from vecraft_data_model.data_models import DataPacketModel
+from vecraft_data_model.data_models import DataPacketModel, CreateCollectionRequest
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_data_model.query_packet import QueryPacket
 from vecraft_data_model.search_data_packet import SearchDataPacket
@@ -24,6 +24,59 @@ class VecraftFastAPIClient:
         if self.session:
             await self.session.aclose()
 
+    async def create_collection(
+            self,
+            collection: str,
+            dim: int,
+            vector_type: str = "float",
+            checksum_algorithm: str = "sha256"
+    ) -> Dict[str, Any]:
+        """
+        Create a new vector collection
+
+        Args:
+            collection: Name of the collection to create
+            dim: Dimensionality of vectors
+            vector_type: Type of vectors (float or binary)
+            checksum_algorithm: Algorithm for backing checksum
+
+        Returns:
+            The created collection schema dict
+        """
+        assert self.session, "Client session not initialized. Use 'async with' context."
+        payload = CreateCollectionRequest(
+            dim=dim,
+            vector_type=vector_type,
+            checksum_algorithm=checksum_algorithm
+        ).dict()
+        response = await self.session.post(
+            f"{self.base_url}/collections/{collection}/create",
+            json=payload
+        )
+        rf = response.raise_for_status()
+        if inspect.isawaitable(rf):
+            await rf
+        data = response.json()
+        if inspect.isawaitable(data):
+            data = await data
+        return data
+
+    async def list_collections(self) -> List[Dict[str, Any]]:
+        """
+        List all existing collections
+
+        Returns:
+            A list of collection schema dicts
+        """
+        assert self.session, "Client session not initialized. Use 'async with' context."
+        response = await self.session.get(f"{self.base_url}/collections")
+        rf = response.raise_for_status()
+        if inspect.isawaitable(rf):
+            await rf
+        items = response.json()
+        if inspect.isawaitable(items):
+            items = await items
+        return items
 
     async def insert(
         self,
