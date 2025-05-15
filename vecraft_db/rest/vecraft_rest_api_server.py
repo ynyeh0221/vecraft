@@ -16,6 +16,149 @@ from vecraft_data_model.index_packets import CollectionSchema
 from vecraft_exception_model.exception import RecordNotFoundError, ChecksumValidationFailureError
 
 class VecraftRestAPI:
+    """
+    VecraftRestAPI: HTTP Interface for Vecraft Vector Database
+
+    This REST API provides vector database functionality including collection management,
+    record insertion, retrieval, deletion, and vector-based search.
+
+    Base URL:
+        http://127.0.0.1:8000
+
+    ---
+
+    Health & Readiness
+    ------------------
+
+    1. Health Check:
+        Check if the server is running.
+
+        curl http://127.0.0.1:8000/healthz
+
+    2. Readiness Check:
+        Check if the server is ready to serve requests.
+
+        curl http://127.0.0.1:8000/readyz
+
+    ---
+
+    Collection Management
+    ---------------------
+
+    1. Create a Collection:
+        POST /collections/{collection}/create
+
+        Request JSON:
+        {
+            "dim": 128,
+            "vector_type": "float",
+            "checksum_algorithm": "sha256"
+        }
+
+        Example:
+        curl -X POST http://127.0.0.1:8000/collections/my_collection/create \
+             -H "Content-Type: application/json" \
+             -d '{"dim": 128, "vector_type": "float", "checksum_algorithm": "sha256"}'
+
+    2. List Collections:
+        GET /collections
+
+        Example:
+        curl http://127.0.0.1:8000/collections
+
+    ---
+
+    Insert Records
+    --------------
+
+    POST /collections/{collection}/insert
+
+    Request JSON format:
+    {
+        "packet": {
+            "record_id": "rec-001",
+            "type": "RECORD",
+            "vector": {
+                "b64": "<base64-encoded-bytes>",
+                "dtype": "float64",
+                "shape": [128]
+            },
+            "original_data": null,
+            "metadata": {
+                "tag": "demo"
+            },
+            "checksum_algorithm": "sha256"
+        }
+    }
+
+    Example:
+    curl -X POST http://127.0.0.1:8000/collections/my_collection/insert \
+         -H "Content-Type: application/json" \
+         -d @insert_payload.json
+
+    ---
+
+    Search Records
+    --------------
+
+    POST /collections/{collection}/search
+
+    Request JSON format:
+    {
+        "query": {
+            "query_vector": {
+                "b64": "<base64-encoded-bytes>",
+                "dtype": "float64",
+                "shape": [128]
+            },
+            "k": 10,
+            "where": {
+                "tag": "demo"
+            },
+            "where_document": null,
+            "checksum_algorithm": "sha256"
+        }
+    }
+
+    Example:
+    curl -X POST http://127.0.0.1:8000/collections/my_collection/search \
+         -H "Content-Type: application/json" \
+         -d @search_payload.json
+
+    ---
+
+    Get Record
+    ----------
+
+    GET /collections/{collection}/records/{record_id}
+
+    Example:
+    curl http://127.0.0.1:8000/collections/my_collection/records/rec-001
+
+    ---
+
+    Delete Record
+    -------------
+
+    DELETE /collections/{collection}/records/{record_id}
+
+    Example:
+    curl -X DELETE http://127.0.0.1:8000/collections/my_collection/records/rec-001
+
+    ---
+
+    Metrics (Prometheus)
+    ---------------------
+
+    GET /metrics
+
+    Returns Prometheus metrics for monitoring.
+
+    Example:
+    curl http://127.0.0.1:8000/metrics
+
+    ---
+    """
     def __init__(self, root: str):
         # Ensure the root directory exists with safe permissions (owner-only)
         if os.path.exists(root):
