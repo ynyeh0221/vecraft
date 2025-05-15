@@ -17,7 +17,6 @@ COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --force-reinstall --no-deps hnswlib \
     && pip install --no-cache-dir \
-       gunicorn~=21.2.0 \
        fastapi~=0.110.0 \
        httpx~=0.27.0 \
        matplotlib~=3.9.4 \
@@ -25,6 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip \
        prometheus-client~=0.20.0 \
        pydantic~=2.11.3 \
        pyyaml~=6.0.1 \
+       gunicorn~=21.2.0 \
        scikit-learn~=1.6.1 \
        scipy \
        typer~=0.15.2
