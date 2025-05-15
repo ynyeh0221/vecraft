@@ -21,10 +21,60 @@ logger = logging.getLogger(__name__)
 
 class MMapStorage(StorageEngine):
     """
-    Append-only memory-mapped file storage with proper fsync,
-    file locking, and safe offset allocation.
-    """
+    Append-only memory-mapped file storage with durability guarantees.
 
+    Uses a leading status byte per record to track commit state,
+    file locks for concurrency, and automatic file expansion.
+
+    Read/Write Workflow Diagram:
+
+        Write path:
+
+            +----------------+        +----------------------+        +-----------+
+            | Application    |        | MMapStorage (self)   |        | File mmap |
+            +----------------+        +----------------------+        +-----------+
+            | write(data)   |        |                      |        |           |
+            |--------------->| allocate(size)         |        |           |
+            |                |------------------------->|        |           |
+            |                |    offset = next free   |        |           |
+            |                |    mmap[offset] = 0x00 (UNCOMMITTED)
+            |                |    mmap[offset+1:]=data |
+            |                |    mmap.flush(); fsync  |        |           |
+            |                |------------------------->| write to   |
+            |                |<-------------------------| file mmap  |
+            |                |   return offset         |        |           |
+            |<---------------|                          |        |           |
+
+        Commit path:
+
+            | commit_record(offset)      |                      |           |
+            |---------------------------->|                      |           |
+            |                            | mmap[offset] = 0x01  |           |
+            |                            | flush(); fsync       |           |
+            |                            |--------------------->| update byte|
+            |<---------------------------| ack commit            |           |
+
+        Read path:
+
+            +----------------+        +----------------------+        +-----------+
+            | Application    |        | MMapStorage (self)   |        | File mmap |
+            +----------------+        +----------------------+        +-----------+
+            | get_record(loc)|        |                      |        |           |
+            |--------------->|        |                      |        |           |
+            |                | loc = LocationPacket    |        |           |
+            | read(loc)      |        |                      |        |           |
+            |--------------->| read status = mmap[offset]
+            |                | if status != COMMITTED: return None
+            |                | data = mmap[offset+1:offset+1+size]
+            |                | return data           |        |           |
+            |<---------------|                          |        |           |
+
+    Args:
+        path (str): Filesystem path to the data file.
+        page_size (int): Block size for file growth.
+        initial_size (int): Minimum size on first open.
+        read_only (bool): If True, open mmap in read-only mode.
+    """
     def __init__(self, path: str, page_size: int = 4096, initial_size: int = 4096, read_only: bool = False):
         self._path = Path(path)
         self._page_size = page_size

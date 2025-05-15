@@ -1,3 +1,16 @@
+"""
+Multi-Version Concurrency Control (MVCC) Implementation
+
+This module provides classes for snapshot isolation and atomic writes
+in a vector-storage database. It includes:
+
+- WriteOperation: Buffer for transactional writes.
+- CollectionVersion: Immutable snapshot of a collection's state.
+- MVCCManager: Orchestrates versioning, conflict detection, and cleanup.
+- StorageWrapper: MVCC overlay for the physical storage engine.
+- MMapSQLiteStorageIndexEngine: Concrete storage with SQLite-based indexing.
+- MMapStorage: Append-only mmap file storage with fsync and locking.
+"""
 import logging
 import threading
 import time
@@ -83,28 +96,25 @@ class CollectionVersion:
 
 class MVCCManager:
     """
-    Manages multi-version concurrency control for collections.
+    Orchestrates multi-version concurrency control for collections.
 
-    This class implements snapshot isolation for database collections,
-    allowing concurrent transactions to operate on independent versions
-    of data. It handles version creation, conflict detection, and
-    cleanup of old versions.
+    Provides snapshot isolation by managing independent versions per transaction.
 
-    Attributes:
-        enable_read_write_conflict_detection: Whether to detect read-write conflicts
-        max_versions_to_keep: Number of historical versions to maintain
+    Configuration Attributes:
+        enable_read_write_conflict_detection (bool): Toggle R/W conflict checks.
+        max_versions_to_keep (int): How many historical snapshots to retain.
 
-    Example:
-        >>> mvcc = MVCCManager(storage_factories={...}, index_factories={...})
-        >>>
-        >>> # Start a transaction
-        >>> version = mvcc.begin_transaction("users")
-        >>>
-        >>> # Record operations
-        >>> mvcc.record_modification(version, "user123")
-        >>>
-        >>> # Commit the transaction
-        >>> mvcc.commit_version("users", version)
+    Key Methods:
+        begin_transaction(collection_name) -> CollectionVersion:
+            Start a new transactional snapshot.
+        record_read(version, record_id):
+            Mark that `version` has read a record (for conflict detection).
+        record_modification(version, record_id):
+            Mark that `version` plans to write a record.
+        commit_version(collection_name, version):
+            Atomically apply buffered writes, check conflicts, and advance the head.
+        end_transaction(collection_name, version, commit=True):
+            Clean up and optionally commit or rollback.
     """
     def __init__(self, storage_factories: Dict[str, Any] = None, index_factories: Dict[str, Any] = None):
         self._is_shutting_down = False

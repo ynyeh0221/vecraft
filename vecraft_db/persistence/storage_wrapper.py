@@ -9,7 +9,16 @@ from vecraft_db.core.lock.mvcc_manager import CollectionVersion, WriteOperation
 
 @dataclass
 class StorageWrapper(StorageIndexEngine):
-    """Wrapper for storage with multi-version support"""
+    """
+    MVCC overlay for the physical storage engine.
+
+    Routes read through the uncommitted overlay and queues write
+    until the version is committed.
+
+    Args:
+        base_storage (StorageIndexEngine): The real on-disk engine.
+        version (CollectionVersion): Snapshot context.
+    """
     def __init__(self, base_storage: StorageIndexEngine, version: CollectionVersion):
         self.base_storage = base_storage
         self.version = version
@@ -54,7 +63,7 @@ class StorageWrapper(StorageIndexEngine):
             ))
 
     def write(self, data: bytes, location: LocationPacket) -> int:
-        """Immediate write: delegate to base storage"""
+        """Immediately write: delegate to base storage"""
         return self.base_storage.write(data, location)
 
     def mark_deleted(self, record_id: str) -> None:
