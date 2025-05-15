@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Union, List
+from typing import Any, Dict, List
 
 import numpy as np
 
-from vecraft_data_model.checksum_util import ChecksumFunc, get_checksum_func, _concat_bytes, _prepare_field_bytes
+from vecraft_data_model.checksum_util import get_checksum_func, _concat_bytes, _prepare_field_bytes
 from vecraft_exception_model.exception import ChecksumValidationFailureError
 
 # Define a Vector type
@@ -15,7 +15,7 @@ class VectorPacket:
     """Vector with associated ID, document content, and metadata."""
     record_id: str
     vector: Vector
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -29,9 +29,7 @@ class VectorPacket:
         """
         Serialize vector_index item fields into bytes for checksum calculation.
         """
-        parts: List[bytes] = []
-
-        parts.append(self.record_id.encode('utf-8'))
+        parts: List[bytes] = [self.record_id.encode('utf-8')]
 
         if self.vector is not None:
             parts.append(self.vector.tobytes())
@@ -70,7 +68,7 @@ class DocumentPacket:
     """A wrapper for record ID and its associated document content."""
     record_id: str
     document: str
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -84,11 +82,7 @@ class DocumentPacket:
         """
         Serialize vector_index item fields into bytes for checksum calculation.
         """
-        parts: List[bytes] = []
-
-        parts.append(self.record_id.encode('utf-8'))
-
-        parts.append(_prepare_field_bytes(self.document))
+        parts: List[bytes] = [self.record_id.encode('utf-8'), _prepare_field_bytes(self.document)]
 
         return _concat_bytes(parts)
 
@@ -118,7 +112,7 @@ class MetadataPacket:
     """A wrapper for record ID and its associated metadata."""
     record_id: str
     metadata: Dict[str, Any]
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -132,9 +126,7 @@ class MetadataPacket:
         """
         Serialize metadata item fields into bytes for checksum calculation.
         """
-        parts: List[bytes] = []
-
-        parts.append(self.record_id.encode('utf-8'))
+        parts: List[bytes] = [self.record_id.encode('utf-8')]
 
         if self.metadata is not None:
             parts.append(_prepare_field_bytes(self.metadata))
@@ -172,7 +164,7 @@ class LocationPacket:
     record_id: str  # ID of the record this location refers to
     offset: int  # Starting byte position in storage
     size: int  # Size in bytes of the record
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     # The checksum field will be initialized in __post_init__
     checksum: str = field(init=False)
@@ -187,14 +179,12 @@ class LocationPacket:
         """
         Serialize location index fields into bytes for checksum calculation.
         """
-        parts: List[bytes] = []
+        parts: List[bytes] = [self.record_id.encode('utf-8'), _prepare_field_bytes(self.offset),
+                              _prepare_field_bytes(self.size)]
 
         # Include record_id
-        parts.append(self.record_id.encode('utf-8'))
 
         # Include offset and size
-        parts.append(_prepare_field_bytes(self.offset))
-        parts.append(_prepare_field_bytes(self.size))
 
         return _concat_bytes(parts)
 
@@ -268,7 +258,7 @@ class CollectionSchema:
     name: str
     dim: int
     vector_type: str
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     checksum: str = field(init=False)
 
@@ -285,11 +275,8 @@ class CollectionSchema:
         """
         Serialize schema fields into bytes for checksum calculation.
         """
-        parts: List[bytes] = []
-
-        parts.append(self.name.encode('utf-8'))
-        parts.append(_prepare_field_bytes(self.dim))
-        parts.append(self.vector_type.encode('utf-8'))
+        parts: List[bytes] = [self.name.encode('utf-8'), _prepare_field_bytes(self.dim),
+                              self.vector_type.encode('utf-8')]
 
         return _concat_bytes(parts)
 

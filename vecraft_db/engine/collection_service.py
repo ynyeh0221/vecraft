@@ -74,7 +74,7 @@ class CollectionService:
     # ------------------------
 
     def _get_or_init_collection(self, name: str):
-        """Initialize collection with consistency check on startup."""
+        """Initialize a collection with consistency check on startup."""
         # Fast-path: if already initialized, do nothing
         with self._metadata_lock:
             if name in self._collection_metadata and self._collection_metadata[name].get('initialized'):
@@ -101,7 +101,7 @@ class CollectionService:
 
             logger.info(f"Initializing collection {name} resources")
 
-            # Create initial version
+            # Create an initial version
             initial_version = self._mvcc_manager.create_version(name)
 
             # Wire up WAL, storage, and indexes
@@ -382,7 +382,7 @@ class CollectionService:
     # ------------------------
 
     def delete(self, collection: str, data_packet: DataPacket) -> DataPacket:
-        """Delete with two-phase commit to WAL and MVCC isolation."""
+        """Delete it with two-phase commit to WAL and MVCC isolation."""
         max_retries = 1
         for _ in range(max_retries):
             self._get_or_init_collection(collection)
@@ -634,7 +634,7 @@ class CollectionService:
 
         data_packet = DataPacket.from_bytes(data)
 
-        # Verify that the returned record is the one which we request
+        # Verify that the returned record is the one that we request
         if data_packet.record_id != record_id:
             error_message = f"Returned record {data_packet.record_id} does not match expected record {record_id}"
             logger.error(error_message)
@@ -734,7 +734,7 @@ class CollectionService:
     # ------------------------
 
     def flush(self):
-        # Get consistent snapshot of collection names
+        # Get a consistent snapshot of collection names
         with self._metadata_lock:
             collections = list(self._collection_metadata.keys())
 
@@ -742,7 +742,7 @@ class CollectionService:
 
         # Flush each collection
         for name in collections:
-            # Skip if collection is removed between listing and flushing
+            # Skip if a collection is removed between listing and flushing
             if name not in self._collection_metadata:
                 logger.warning(f"Collection {name} no longer exists, skipping flush")
                 continue
@@ -788,7 +788,7 @@ class CollectionService:
             doc_path = metadata['doc_snap']
 
         try:
-            # serialize & write
+            # serialize and write
             vec_data = version.vec_index.serialize()
             vec_path.write_bytes(vec_data)
 

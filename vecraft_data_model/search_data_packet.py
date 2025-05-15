@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-from vecraft_data_model.checksum_util import ChecksumFunc, get_checksum_func, _prepare_field_bytes, _concat_bytes
+from vecraft_data_model.checksum_util import get_checksum_func, _prepare_field_bytes, _concat_bytes
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_exception_model.exception import ChecksumValidationFailureError
 
@@ -14,7 +14,7 @@ class SearchDataPacket:
     """
     data_packet: DataPacket
     distance: float
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     # The checksum field will be initialized in __post_init__
     checksum: str = field(init=False)

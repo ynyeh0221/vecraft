@@ -183,7 +183,7 @@ class TestDataModelUtils(unittest.TestCase):
     @patch.object(DataPacket, 'validate_checksum')
     def test_convert_to_data_packet_checksum_validation_error(self, mock_validate):
         """Test error handling during checksum validation in convert_to_data_packet."""
-        # Setup mock to raise exception
+        # Setup mocks to raise exception
         mock_validate.side_effect = ValueError("Checksum validation failed")
 
         # Create a DataPacketModel
@@ -207,7 +207,7 @@ class TestDataModelUtils(unittest.TestCase):
             vector=self.test_vector
         )
 
-        # Setup mock to raise exception
+        # Setup mocks to raise exception
         mock_validate.side_effect = ValueError("Checksum validation failed")
 
         # Attempt conversion and expect exception
@@ -219,7 +219,7 @@ class TestDataModelUtils(unittest.TestCase):
     @patch.object(QueryPacket, 'validate_checksum')
     def test_convert_to_query_packet_checksum_validation_error(self, mock_validate):
         """Test error handling during checksum validation in convert_to_query_packet."""
-        # Setup mock to raise exception
+        # Setup mocks to raise exception
         mock_validate.side_effect = ValueError("Checksum validation failed")
 
         # Create a QueryPacketModel
@@ -243,7 +243,7 @@ class TestDataModelUtils(unittest.TestCase):
             checksum_algorithm=self.test_checksum_algorithm
         )
 
-        # Setup mock to raise exception
+        # Setup mocks to raise exception
         mock_validate.side_effect = ValueError("Checksum validation failed")
 
         # Attempt conversion and expect exception
@@ -324,7 +324,7 @@ class TestDataModelUtils(unittest.TestCase):
         packet = DataModelUtils.convert_to_data_packet(model)
         converted_model = DataModelUtils.convert_from_data_packet(packet)
 
-        # Verify converted packet is tombstone
+        # Verify a converted packet is tombstone
         self.assertTrue(packet.is_tombstone())
         self.assertEqual("TOMBSTONE", converted_model.type)
 
@@ -344,7 +344,7 @@ class TestDataModelUtils(unittest.TestCase):
         packet = DataModelUtils.convert_to_data_packet(model)
         converted_model = DataModelUtils.convert_from_data_packet(packet)
 
-        # Verify converted packet is nonexistent
+        # Verify a converted packet is nonexistent
         self.assertTrue(packet.is_nonexistent())
         self.assertEqual("NONEXISTENT", converted_model.type)
 

@@ -220,7 +220,7 @@ class MVCCManager:
     def _clone_index(self, factory_key: str, original_index, *factory_args):
         """
         If a factory exists, use it to make a fresh instance and deserialize;
-        otherwise just return the original index.
+        otherwise return the original index.
         """
         factory = self._index_factories.get(factory_key)
         if factory:
@@ -240,7 +240,7 @@ class MVCCManager:
             collection_name: Name of the collection
 
         Returns:
-            The current CollectionVersion or None if collection doesn't exist
+            The current CollectionVersion or None if a collection doesn't exist
 
         Note:
             Callers must call release_version() when done with the returned version.
@@ -288,7 +288,7 @@ class MVCCManager:
             if version.ref_count > 0:
                 version.ref_count -= 1
 
-            # 4) Set it as current version (this step will add +1 reference)
+            # 4) Set it as the current version (this step will add +1 reference)
             old_current_id = self._current_version.get(collection_name)
             self._current_version[collection_name] = version.version_id
             version.ref_count += 1  # Current snapshot takes reference
@@ -297,7 +297,7 @@ class MVCCManager:
             if old_current_id is not None and old_current_id in self._versions[collection_name]:
                 self._versions[collection_name][old_current_id].ref_count -= 1
 
-            # Remove from active transaction set
+            # Remove from an active transaction set
             self._active_transactions[collection_name].discard(version.version_id)
 
             logger.info(f"Committed version {version.version_id} for collection {collection_name}")
@@ -316,7 +316,7 @@ class MVCCManager:
 
     def _get_concurrent_versions(self, collection_name: str, version: CollectionVersion):
         """
-        Return only those other versions that are committed, not the same
+        Return only those other versions that are committed, different
         version, and whose commit_time is strictly after this version's created_at.
         """
         result = []
@@ -497,7 +497,7 @@ class MVCCManager:
         """
         Shutdown cleanup.
         1. Set the `_is_shutting_down` flag to reject new transactions.
-        2. Optionally wait for all ongoing transactions to complete, up to `timeout` seconds.
+        2. Optionally, wait for all ongoing transactions to complete, up to `timeout` seconds.
         3. Clean up historical versions that don't need to be retained, freeing memory.
         Args:
             wait (bool): Whether to wait for active transactions to complete; if False, only logs and returns
@@ -505,7 +505,7 @@ class MVCCManager:
             poll_interval (float): Polling interval
         """
         with self._lock:
-            # Mark shutdown, subsequent begin_transaction will raise exceptions
+            # Mark shutdown, later begin_transaction will raise exceptions
             self._is_shutting_down = True
         if wait:
             logger.info("MVCCManager shutdown: waiting for active transactions to complete ...")
@@ -520,7 +520,7 @@ class MVCCManager:
                 logger.warning(
                     "MVCCManager shutdown: timeout with active transactions still present: %s", active_detail
                 )
-        # Finally do a full cleanup
+        # Finally, do a full cleanup
         with self._lock:
             for collection_name in list(self._versions.keys()):
                 self._cleanup_old_versions(collection_name)

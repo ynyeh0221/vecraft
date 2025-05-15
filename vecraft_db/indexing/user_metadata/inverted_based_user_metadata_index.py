@@ -22,23 +22,30 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
         """
         Index a record's metadata.
         """
+        # Validate upfront
         item.validate_checksum()
         rid = item.record_id
-        for field, value in item.metadata.items():
+
+        # Nothing to do if no metadata
+        metadata = item.metadata or {}
+        for field, value in metadata.items():
+            # Normalize to an iterable of values
             if isinstance(value, (list, set, tuple)):
-                for v in value:
-                    self._eq_index[field][v].add(rid)
-                    try:
-                        insort(self._range_index[field], (v, rid))
-                    except TypeError:
-                        pass
+                values = value
             else:
-                self._eq_index[field][value].add(rid)
+                values = (value,)
+
+            eq_bucket = self._eq_index[field]
+            range_list = self._range_index[field]
+
+            for v in values:
+                eq_bucket[v].add(rid)
+                # Only index in the range list if it's sortable
                 try:
-                    insort(self._range_index[field], (value, rid))
+                    insort(range_list, (v, rid))
                 except TypeError:
-                    pass
-        item.validate_checksum()
+                    # skip non-order able types
+                    continue
 
     def update(self, old_item: MetadataPacket, new_item: MetadataPacket) -> None:
         """

@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, List
 
 import numpy as np
 
-from vecraft_data_model.checksum_util import ChecksumFunc, get_checksum_func, _prepare_field_bytes, _concat_bytes
+from vecraft_data_model.checksum_util import get_checksum_func, _prepare_field_bytes, _concat_bytes
 from vecraft_exception_model.exception import ChecksumValidationFailureError
 
 
@@ -14,7 +14,7 @@ class QueryPacket:
     k: int
     where: Optional[Dict[str, Any]] = None
     where_document: Optional[Dict[str, Any]] = None
-    checksum_algorithm: str | ChecksumFunc = 'sha256'
+    checksum_algorithm: str = 'sha256'
 
     checksum: str = field(init=False)
 

@@ -18,7 +18,7 @@ _PREDEFINED_CHECKSUMS: Dict[str, ChecksumFunc] = {
 
 
 def get_checksum_func(
-    algorithm: str | ChecksumFunc
+    algorithm: str
 ) -> ChecksumFunc:
     """
     Resolve an algorithm name or accept a custom function.

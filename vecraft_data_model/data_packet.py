@@ -62,6 +62,10 @@ class DataPacket:
         Raises:
             ValueError: If the field combination doesn't match the packet type requirements
         """
+        # normalize any incoming vector to float32
+        if self.vector is not None:
+            self.vector = np.asarray(self.vector, dtype=np.float32)
+
         # Validate field combinations based on type
         if self.is_record():
             # For RECORD type: vector must be non-null, and at least one of metadata/document must be non-null
@@ -242,7 +246,8 @@ class DataPacket:
         """
         rid_b = self.record_id.encode('utf-8')
         orig_b = json.dumps(self.original_data).encode('utf-8') if self.original_data is not None else b''
-        vec_b = self.vector.tobytes() if self.vector is not None else b''
+        # always serialize vectors as float32
+        vec_b = (self.vector.astype(np.float32).tobytes() if self.vector is not None else b'')
         meta_b = json.dumps(self.metadata).encode('utf-8') if self.metadata is not None else b''
         checksum_b = self.checksum.encode('utf-8')
         header = struct.pack(

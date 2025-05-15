@@ -87,7 +87,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
 
         except Exception as e:
             # On failure, the record remains uncommitted (status=0)
-            # It will be cleaned up during next startup
+            # It will be cleaned up during the next startup
             self._loc_index.mark_deleted(location_item.record_id)
             self._loc_index.delete_record(location_item.record_id)
 
@@ -245,8 +245,8 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
                     )
         return orphaned
 
+    @staticmethod
     def _warn_orphaned_blocks(
-            self,
             file_records: Dict[str, Tuple[LocationPacket, bool]],
             idx_records: Dict[str, LocationPacket]
     ) -> None:
@@ -262,7 +262,8 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         self._loc_index.mark_deleted(record_id)
         self._loc_index.delete_record(record_id)
 
-    def _log_consistency_result(self, orphaned: List[str]) -> None:
+    @staticmethod
+    def _log_consistency_result(orphaned: List[str]) -> None:
         """Final logging after consistency check."""
         if orphaned:
             logger.warning(f"Found {len(orphaned)} total inconsistent records: {orphaned}")
@@ -275,7 +276,7 @@ class MMapSQLiteStorageIndexEngine(StorageIndexEngine):
         Key behaviors
         1. **Idempotent**: Multiple calls won't throw exceptions.
         2. **Sequence**: First `flush()` then close, ensuring data is persisted to disk.
-        3. **Fault-tolerant**: Any step failing only logs a warning, without affecting subsequent steps.
+        3. **Fault-tolerant**: Any step failing only logs a warning, without affecting later steps.
         """
         # 1) First persist any data that might still be in memory
         try:

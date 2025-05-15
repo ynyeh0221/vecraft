@@ -3,7 +3,7 @@ import os
 import pickle
 import tempfile
 from enum import Enum
-from typing import List, Tuple, Optional, Any, Set
+from typing import List, Tuple, Optional, Any, Set, Union
 
 import numpy as np
 
@@ -33,7 +33,7 @@ class HNSW:
     def __init__(
             self,
             dim: Optional[int] = None,
-            metric: str | DistanceMetric = DistanceMetric.EUCLIDEAN,
+            metric: Union[str, DistanceMetric] = DistanceMetric.EUCLIDEAN,
             max_conn_per_element: int = 16,
             ef_construction: int = 200,
             normalize_vectors: bool = False,
