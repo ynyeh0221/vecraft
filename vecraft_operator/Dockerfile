@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # 6. Copy only your Python package and packaging metadata
 #    (everything else—charts, yamls, docs—should be in .dockerignore)
-COPY operator/           ./vecraft_operator/operator
+COPY vecraft_operatoroperator/           ./operator
 COPY pyproject.toml      ./
 
 # 7. (same as before)
