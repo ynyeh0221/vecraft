@@ -32,7 +32,7 @@ class DataPacketModel(BaseModel):
     type: str = Field(..., description="Type of data packet")
     record_id: str = Field(..., description="Unique record identifier")
     original_data: Optional[Any] = Field(None, description="Original data")
-    vector: NumpyArray = Field(None, description="Vector data")
+    vector: Optional[NumpyArray] = Field(None, description="Vector data")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata")
     checksum_algorithm: str = Field(default='sha256', description="Checksum algorithm")
     checksum: Optional[str] = Field(None, description="Customer-provided checksum for validation")
