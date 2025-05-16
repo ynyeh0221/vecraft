@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import httpx
 import numpy as np
@@ -7,6 +7,7 @@ import numpy as np
 from vecraft_data_model.data_model_utils import DataModelUtils
 from vecraft_data_model.data_models import DataPacketModel, NumpyArray, QueryPacketModel, CreateCollectionRequest
 from vecraft_data_model.data_packet import DataPacket
+from vecraft_data_model.index_packets import CollectionSchema
 from vecraft_data_model.query_packet import QueryPacket
 from vecraft_data_model.search_data_packet import SearchDataPacket
 from vecraft_rest_client.vecraft_rest_api_client import VecraftFastAPIClient
@@ -106,16 +107,17 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
 
         # Call method
         result = await self.client.create_collection(
-            collection=self.test_collection,
-            dim=5,
-            vector_type="float",
-            checksum_algorithm="sha256"
+            CollectionSchema(name=self.test_collection,
+                             dim=5,
+                             vector_type="float",
+                             checksum_algorithm="sha256"
+                             )
         )
 
         self.assertEqual(result, expected)
         self.client.session.post.assert_called_once_with(
             f"https://testserver/collections/{self.test_collection}/create",
-            json=CreateCollectionRequest(dim=5, vector_type="float", checksum_algorithm="sha256").dict()
+            json=CreateCollectionRequest(dim=5, vector_type="float32", checksum_algorithm="sha256").dict()
         )
 
     async def test_list_collections(self):
@@ -124,16 +126,16 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
         mock_response = AsyncMock()
         mock_response.raise_for_status.return_value = None
         expected = [
-            {"name": "col1", "dim": 3, "vector_type": "float", "checksum_algorithm": "sha256", "checksum": "xyz"},
-            {"name": "col2", "dim": 5, "vector_type": "binary", "checksum_algorithm": "sha256", "checksum": "def"}
+            {"name": "col1", "dim": 3, "vector_type": "float32", "checksum_algorithm": "sha256", "checksum": "xyz"},
+            {"name": "col2", "dim": 5, "vector_type": "float32", "checksum_algorithm": "sha256", "checksum": "def"}
         ]
-        mock_response.json.return_value = expected
+        mock_response.json = MagicMock(return_value=expected)
         self.client.session.get.return_value = mock_response
 
         # Call method
         result = await self.client.list_collections()
 
-        self.assertEqual(result, expected)
+        self.assertEqual(expected, result)
         self.client.session.get.assert_called_once_with(
             "https://testserver/collections"
         )
@@ -161,14 +163,14 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             )
 
             # Verify the result
-            self.assertEqual(result, self.data_packet)
+            self.assertEqual(self.data_packet, result)
 
             # Verify mocks were called correctly
             mock_convert_from.assert_called_once_with(self.data_packet)
             mock_convert_to.assert_called_once()
             self.client.session.post.assert_called_once_with(
                 f"https://testserver/collections/{self.test_collection}/insert",
-                json={"packet": self.data_packet_model}
+                json={"packet": self.data_packet_model.dict()}
             )
 
     async def test_search(self):
@@ -210,7 +212,7 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             mock_convert_to.assert_called_once()
             self.client.session.post.assert_called_once_with(
                 f"https://testserver/collections/{self.test_collection}/search",
-                json={"query": self.query_packet_model}
+                json={"query": self.query_packet_model.dict()}
             )
 
     async def test_get(self):
@@ -356,7 +358,7 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             # Verify the correct query was sent
             self.client.session.post.assert_called_once_with(
                 f"https://testserver/collections/{self.test_collection}/search",
-                json={"query": different_query_model}
+                json={"query": different_query_model.dict()}
             )
 
     async def test_deserialize_complex_search_results(self):
