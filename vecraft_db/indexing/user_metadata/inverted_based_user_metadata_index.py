@@ -64,7 +64,8 @@ class InvertedIndexMetadataIndex(MetadataIndexInterface):
         """
         item.validate_checksum()
         rid = item.record_id
-        for field, value in item.metadata.items():
+        metadata = item.metadata or {}
+        for field, value in metadata.items():
             if isinstance(value, (list, set, tuple)):
                 for v in value:
                     self._eq_index[field][v].discard(rid)

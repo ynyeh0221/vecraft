@@ -1,5 +1,5 @@
 import base64
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -32,7 +32,7 @@ class DataPacketModel(BaseModel):
     type: str = Field(..., description="Type of data packet")
     record_id: str = Field(..., description="Unique record identifier")
     original_data: Optional[Any] = Field(None, description="Original data")
-    vector: Optional[NumpyArray] = Field(None, description="Vector data")
+    vector: NumpyArray = Field(None, description="Vector data")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata")
     checksum_algorithm: str = Field(default='sha256', description="Checksum algorithm")
     checksum: Optional[str] = Field(None, description="Customer-provided checksum for validation")
@@ -50,8 +50,8 @@ class QueryPacketModel(BaseModel):
 
 class CreateCollectionRequest(BaseModel):
     dim: int
-    vector_type: Literal["float", "binary"] = "float"
-    checksum_algorithm: str | None = "sha256"
+    vector_type: Optional[str] = "float32"
+    checksum_algorithm: Optional[str] = "sha256"
 
 
 class InsertRequest(BaseModel):

@@ -18,8 +18,7 @@ class DataModelUtils:
             }
 
             # Convert vector if present
-            if model.vector:
-                packet_data['vector'] = model.vector.to_numpy()
+            packet_data['vector'] = model.vector.to_numpy()
             packet = DataPacket.create_record(**packet_data)
         elif model.type == "TOMBSTONE":
             packet_data = {
@@ -44,7 +43,7 @@ class DataModelUtils:
 
     @staticmethod
     def convert_from_data_packet(packet: DataPacket) -> DataPacketModel:
-        """Convert DataPacket to API model with checksum validation"""
+        """Convert DataPacket to an API model with checksum validation"""
         packet.validate_checksum()
 
         packet_dict = packet.to_dict()
@@ -77,7 +76,7 @@ class DataModelUtils:
 
     @staticmethod
     def convert_from_query_packet(packet: QueryPacket) -> QueryPacketModel:
-        """Convert QueryPacket to API model with checksum validation"""
+        """Convert QueryPacket to an API model with checksum validation"""
         packet.validate_checksum()
 
         packet_dict = packet.to_dict()
