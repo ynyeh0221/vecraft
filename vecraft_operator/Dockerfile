@@ -17,7 +17,7 @@ COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
        kopf~=1.38.0 \
-       kubernetes~=24.3.0
+       kubernetes~=24.2.0
 
 # 6. Copy only your Python package and packaging metadata
 #    (everything else—charts, yamls, docs—should be in .dockerignore)
