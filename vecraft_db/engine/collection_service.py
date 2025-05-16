@@ -1,5 +1,6 @@
 import logging
 import os
+import queue
 import threading
 import time
 from pathlib import Path
@@ -62,6 +63,14 @@ class CollectionService:
         # Collection metadata (schemas, snapshots, etc.)
         self._collection_metadata: Dict[str, Dict[str, Any]] = {}
         self._metadata_lock = threading.Lock()
+
+        # a queue of (collection, DataPacket, op_type) for async index updates
+        self._wal_queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._background_thread = threading.Thread(
+            target = self._process_wal_queue, daemon = True
+        )
+        self._background_thread.start()
 
         # Per-collection init locks to serialize first-time bootstrap
         from collections import defaultdict
@@ -204,29 +213,58 @@ class CollectionService:
     # ------------------------
 
     def _replay_entry(self, entry: dict, version: CollectionVersion) -> None:
-        """Only replay entries that have been committed."""
-        # Remove the _phase marker before creating DataPacket
+        """Rebuild only the in-memory indexes from WAL after startup (no storage writes)."""
+        # Strip off the two-phase marker
         phase = entry.pop("_phase", "prepare")
-
-        # Skip non-prepare entries (like commits)
         if phase != "prepare":
             return
 
+        # Reconstruct the packet
         data_packet = DataPacket.from_dict(entry)
         data_packet.validate_checksum()
-        logger.debug(f"Replaying {data_packet.type} operation for record {data_packet.record_id}")
+        logger.debug(f"Replaying {data_packet.type} for record {data_packet.record_id}")
 
         try:
             if data_packet.type == "insert":
-                self._apply_insert(version, data_packet)
+                # Replay insert: only update meta/doc/vector indexes
+                self._index_insert(version, data_packet)
+
             elif data_packet.type == "delete":
-                self._apply_delete(version, data_packet)
+                # Replay delete: first fetch the original record to get its preimage
+                pre = self._get_internal(version, data_packet.record_id)
+                self._index_delete(version, data_packet, pre)
+
             data_packet.validate_checksum()
-            logger.debug(f"Successfully replayed {data_packet.type} operation for {data_packet.record_id}")
+            logger.debug(f"Successfully replayed {data_packet.type} for record {data_packet.record_id}")
+
         except Exception as e:
-            logger.error(f"Error replaying {data_packet.type} operation for {data_packet.record_id}: {str(e)}",
-                         exc_info=True)
+            logger.error(
+                f"Error replaying {data_packet.type} for record {data_packet.record_id}: {e}",
+                exc_info=True
+            )
             raise
+
+    # ------------------------
+    # Async indexes update
+    # ------------------------
+
+    def _process_wal_queue(self):
+        while not self._stop_event.is_set():
+            try:
+                collection, pkt, preimage, op = self._wal_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            version = self._mvcc_manager.get_current_version(collection)
+            try:
+                if version and op == 'insert':
+                    self._index_insert(version, pkt)
+                elif version and op == 'delete':
+                    self._index_delete(version, pkt, preimage)
+            finally:
+                if version:
+                    self._mvcc_manager.release_version(collection, version)
+                self._wal_queue.task_done()
 
     # ------------------------
     # INSERT API
@@ -243,12 +281,19 @@ class CollectionService:
             version.storage = wrapped_storage
 
             try:
-                # WAL prepare, apply insert, WAL commit
+                # 1) WAL prepare
                 version.wal.append(data_packet, phase="prepare")
-                preimage = self._apply_insert(version, data_packet)
+
+                # 2) storage-only insert (with rollback on failure)
+                preimage = self._storage_insert(version, data_packet)
+
+                # 3) WAL commit → durable on disk
                 version.wal.commit(data_packet.record_id)
 
-                # Finish
+                # 4) enqueue async index build
+                self._wal_queue.put((collection, data_packet, None, 'insert'))
+
+                # Finish transaction
                 data_packet.validate_checksum()
                 version.storage = original_storage
                 self._mvcc_manager.end_transaction(collection, version, commit=True)
@@ -267,8 +312,35 @@ class CollectionService:
 
         raise WriteConflictException(f"Insert {data_packet.record_id} failed after {max_retries} retries")
 
-    def _rollback_insert(self, version: CollectionVersion, data_packet: DataPacket,
-                         preimage: DataPacket, old_loc: LocationPacket, new_loc: LocationPacket):
+    # ------------------------
+    # ROLLBACK INSERT HELPERS
+    # ------------------------
+
+    def _rollback_insert_storage(
+            self,
+            version: CollectionVersion,
+            data_packet: DataPacket,
+            old_loc: LocationPacket,
+            new_loc: LocationPacket
+    ):
+        """Rollback only the storage side of an insert."""
+        if new_loc:
+            try:
+                version.storage.mark_deleted(data_packet.record_id)
+                version.storage.delete_record(data_packet.record_id)
+                if old_loc:
+                    old_loc.validate_checksum()
+                    version.storage.add_record(old_loc)
+            except Exception:
+                logger.debug("Failed to rollback storage insert")
+
+    def _rollback_insert_index(
+            self,
+            version: CollectionVersion,
+            data_packet: DataPacket,
+            preimage: DataPacket
+    ):
+        """Rollback only the index side of an insert (vector, meta, doc)."""
         # Rollback vector
         try:
             version.vec_index.delete(record_id=data_packet.record_id)
@@ -278,48 +350,52 @@ class CollectionService:
             logger.debug("Failed to rollback vector index")
 
         # Rollback doc and meta
-        for idx_name, fn in [('doc_index', preimage.to_document_packet),
-                             ('meta_index', preimage.to_metadata_packet)]:
+        for idx_name, fn in [
+            ('doc_index', preimage.to_document_packet),
+            ('meta_index', preimage.to_metadata_packet)
+        ]:
             try:
                 idx = getattr(version, idx_name)
-                idx.delete(fn() if idx_name.endswith('index') else data_packet)
+                idx.delete(fn())
                 if not preimage.is_nonexistent():
                     idx.add(fn())
             except Exception:
                 logger.debug(f"Failed to rollback {idx_name}")
 
-        # Rollback storage
-        if new_loc:
-            try:
-                version.storage.mark_deleted(data_packet.record_id)
-                version.storage.delete_record(data_packet.record_id)
-                if old_loc:
-                    old_loc.validate_checksum()
-                    version.storage.add_record(old_loc)
-            except Exception:
-                logger.debug("Failed to rollback storage")
+    # ------------------------
+    # APPLY INSERT HELPERS
+    # ------------------------
 
-    def _apply_insert(self, version: CollectionVersion, data_packet: DataPacket) -> DataPacket:
-        """Apply insert with improved storage engine atomicity."""
-        # Record that we're modifying this record
-        self._mvcc_manager.record_modification(
-            version,
-            data_packet.record_id
-        )
-
+    def _storage_insert(
+        self,
+        version: CollectionVersion,
+        data_packet: DataPacket
+    ) -> DataPacket:
+        """Perform only storage part of insert, with storage rollback."""
+        self._mvcc_manager.record_modification(version, data_packet.record_id)
         preimage, old_loc = self._prepare_preimage(version, data_packet)
         new_loc = None
         try:
             new_loc = self._write_storage(version, data_packet)
-            self._update_meta_and_doc_indices(version, preimage, data_packet)
-            self._update_vector_index(version, data_packet)
             return preimage
         except Exception:
-            logger.error(
-                f"Error applying insert for record {data_packet.record_id}, rolling back",
-                exc_info=True
-            )
-            self._rollback_insert(version, data_packet, preimage, old_loc, new_loc)
+            logger.error(f"Storage insert failed, rolling back {data_packet.record_id}", exc_info=True)
+            self._rollback_insert_storage(version, data_packet, old_loc, new_loc)
+            raise
+
+    def _index_insert(
+        self,
+        version: CollectionVersion,
+        data_packet: DataPacket
+    ) -> None:
+        """Perform only index part of insert, with index rollback."""
+        preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
+        try:
+            self._update_meta_and_doc_indices(version, preimage, data_packet)
+            self._update_vector_index(version, data_packet)
+        except Exception:
+            logger.error(f"Index insert failed, rolling back {data_packet.record_id}", exc_info=True)
+            self._rollback_insert_index(version, data_packet, preimage)
             raise
 
     def _prepare_preimage(self, version: CollectionVersion, data_packet: DataPacket):
@@ -392,12 +468,19 @@ class CollectionService:
             version.storage = wrapped_storage
 
             try:
-                # WAL prepare, apply to delete, WAL commit
+                ## 1) WAL prepare
                 version.wal.append(data_packet, phase="prepare")
-                preimage = self._apply_delete(version, data_packet)
+
+                # 2) storage-only delete (with rollback on failure)
+                preimage = self._storage_delete(version, data_packet)
+
+                # 3) WAL commit → durable on disk
                 version.wal.commit(data_packet.record_id)
 
-                # Finish
+                # 4) enqueue async index deletion
+                self._wal_queue.put((collection, data_packet, preimage, 'delete'))
+
+                # Finish transaction
                 data_packet.validate_checksum()
                 version.storage = original_storage
                 self._mvcc_manager.end_transaction(collection, version, commit=True)
@@ -416,95 +499,105 @@ class CollectionService:
 
         raise WriteConflictException(f"Delete {data_packet.record_id} failed after {max_retries} retries")
 
-    def _apply_delete(self, version: CollectionVersion, data_packet: DataPacket) -> DataPacket:
-        # Record that we're modifying this record
-        self._mvcc_manager.record_modification(
-            version,
-            data_packet.record_id
-        )
-
+    def _storage_delete(
+            self,
+            version: CollectionVersion,
+            data_packet: DataPacket
+    ) -> DataPacket:
+        """
+        Perform only the storage portion of a deleted (with rollback on failure).
+        Returns the preimage so that the index step can use it.
+        """
         record_id = data_packet.record_id
-        logger.debug(f"Applying delete for record {record_id}")
+        # Track the modification for MVCC
+        self._mvcc_manager.record_modification(version, record_id)
+        logger.debug(f"Applying storage delete for record {record_id}")
 
+        # A) load old location & preimage
         old_loc = version.storage.get_record_location(record_id)
         if not old_loc:
             logger.warning(f"Attempted to delete non-existent record {record_id}")
-            return DataPacket.create_nonexistent(data_packet.record_id)
-
-        # Note: Changed from self.get() to self._get_internal() to avoid issues with MVCC
+            return DataPacket.create_nonexistent(record_id=record_id)
         preimage = self._get_internal(version, record_id)
 
-        removed_storage = removed_meta = removed_doc = removed_vec = False
-
+        removed_storage = False
         try:
-            # A) storage
-            try:
-                logger.debug(f"Marking record {record_id} as deleted in storage")
-                version.storage.mark_deleted(record_id)
-                removed_storage = True
+            # mark deleted and remove from storage index
+            logger.debug(f"Marking record {record_id} as deleted in storage")
+            version.storage.mark_deleted(record_id)
+            removed_storage = True
 
-                logger.debug(f"Removing record {record_id} from storage index")
-                version.storage.delete_record(record_id)
-            except Exception as e:
-                error_message = f"Storage removal failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise StorageFailureException(error_message, e)
-
-            # B) user metadata index
-            try:
-                logger.debug(f"Removing record {record_id} from metadata index")
-                version.meta_index.delete(preimage.to_metadata_packet())
-                removed_meta = True
-            except Exception as e:
-                error_message = f"Metadata index removal failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise MetadataIndexBuildingException(error_message, e)
-
-            # C) user document index
-            try:
-                logger.debug(f"Removing record {record_id} from doc index")
-                version.doc_index.delete(preimage.to_document_packet())
-                removed_doc = True
-            except Exception as e:
-                error_message = f"Document index removal failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise DocumentIndexBuildingException(error_message, e)
-
-            # D) vector index
-            try:
-                logger.debug(f"Removing record {record_id} from vector index")
-                version.vec_index.delete(record_id=record_id)
-                removed_vec = True
-            except Exception as e:
-                error_message = f"Vector index removal failed for record {data_packet.record_id}"
-                logger.debug(error_message)
-                raise VectorIndexBuildingException(error_message, e)
-
-            logger.debug(f"Successfully deleted record {record_id} from all indices")
+            logger.debug(f"Removing record {record_id} from storage")
+            version.storage.delete_record(record_id)
 
             return preimage
 
         except Exception as e:
-            logger.error(f"Error applying delete for record {record_id}, rolling back: {str(e)}", exc_info=True)
-
-            if removed_vec:
-                logger.debug("Rolling back vector index deletion")
-                version.vec_index.add(preimage.to_vector_packet())
-
-            if removed_doc:
-                logger.debug("Rolling back doc index deletion")
-                version.doc_index.add(preimage.to_document_packet())
-
-            if removed_meta:
-                logger.debug("Rolling back metadata index deletion")
-                version.meta_index.add(preimage.to_metadata_packet())
-
+            logger.error(f"Storage removal failed for record {record_id}, rolling back", exc_info=True)
+            # rollback storage deletion
             if removed_storage:
-                logger.debug("Rolling back storage deletion")
-                version.storage.add_record(
-                    LocationPacket(record_id=record_id, offset=old_loc.offset, size=old_loc.size))
+                try:
+                    version.storage.add_record(
+                        LocationPacket(record_id=record_id, offset=old_loc.offset, size=old_loc.size)
+                    )
+                except Exception:
+                    logger.debug("Failed to rollback storage delete")
+            raise StorageFailureException(f"Storage removal failed for record {record_id}", e)
 
-            logger.error(f"Rollback complete for record {record_id}")
+    def _index_delete(
+            self,
+            version: CollectionVersion,
+            data_packet: DataPacket,
+            preimage: DataPacket
+    ) -> None:
+        """
+        Perform only the metadata/doc/vector index removals (with rollback on failure).
+        Expects the preimage from _storage_delete.
+        """
+        record_id = data_packet.record_id
+        logger.debug(f"Applying index delete for record {record_id}")
+
+        removed_meta = removed_doc = removed_vec = False
+        try:
+            # B) metadata index
+            logger.debug(f"Removing record {record_id} from metadata index")
+            version.meta_index.delete(preimage.to_metadata_packet())
+            removed_meta = True
+
+            # C) document index
+            logger.debug(f"Removing record {record_id} from doc index")
+            version.doc_index.delete(preimage.to_document_packet())
+            removed_doc = True
+
+            # D) vector index
+            logger.debug(f"Removing record {record_id} from vector index")
+            version.vec_index.delete(record_id=record_id)
+            removed_vec = True
+
+        except Exception as e:
+            logger.error(f"Index removal failed for record {record_id}, rolling back", exc_info=True)
+
+            # rollback vector
+            if removed_vec:
+                try:
+                    version.vec_index.add(preimage.to_vector_packet())
+                except Exception:
+                    logger.debug("Failed to rollback vector index delete")
+
+            # rollback doc
+            if removed_doc:
+                try:
+                    version.doc_index.add(preimage.to_document_packet())
+                except Exception:
+                    logger.debug("Failed to rollback doc index delete")
+
+            # rollback metadata
+            if removed_meta:
+                try:
+                    version.meta_index.add(preimage.to_metadata_packet())
+                except Exception:
+                    logger.debug("Failed to rollback metadata index delete")
+
             raise
 
     # ------------------------
@@ -734,6 +827,9 @@ class CollectionService:
     # ------------------------
 
     def flush(self):
+        # first wait for any pending index work
+        self._wal_queue.join()
+
         # Get a consistent snapshot of collection names
         with self._metadata_lock:
             collections = list(self._collection_metadata.keys())
@@ -803,7 +899,7 @@ class CollectionService:
                 with open(p, 'rb') as f:
                     os.fsync(f.fileno())
 
-            # atomic replace tempsnap → main
+            # atomic replace temps nap → main
             if to_temp_files:
                 os.replace(vec_path, metadata['vec_snap'])
                 os.replace(meta_path, metadata['meta_snap'])
@@ -828,6 +924,9 @@ class CollectionService:
         Should be called in SIGTERM → FastAPI lifespan shutdown.
         """
         logger.info("CollectionService closing ...")
+        # stop background indexer
+        self._stop_event.set()
+        self._background_thread.join()
         self.flush()
 
         names = self._get_collection_names()
