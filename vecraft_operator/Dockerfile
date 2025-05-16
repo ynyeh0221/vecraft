@@ -16,7 +16,7 @@ COPY pyproject.toml README.md ./
 #    sorted alphabetically, no extra layers
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
-       kopf~=1.41.0 \
+       kopf~=1.38.0 \
        kubernetes~=24.3.0
 
 # 6. Copy only your Python package and packaging metadata
