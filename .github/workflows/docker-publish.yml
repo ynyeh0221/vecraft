@@ -80,6 +80,7 @@ jobs:
       matrix:
         service:
           - vecraft_db
+          - vecraft-operator
 
     steps:
       - name: Checkout code
