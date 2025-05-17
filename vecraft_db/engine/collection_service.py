@@ -278,8 +278,7 @@ class CollectionService:
             if item is None:
                 continue
 
-            collection, pkt, preimage, op, lsn, _ = item
-            version = self._mvcc_manager.get_current_version(collection)
+            collection, pkt, preimage, op, lsn, version = item
             if not version:
                 continue
 
@@ -296,7 +295,6 @@ class CollectionService:
                 return
 
             finally:
-                self._mvcc_manager.release_version(collection, version)
                 self._wal_queue.task_done()
 
     def _get_queue_item(self):
@@ -307,7 +305,7 @@ class CollectionService:
 
     def _attempt_index_operation(self, operation, version, pkt, preimage):
         if operation == 'insert':
-            self._index_insert(version, pkt)
+            self._index_insert(version, pkt, preimage)
         elif operation == 'delete':
             self._index_delete(version, pkt, preimage)
         else:
@@ -370,7 +368,7 @@ class CollectionService:
                 version.wal.commit(data_packet.record_id)
 
                 # 4) enqueue async index build with LSN
-                self._wal_queue.put((collection, data_packet, None, 'insert', lsn, version.version_id))
+                self._wal_queue.put((collection, data_packet, preimage, 'insert', lsn, version))
 
                 # Finish transaction - mark as committed but not visible
                 data_packet.validate_checksum()
@@ -472,17 +470,16 @@ class CollectionService:
             preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
         return preimage, old_loc
 
-    def _index_insert(self, version: CollectionVersion, data_packet: DataPacket) -> None:
+    def _index_insert(self, version: CollectionVersion, data_packet: DataPacket, preimage: Optional[DataPacket] = None) -> None:
         """Perform only index part of insert, with index rollback."""
-        # Try to get the actual preimage first
         record_id = data_packet.record_id
-        try:
-            preimage = self._get_internal(version, record_id)
-            if preimage is None:
+        if preimage is None:
+            try:
+                preimage = self._get_internal(version, record_id)
+                if preimage is None:
+                    preimage = DataPacket.create_nonexistent(record_id=record_id)
+            except Exception:
                 preimage = DataPacket.create_nonexistent(record_id=record_id)
-        except Exception:
-            # If read fails, use non-existent preimage
-            preimage = DataPacket.create_nonexistent(record_id=record_id)
 
         try:
             # Handle index updates differently based on whether record exists
@@ -551,7 +548,7 @@ class CollectionService:
                 version.wal.commit(data_packet.record_id)
 
                 # 4) enqueue async index deletion with LSN
-                self._wal_queue.put((collection, data_packet, preimage, 'delete', lsn, version.version_id))
+                self._wal_queue.put((collection, data_packet, preimage, 'delete', lsn, version))
 
                 # Finish transaction - mark as committed but not visible
                 data_packet.validate_checksum()
