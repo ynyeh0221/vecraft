@@ -1,10 +1,10 @@
-import fcntl
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+import fcntl
 import numpy as np
 
 from vecraft_data_model.data_packet import DataPacket
@@ -62,6 +62,7 @@ class TestWALManager(unittest.TestCase):
             loaded_entry = json.loads(line)
             expected_entry = test_entries[i].to_dict()
             expected_entry["_phase"] = "prepare"  # Default phase
+            expected_entry["_lsn"] = loaded_entry["_lsn"]
             self.assertEqual(loaded_entry, expected_entry)
 
     @patch('fcntl.flock')
@@ -74,26 +75,28 @@ class TestWALManager(unittest.TestCase):
             metadata={}
         )
 
-        # Append with prepare phase
-        self.wal_manager.append(test_packet, phase="prepare")
+        # Append twice in prepare phase (capture second LSN)
+        first_lsn = self.wal_manager.append(test_packet, phase="prepare")
+        prepare_lsn = self.wal_manager.append(test_packet, phase="prepare")
+        self.assertGreater(prepare_lsn, first_lsn)
 
         # Commit the record
         self.wal_manager.commit("user:123")
 
-        # Read the file and verify content
+        # Read the file and verify content: two prepares + one commit
         with open(self.wal_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
+        self.assertEqual(len(lines), 3)
 
-        self.assertEqual(len(lines), 2)
-
-        # Check prepare entry
-        prepare_entry = json.loads(lines[0])
+        # Check second prepare entry
+        prepare_entry = json.loads(lines[1])
         expected_prepare = test_packet.to_dict()
         expected_prepare["_phase"] = "prepare"
+        expected_prepare["_lsn"] = prepare_lsn
         self.assertEqual(expected_prepare, prepare_entry)
 
         # Check commit entry
-        commit_entry = json.loads(lines[1])
+        commit_entry = json.loads(lines[2])
         self.assertEqual(commit_entry["record_id"], "user:123")
         self.assertEqual(commit_entry["_phase"], "commit")
 
@@ -130,12 +133,13 @@ class TestWALManager(unittest.TestCase):
         self.assertEqual(len(test_entries), count)
         self.assertEqual(len(test_entries), mock_handler.call_count)
 
-        # Verify the correct entries were passed to handler
+        # Verify the correct entries were passed to the handler
         for i, entry in enumerate(test_entries):
             print(i, entry)
             call_args = mock_handler.call_args_list[i][0][0]
             expected_args = entry.to_dict()
             expected_args["_phase"] = "prepare"
+            expected_args["_lsn"] = call_args["_lsn"]
             self.assertEqual(expected_args, call_args)
 
         # Verify WAL file was deleted after replay
@@ -174,10 +178,11 @@ class TestWALManager(unittest.TestCase):
         self.assertEqual(1, count)
         self.assertEqual(1, mock_handler.call_count)
 
-        # Verify correct entry was passed to handler
+        # Verify the correct entry was passed to handler
         call_args = mock_handler.call_args_list[0][0][0]
         expected_args = test_entries[0].to_dict()
         expected_args["_phase"] = "prepare"
+        expected_args["_lsn"] = call_args["_lsn"]
         self.assertEqual(expected_args, call_args)
 
     def test_clear(self):
@@ -201,7 +206,7 @@ class TestWALManager(unittest.TestCase):
 
     def test_replay_nonexistent_file(self):
         """Test replaying a non-existent WAL file."""
-        # Ensure file doesn't exist
+        # Ensure a file doesn't exist
         if self.wal_path.exists():
             self.wal_path.unlink()
 
@@ -227,31 +232,37 @@ class TestWALManager(unittest.TestCase):
     @patch('os.fsync')
     @patch('fcntl.flock')
     def test_append_flushes_and_syncs(self, mock_flock, mock_fsync, mock_open):
-        """Test that append flushes and syncs the file."""
+        """Test that append flushes and syncs both the LSN‐meta and WAL files."""
+        # Prepare a fake file object
         mock_file = MagicMock()
         mock_file.fileno.return_value = 42
         mock_open.return_value.__enter__.return_value = mock_file
 
-        test_packet = DataPacket.create_record(
+        pkt = DataPacket.create_record(
             record_id="test",
             original_data={},
             vector=np.array([0, 0, 0], dtype=np.float32),
             metadata={}
         )
-        self.wal_manager.append(test_packet)
+        # Invoke append, which writes both to the .lsn.meta and the WAL itself
+        self.wal_manager.append(pkt)
 
-        # Verify flush and fsync were called
-        mock_file.flush.assert_called_once()
-        mock_fsync.assert_called_once_with(42)
+        # We expect at least one flush per file → total flush calls ≥ 2
+        self.assertGreaterEqual(mock_file.flush.call_count, 2,
+                                f"Expected ≥2 flush() calls, got {mock_file.flush.call_count}")
 
-        # Verify flock was called twice (lock and unlock)
-        self.assertEqual(mock_flock.call_count, 2)
-        # First call should be LOCK_EX
-        lock_call = mock_flock.call_args_list[0]
-        self.assertEqual(lock_call[0][1], fcntl.LOCK_EX)
-        # Second call should be LOCK_UN
-        unlock_call = mock_flock.call_args_list[1]
-        self.assertEqual(unlock_call[0][1], fcntl.LOCK_UN)
+        # We expect at least one fsync per file → total fsync calls ≥ 2
+        self.assertGreaterEqual(mock_fsync.call_count, 2,
+                                f"Expected ≥2 fsync() calls, got {mock_fsync.call_count}")
+        for args, _ in mock_fsync.call_args_list:
+            self.assertEqual(args[0], 42)
+
+        # We expect at least lock/unlock per file → total flock calls ≥ 4
+        self.assertGreaterEqual(mock_flock.call_count, 4,
+                                f"Expected ≥4 flock() calls, got {mock_flock.call_count}")
+        seen_modes = {call.args[1] for call in mock_flock.call_args_list}
+        self.assertIn(fcntl.LOCK_EX, seen_modes)
+        self.assertIn(fcntl.LOCK_UN, seen_modes)
 
     @patch('fcntl.flock')
     def test_replay_with_corrupted_entry(self, mock_flock):

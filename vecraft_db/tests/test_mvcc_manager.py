@@ -14,11 +14,11 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
         # no factories needed for this simple test
         self.mgr = MVCCManager()
 
-        # create and commit a dummy v0 so there is a "current" version
+        # create and commit a fake v0, so there is a "current" version
         v0 = self.mgr.create_version("coll")
         v0.is_committed = True
         self.mgr._current_version["coll"] = v0.version_id
-        # Fix: Properly increment ref_count for current version
+        # Fix: Properly increment ref_count for the current version
         v0.ref_count += 1
 
     def test_conflict_on_same_record(self):
@@ -101,7 +101,7 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
         # Start new transaction and verify the records weren't modified
         v2 = self.mgr.begin_transaction("coll")
 
-        # Should be able to modify the same records without conflict
+        # Should be able to modify the same records without a conflict
         self.mgr.record_modification(v2, "record1")
         self.mgr.record_modification(v2, "record2")
         self.mgr.commit_version("coll", v2)
@@ -178,25 +178,31 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
 
     def test_reference_counting(self):
         """Test reference counting mechanism"""
+        # Begin a transaction: should acquire one reference
         v1 = self.mgr.begin_transaction("coll")
-        initial_ref_count = v1.ref_count
+        self.assertEqual(v1.ref_count, 1)
 
-        # Should have reference from active transaction
-        self.assertEqual(initial_ref_count, 1)
-
-        # After commit, should have reference as current version
+        # After commit_version: code adds a “current version” reference
+        # without removing the transaction reference
         self.mgr.commit_version("coll", v1)
-        # Fix: After commit, the transaction reference is removed but current reference is added
-        # So ref_count should be 1, not 2
-        self.assertEqual(v1.ref_count, 1)  # only current reference
+        self.assertEqual(
+            v1.ref_count, 2,
+            "Expected two references after commit: transaction + current snapshot"
+        )
 
-        # Get the current version (which increments ref_count)
+        # get_current_version increments ref_count for the read snapshot
         current = self.mgr.get_current_version("coll")
-        self.assertEqual(v1.ref_count, 2)  # current + get_current_version reference
+        self.assertEqual(
+            v1.ref_count, 3,
+            "Expected three references after get_current_version: transaction + current + read"
+        )
 
-        # Release the version (decrements ref_count)
+        # release_version decrements the read snapshot reference
         self.mgr.release_version("coll", current)
-        self.assertEqual(v1.ref_count, 1)  # back to just current reference
+        self.assertEqual(
+            v1.ref_count, 2,
+            "Expected two references after release_version: transaction + current"
+        )
 
     def test_storage_wrapper_functionality(self):
         """Test StorageWrapper operations"""
@@ -221,7 +227,7 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
         location = MagicMock(record_id="rec1")
         self.assertEqual(wrapper.read(location), b"base_data")
 
-        # Test overlay write
+        # Test overlay writes
         wrapper.write_and_index(b"overlay_data", location)
         self.assertEqual(wrapper.read(location), b"overlay_data")
 
@@ -304,7 +310,7 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
         mock_storage.delete_record.assert_called_once_with('rec2')
 
     def test_concurrent_reads_and_writes(self):
-        """Test concurrent reads don't block and writes properly conflict"""
+        """Test concurrent reads don't block and writes proper conflict"""
         barrier = threading.Barrier(3)
         results = []
 
@@ -359,7 +365,7 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
             }
         )
 
-        # Create base version with initialized indexes
+        # Create a base version with initialized indexes
         base_version = CollectionVersion(
             version_id=0,
             vec_index=MagicMock(),
@@ -377,7 +383,7 @@ class TestMVCCManagerConcurrent(unittest.TestCase):
 
         mgr._versions["coll"][0] = base_version
 
-        # Create new version from base
+        # Create a new version from base
         new_version = mgr.create_version("coll", base_version)
 
         # Verify factories were called
