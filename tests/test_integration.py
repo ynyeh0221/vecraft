@@ -1,3 +1,4 @@
+import os
 import shutil
 import tempfile
 import time
@@ -20,25 +21,17 @@ class TestVecraftClient(unittest.TestCase):
         """Set up test fixtures before each test method."""
         # Create a temporary directory for testing
         self.test_dir = Path(tempfile.mkdtemp())
+        self.orig_cwd = Path.cwd()
+        os.chdir(self.test_dir)
 
         # Setup client
         self.client = VecraftClient(root=str(self.test_dir))
 
     def tearDown(self):
-        """Tear down test fixtures after each test method."""
-        # Shutdown vecraft client
-        self.client.close()
+        # Switch back to the original working directory
+        os.chdir(self.orig_cwd)
 
-        # Clean up any snapshot files created during tests
-        snapshot_patterns = ["*.idxsnap", "*.metasnap", "*.docsnap", "*.tempsnap", "*.lsnmeta"]
-        for pattern in snapshot_patterns:
-            for snap_file in Path.cwd().glob(pattern):
-                try:
-                    snap_file.unlink()
-                except Exception:
-                    pass  # Ignore errors during cleanup
-
-        # Clean up the temporary directory
+        # Remove the entire temporary directory (and everything in it)
         shutil.rmtree(self.test_dir)
 
     def test_load_snapshot(self):

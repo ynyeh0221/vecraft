@@ -1,79 +1,17 @@
 import os
 import tempfile
 import unittest
-from typing import List
 from unittest.mock import MagicMock
 
 import numpy as np
 
 from vecraft_data_model.data_packet import DataPacket
-from vecraft_data_model.index_packets import LocationPacket
 from vecraft_db.core.interface.catalog_interface import Catalog
-from vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
 from vecraft_db.engine.collection_service import CollectionService
 from vecraft_db.tests.test_collection_service import DummyVectorIndex, DummyMetadataIndex, DummyWAL, \
     DummySchema, DummyDocIndex
+from vecraft_db.tests.test_helper import DummyStorage
 from vecraft_exception_model.exception import MetadataIndexBuildingException, VectorIndexBuildingException
-
-
-class FixedDummyStorage(StorageIndexEngine):
-    """Fixed DummyStorage that includes all methods needed"""
-
-    def __init__(self, data_path, index_path):
-        self.data_path = data_path
-        self.index_path = index_path
-        self.locations = {}
-        self.deleted = set()
-        self.data = {}
-        self.next_offset = 0
-        self.fail_write_and_index = False  # Control failure at instance level
-
-    def get_record_location(self, record_id: str) -> LocationPacket:
-        return self.locations.get(record_id)
-
-    def get_all_record_locations(self):
-        return self.locations
-
-    def verify_consistency(self):
-        return set()
-
-    def allocate(self, size: int) -> int:
-        offset = self.next_offset
-        self.next_offset += size
-        return offset
-
-    def write(self, data: bytes, offset: int) -> int:
-        self.data[offset] = data
-        return offset
-
-    def write_and_index(self, data: bytes, location_item: LocationPacket):
-        if self.fail_write_and_index:
-            raise RuntimeError("storage failure")
-        actual_offset = self.write(data, location_item.offset)
-        self.add_record(location_item)
-        return actual_offset
-
-    def add_record(self, location_item: LocationPacket):
-        """Add record location to index - needed for rollback"""
-        self.locations[location_item.record_id] = location_item
-
-    def mark_deleted(self, record_id: str):
-        self.deleted.add(record_id)
-
-    def delete_record(self, record_id: str):
-        if record_id in self.locations:
-            del self.locations[record_id]
-
-    def read(self, location_item: LocationPacket) -> bytes:
-        return self.data.get(location_item.offset)
-
-    def flush(self):
-        """Not used in this test"""
-        pass
-
-    def get_deleted_locations(self) -> List[LocationPacket]:
-        """Not used in this test"""
-        pass
 
 
 class TestCollectionRollbackWithRealIndex(unittest.TestCase):
@@ -117,7 +55,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
 
     def _setup_factories(self):
         def storage_factory(data_path, index_path):
-            storage = FixedDummyStorage(data_path, index_path)
+            storage = DummyStorage(data_path, index_path)
             self.storages.append(storage)
             return storage
         self._storage_factory = storage_factory
@@ -228,7 +166,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         )
 
         # Set storage to fail AFTER the transaction begins
-        # Get the storage instance and set it to fail
+        # to Get the storage instance and set it to fail
         storage = self.storages[0]
 
         # Create a hook to set the failure flag at the right time
@@ -257,10 +195,10 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Restore original method
         self.collection_service._mvcc_manager.end_transaction = original_end_transaction
 
-        # Verify the second record was not persisted by checking current version
+        # Verify the second record was not persisted by checking the current version
         version = self.collection_service._mvcc_manager.get_current_version(self.collection_name)
 
-        # First record should exist, second should not
+        # The First record should exist, the second should not
         self.assertIn("test1", version.storage.get_all_record_locations())
         self.assertNotIn("test2", version.storage.get_all_record_locations())
 
@@ -354,7 +292,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Set flag to make metadata delete fail
         self.fail_metadata_delete = True
 
-        # Attempt to delete, which should fail
+        # Attempt to delete it, which should fail
         delete_packet = DataPacket.create_tombstone(record_id=record_id)
 
         with self.assertRaises(MetadataIndexBuildingException):
@@ -390,7 +328,7 @@ class TestCollectionRollbackWithRealIndex(unittest.TestCase):
         # Set flag to make vector delete fail
         self.fail_vector_delete = True
 
-        # Attempt to delete, which should fail
+        # Attempt to delete it, which should fail
         delete_packet = DataPacket.create_tombstone(record_id=record_id)
 
         with self.assertRaises(VectorIndexBuildingException):

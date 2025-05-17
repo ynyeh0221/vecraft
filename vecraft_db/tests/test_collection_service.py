@@ -1,346 +1,55 @@
 import os
-import pickle
+import shutil
+import tempfile
 import threading
 import time
 import unittest
-from typing import List, Dict, Tuple, Optional, Set, Any, Callable
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import numpy as np
 
 from vecraft_data_model.data_packet import DataPacket
-from vecraft_data_model.index_packets import LocationPacket, VectorPacket, Vector, MetadataPacket, DocumentPacket, \
-    CollectionSchema
 from vecraft_data_model.query_packet import QueryPacket
 from vecraft_db.core.interface.catalog_interface import Catalog
-from vecraft_db.core.interface.storage_engine_interface import StorageIndexEngine
-from vecraft_db.core.interface.user_data_index_interface import DocIndexInterface
-from vecraft_db.core.interface.user_metadata_index_interface import MetadataIndexInterface
-from vecraft_db.core.interface.vector_index_interface import Index
-from vecraft_db.core.interface.wal_interface import WALInterface
 from vecraft_db.engine.collection_service import CollectionService
+from vecraft_db.indexing.user_data.inverted_based_user_data_index import InvertedIndexDocIndex
+from vecraft_db.indexing.user_metadata.inverted_based_user_metadata_index import InvertedIndexMetadataIndex
+from vecraft_db.indexing.vector.hnsw import HNSW
+from vecraft_db.persistence.mmap_storage_sqlite_based_index_engine import MMapSQLiteStorageIndexEngine
+from vecraft_db.persistence.wal_manager import WALManager
+from vecraft_db.tests.test_helper import DummySchema
 from vecraft_exception_model.exception import WriteConflictException
-
-
-# Dummy implementations for testing
-class DummyStorage(StorageIndexEngine):
-
-    def __init__(self, data_path=None, index_path=None):
-        self._buffer = bytearray()
-        self._locs = {}
-        self._deleted_locs = {}  # Track deleted locations
-        self._next_id = 1
-        self._next_offset = 0  # Track the next available offset for allocation
-
-    def allocate(self, size: int) -> int:
-        """Allocate space and return the offset."""
-        offset = self._next_offset
-        self._next_offset += size
-        # Extend buffer if needed
-        if len(self._buffer) < self._next_offset:
-            self._buffer.extend(b"\x00" * (self._next_offset - len(self._buffer)))
-        return offset
-
-    def write_and_index(self, data: bytes, location_item: LocationPacket) -> int:
-        """Atomic write to storage and index."""
-        # Write to storage
-        actual_offset = self.write(data, location_item)
-
-        try:
-            # Update index
-            self.add_record(location_item)
-        except Exception as e:
-            # For append-only storage, mark as deleted instead of zeroing
-            self.mark_deleted(location_item.record_id)
-            raise ValueError(f"Failed to update index, marked as deleted: {e}")
-
-        return actual_offset
-
-    def get_deleted_locations(self) -> List[LocationPacket]:
-        """Return list of deleted locations."""
-        return list(self._deleted_locs.values())
-
-    def write(self, data: bytes, location_item: LocationPacket) -> int:
-        end = location_item.offset + len(data)
-        if len(self._buffer) < end:
-            self._buffer.extend(b"\x00" * (end - len(self._buffer)))
-        self._buffer[location_item.offset:end] = data
-        # Update next_offset if we've written beyond it
-        self._next_offset = max(self._next_offset, end)
-        return location_item.offset
-
-    def read(self, location_item: LocationPacket) -> bytes:
-        return bytes(self._buffer[location_item.offset:location_item.offset + location_item.size])
-
-    def flush(self) -> None:
-        # Not used in this test
-        pass
-
-    def get_record_location(self, record_id) -> Optional[LocationPacket]:
-        return self._locs.get(record_id)
-
-    def get_all_record_locations(self) -> Dict[str, LocationPacket]:
-        return self._locs.copy()
-
-    def add_record(self, location_item: LocationPacket) -> None:
-        self._locs[location_item.record_id] = location_item
-
-    def delete_record(self, record_id) -> None:
-        self._locs.pop(record_id, None)
-
-    def mark_deleted(self, record_id) -> None:
-        """Mark a record as deleted."""
-        loc = self._locs.get(record_id)
-        if loc:
-            self._deleted_locs[record_id] = loc
-
-    def clear_deleted(self) -> None:
-        """Clear all deleted records."""
-        self._deleted_locs.clear()
-
-    def verify_consistency(self) -> List[str]:
-        """Verify storage and index consistency."""
-        orphaned = []
-
-        # Check if any locations point beyond the buffer
-        for record_id, loc in self._locs.items():
-            if loc.offset + loc.size > len(self._buffer):
-                orphaned.append(record_id)
-                # Move to deleted
-                self._deleted_locs[record_id] = loc
-                self._locs.pop(record_id)
-
-        return orphaned
-
-    def close(self) -> None:
-        """Clean up resources."""
-        pass
-
-class DummyVectorIndex(Index):
-
-    def __init__(self, kind:str=None, dim:int=None):
-        self.dim = dim
-        self.items = {}
-
-    def add(self, item: VectorPacket):
-        self.items[item.record_id] = item.vector
-
-    def delete(self, record_id: str):
-        self.items.pop(record_id, None)
-
-    def search(self, query: Vector,
-               k: int,
-               allowed_ids: Optional[Set[str]] = None,
-               where: Optional[Dict[str, Any]] = None,
-               where_document: Optional[Dict[str, Any]] = None) -> List[Tuple[str, float]]:
-        ids = list(self.items.keys())
-        if allowed_ids is not None:
-            ids = [i for i in ids if i in allowed_ids]
-        return [(rid, 0.0) for rid in ids[:k]]
-
-    def build(self, items: List[VectorPacket]) -> None:
-        # Not used in this test
-        pass
-
-    def get_ids(self) -> Set[str]:
-        # Not used in this test
-        pass
-
-    def get_all_ids(self):
-        return list(self.items.keys())
-
-    def serialize(self):
-        return pickle.dumps(self.items)
-
-    def deserialize(self, data):
-        if isinstance(data, dict):
-            self.items = data.copy()
-        else:
-            self.items = pickle.loads(data)
-
-class DummyMetadataIndex(MetadataIndexInterface):
-    """
-    Implementation of MetadataIndexInterface for testing.
-    """
-
-    def __init__(self):
-        self.items = {}
-
-    def add(self, item: MetadataPacket) -> None:
-        """Add a metadata item to the vector_index."""
-        self.items[item.record_id] = item.metadata
-
-    def update(self, old_item: MetadataPacket, new_item: MetadataPacket) -> None:
-        """Update a metadata item in the vector_index."""
-        self.items[new_item.record_id] = new_item.metadata
-
-    def delete(self, item: MetadataPacket) -> None:
-        """Delete a metadata item from the vector_index."""
-        self.items.pop(item.record_id, None)
-
-    def get_matching_ids(self, where: Dict[str, Any]) -> Optional[Set[str]]:
-        """Find all record IDs with metadata matching the where clause."""
-        result = set()
-        for rid, meta in self.items.items():
-            match = True
-            for key, value in where.items():
-                if key not in meta or meta[key] != value:
-                    match = False
-                    break
-            if match:
-                result.add(rid)
-        return result
-
-    def serialize(self) -> bytes:
-        """Serialize the vector_index to bytes."""
-        return pickle.dumps(self.items)
-
-    def deserialize(self, data: bytes) -> None:
-        """Deserialize the vector_index from bytes."""
-        self.items = pickle.loads(data)
-
-class DummyDocIndex(DocIndexInterface):
-    """
-    Implementation of DocIndexInterface for testing.
-    """
-
-    def __init__(self):
-        self.items = {}
-
-    def add(self, item: DocumentPacket) -> None:
-        """Add a user_doc_index item to the vector_index."""
-        self.items[item.record_id] = item.document
-
-    def update(self, old_item: DocumentPacket, new_item: DocumentPacket) -> None:
-        """Update a user_doc_index item in the vector_index."""
-        self.items[new_item.record_id] = new_item.document
-
-    def delete(self, item: DocumentPacket) -> None:
-        """Delete a user_doc_index item from the vector_index."""
-        self.items.pop(item.record_id, None)
-
-    def get_matching_ids(self,
-                         allowed_ids: Optional[Set[str]] = None,
-                         where_document: Optional[Dict[str, Any]] = None) -> Set[str]:
-        """Find all record IDs with user_doc_index matching the where clause."""
-        result = set()
-
-        # If allowed_ids is None, we can't find matches within it
-        if allowed_ids is None:
-            return result
-
-        for rid, doc in self.items.items():
-            # Skip if rid is not in allowed_ids
-            if rid not in allowed_ids:
-                continue
-
-            match = True
-            for key, value in where_document.items():
-                if key not in doc or doc[key] != value:
-                    match = False
-                    break
-            if match:
-                result.add(rid)
-        return result
-
-    def serialize(self) -> bytes:
-        """Serialize the vector_index to bytes."""
-        return pickle.dumps(self.items)
-
-    def deserialize(self, data: bytes) -> None:
-        """Deserialize the vector_index from bytes."""
-        self.items = pickle.loads(data)
-
-class DummyWAL(WALInterface):
-    """
-    Implementation of WALInterface for testing.
-    """
-
-    def __init__(self, path=None):
-        self.entries = []
-        self.committed_records = []  # Track order of commits
-
-    def append(self, data_packet: DataPacket, phase: str = "prepare") -> None:
-        """Append a data packet to the WAL with phase marker."""
-        entry = data_packet.to_dict()
-        entry["_phase"] = phase
-        self.entries.append(entry)
-
-    def commit(self, record_id: str) -> None:
-        """Write a commit marker for a specific record."""
-        commit_entry = {"record_id": record_id, "_phase": "commit"}
-        self.entries.append(commit_entry)
-        # Track committed records in order
-        if record_id not in self.committed_records:
-            self.committed_records.append(record_id)
-
-    def replay(self, handler: Callable[[dict], None]) -> int:
-        """Replay only committed entries using the provided handler."""
-        # Collect all entries by record_id
-        pending_operations = {}
-        committed_records = []
-
-        for entry in self.entries:
-            phase = entry.get("_phase", "prepare")
-
-            if phase == "commit":
-                record_id = entry["record_id"]
-                if record_id not in committed_records:
-                    committed_records.append(record_id)
-            else:
-                # Store pending operations
-                record_id = entry.get("record_id")
-                if record_id:
-                    pending_operations[record_id] = entry
-
-        # Replay only committed operations in order
-        count = 0
-        for record_id in committed_records:
-            if record_id in pending_operations:
-                handler(pending_operations[record_id])
-                count += 1
-
-        return count
-
-    def clear(self) -> None:
-        """Clear all entries from the WAL."""
-        self.entries.clear()
-        self.committed_records.clear()
-
-class DummySchema(CollectionSchema):
-    def __init__(self, dim):
-        self.dim = dim
 
 
 class TestCollectionService(unittest.TestCase):
     def setUp(self):
-        # Clean up any existing test files
-        for file in os.listdir():
-            if file.endswith((
-                    '.wal',
-                    '.idxsnap',
-                    '.metasnap',
-                    '.docsnap',
-                    '_storage.json',
-                    '_location_index.json'
-            )):
-                os.remove(file)
+        # Create a temporary directory for testing
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.orig_cwd = Path.cwd()
+        os.chdir(self.test_dir)
 
         # Set up factories
         def storage_factory(data_path, index_path):
-            return DummyStorage(data_path, index_path)
+            return MMapSQLiteStorageIndexEngine(data_path, index_path)
 
         def wal_factory(path):
-            return DummyWAL(path)
+            return WALManager(Path(path))
 
-        def vector_index_factory(king: str, dim: int):
-            return DummyVectorIndex(king, dim)
+        def vector_index_factory(kind: str, dim: int):
+            if kind == "hnsw":
+                params = {}
+                return HNSW(dim=dim,
+                            max_conn_per_element=params.get("M", 16),
+                            ef_construction=params.get("ef_construction", 200))
+            else:
+                raise ValueError(f"Unknown index kind: {kind}")
 
         def metadata_index_factory():
-            return DummyMetadataIndex()
+            return InvertedIndexMetadataIndex()
 
         def doc_index_factory():
-            return DummyDocIndex()
+            return InvertedIndexDocIndex()
 
         # Mock catalog
         self.catalog = MagicMock(spec=Catalog)
@@ -359,6 +68,13 @@ class TestCollectionService(unittest.TestCase):
 
         # Collection name for tests
         self.collection_name = "test_collection"
+
+    def tearDown(self):
+        # Switch back to the original working directory
+        os.chdir(self.orig_cwd)
+
+        # Remove the entire temporary directory (and everything in it)
+        shutil.rmtree(self.test_dir)
 
     def test_insert_and_get(self):
         # Prepare test data
@@ -454,6 +170,11 @@ class TestCollectionService(unittest.TestCase):
         self.assertEqual(r1, results2[0].data_packet.record_id)
 
     def test_concurrent_inserts(self):
+        # Number of records to insert in parallel
+        insert_count = 20
+        inserted_ids = set()
+        lock = threading.Lock()
+
         def insert_item(val):
             record_id = f"concurrent{val}"
             vec = np.array([val, val, val], dtype=np.float32)
@@ -463,45 +184,59 @@ class TestCollectionService(unittest.TestCase):
                 vector=vec,
                 metadata={"t": str(val)}
             )
-            # Add retry logic at the test level to handle potential conflicts
-            max_retries = 5
-            for attempt in range(max_retries):
+            # Retry up to 5 times on WriteConflictException
+            for attempt in range(5):
                 try:
                     self.collection_service.insert(self.collection_name, packet)
-                    break
+                    # record successful id in a thread-safe way
+                    with lock:
+                        inserted_ids.add(record_id)
+                    return
                 except WriteConflictException:
-                    if attempt == max_retries - 1:
+                    if attempt == 4:
                         raise
-                    time.sleep(0.01 * (attempt + 1))  # Exponential backoff
+                    time.sleep(0.01 * (attempt + 1))
 
-        # Create and start threads
-        threads = [threading.Thread(target=insert_item, args=(i,)) for i in range(5)]
+        # Launch all inserter threads
+        threads = [
+            threading.Thread(target=insert_item, args=(i,))
+            for i in range(insert_count)
+        ]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        # Ensure all operations are committed
+        # Wait for any background indexing to finish
         if hasattr(self.collection_service, "flush"):
             self.collection_service.flush()
 
-        # Wait a bit for all operations to be visible
-        time.sleep(0.1)
+        # Now verify every record can be retrieved exactly as it was inserted
+        for rid in inserted_ids:
+            rec = self.collection_service.get(self.collection_name, rid)
+            # The record must exist and have the correct ID
+            self.assertFalse(rec.is_nonexistent(), f"Record {rid} should exist")
+            self.assertEqual(rid, rec.record_id, f"Record ID for {rid} did not match")
+            # Verify original payload, vector and metadata
+            self.assertEqual({"v": int(rid.replace("concurrent", ""))},
+                             rec.original_data,
+                             f"Original data mismatch for {rid}")
+            np.testing.assert_array_almost_equal(
+                np.array([int(rid.replace("concurrent", ""))] * 3, dtype=np.float32),
+                rec.vector,
+                err_msg=f"Vector mismatch for {rid}")
+            self.assertEqual(
+                {"t": rid.replace("concurrent", "")},
+                rec.metadata,
+                f"Metadata mismatch for {rid}"
+            )
 
-        # Verify all records were inserted
-        query = QueryPacket(
-            query_vector=np.array([0, 0, 0], dtype=np.float32),
-            k=10  # Increase k to ensure we get all results
+        # Finally, ensure we succeeded in inserting exactly `insert_count` distinct records
+        self.assertEqual(
+            insert_count,
+            len(inserted_ids),
+            f"Expected to insert {insert_count} distinct records, but got {len(inserted_ids)}"
         )
-        results = self.collection_service.search(self.collection_name, query)
-
-        # Poll for results if not all are immediately visible
-        deadline = time.time() + 1.0
-        while len(results) < 5 and time.time() < deadline:
-            results = self.collection_service.search(self.collection_name, query)
-            time.sleep(0.01)
-
-        self.assertEqual(5, len(results))
 
     def test_concurrent_insert_and_search(self):
         insert_count = 20
