@@ -695,7 +695,7 @@ class CollectionService:
         allowed_ids = self._apply_filters(query_packet, version)
         if allowed_ids == set():
             logger.info("Filter returned empty result set, short-circuiting search")
-            self._mvcc_manager.release_version(collection, version)          # <─ 新增
+            self._mvcc_manager.release_version(collection, version)
             return []
 
         raw_results = self._vector_search(query_packet, allowed_ids, version)
