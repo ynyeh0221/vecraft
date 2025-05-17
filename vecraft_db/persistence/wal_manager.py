@@ -4,7 +4,7 @@ import os
 import threading
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Tuple, List, Dict
+from typing import Callable, Tuple, List, Dict, Optional
 
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_db.core.interface.wal_interface import WALInterface
@@ -28,62 +28,40 @@ class WALManager(WALInterface):
     Attributes:
         _file (Path): Path to the WAL file
         _last_lsn (int): The last used Log Sequence Number
-
-    Example:
-        >>> wal = WALManager(Path("/tmp/database.wal"))
-        >>> data_packet = DataPacket(record_id="123", data={"key": "value"})
-        >>>
-        >>> # Two-phase commit
-        >>> lsn = wal.append(data_packet, phase="prepare")
-        >>> # ... perform actual data operations ...
-        >>> wal.commit("123")
-        >>>
-        >>> # Recovery after a crash
-        >>> def handler(record):
-        ...     print(f"Replaying: {record}")
-        >>> count = wal.replay(handler)
     """
 
     def __init__(self, wal_path: Path):
         self._file = wal_path
-        self._last_lsn = 0  # Track the last used LSN
-        self._lsn_lock = threading.RLock()  # Lock for LSN generation
+        self._last_lsn = 0
+        self._lsn_lock = threading.RLock()
+        # Add a metadata file path for LSN persistence
+        self._lsn_meta_file = wal_path.with_name(f"{wal_path.name}.lsn.meta")
+        # Initialize LSN from a meta file if it exists
+        self._last_lsn = self._read_lsn_from_meta() or 0
 
     def append(self, data_packet: DataPacket, phase: str = "prepare") -> int:
         """
         Append a data packet to the WAL with phase marker and LSN.
-
-        This method writes the data packet to the WAL file with a phase marker
-        for two-phase commit and an LSN (Log Sequence Number) for tracking.
-        The writing is immediately flushed and fsync'd to ensure durability.
-        File locking is used for multiprocess safety.
-
-        Args:
-            data_packet (DataPacket): The data packet to append
-            phase (str, optional): Phase marker ("prepare" or "commit").
-                                 Defaults to "prepare".
-
-        Returns:
-            int: The LSN (Log Sequence Number) assigned to this record
-
-        Note:
-            The method automatically adds "_phase" and "_lsn" fields to the record
-            for tracking its commit status and sequence during recovery.
         """
-        # Generate the next LSN
-        with self._lsn_lock:
-            self._last_lsn += 1
-            lsn = self._last_lsn
-
-        # Add phase and LSN marking
-        record = data_packet.to_dict()
-        record["_phase"] = phase
-        record["_lsn"] = lsn
+        # Get the latest LSN first from the meta file for multiprocess safety
+        last_lsn_from_meta = self._read_lsn_from_meta() or 0
 
         with open(self._file, 'a', encoding='utf-8') as f:
             # File locking for multiprocess safety
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
+                # Safely increment LSN (ensuring greater than any existing LSN)
+                with self._lsn_lock:
+                    self._last_lsn = max(self._last_lsn, last_lsn_from_meta) + 1
+                    lsn = self._last_lsn
+                    # Write updated LSN to meta file
+                    self._write_lsn_to_meta(lsn)
+
+                # Add phase and LSN marking
+                record = data_packet.to_dict()
+                record["_phase"] = phase
+                record["_lsn"] = lsn
+
                 f.write(json.dumps(record))
                 f.write("\n")
                 f.flush()
@@ -92,6 +70,91 @@ class WALManager(WALInterface):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         return lsn
+
+    def _read_lsn_from_meta(self) -> Optional[int]:
+        """Read the last LSN (Log Sequence Number) from the metadata file.
+
+        This function safely reads the LSN from a shared metadata file by:
+        1. Using fcntl.flock to establish a shared read lock (LOCK_SH)
+        2. Reading the 8-byte LSN data and converting it to integer
+        3. Releasing the lock (LOCK_UN) upon completion
+
+        About the file locking mechanism:
+        - Uses advisory locks: relies on all processes voluntarily respecting the lock protocol
+        - Establishes a shared read lock: allows multiple readers simultaneously while blocking writers
+        - Forms the read part of a file-level read-write (rw) lock
+        - Works in conjunction with exclusive locks (LOCK_EX) used for write operations to form
+          a complete read-write synchronization mechanism
+
+        Error handling:
+        - Returns None if the file doesn't exist
+        - Returns None if any exceptions occur during reading or parsing
+        - Uses try/finally to ensure the lock is released even in case of exceptions, preventing deadlocks
+
+        Returns:
+            Optional[int]: The LSN value if successfully read, or None if the file doesn't exist or reading fails
+        """
+        if not self._lsn_meta_file.exists():
+            return None
+        try:
+            with open(self._lsn_meta_file, 'rb') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    data = f.read(8)
+                    if data:
+                        return int.from_bytes(data, byteorder='big')
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except (IOError, ValueError):
+            # File corrupt or read failure, return conservative value
+            return None
+        return None
+
+    def _write_lsn_to_meta(self, lsn: int) -> None:
+        """Write the LSN (Log Sequence Number) to the metadata file.
+
+        This function safely persists the LSN to a shared metadata file by:
+        1. Using fcntl.flock to establish an exclusive write lock (LOCK_EX)
+        2. Converting the integer LSN to 8-byte binary data and writing it
+        3. Ensuring data is physically persisted to disk using flush and fsync
+        4. Releasing the lock (LOCK_UN) upon completion
+
+        About the file locking mechanism:
+        - Uses LOCK_EX (exclusive lock) which prevents any other process from acquiring
+          either shared (read) or exclusive (write) locks during the write operation
+        - Forms the write part of a file-level read-write (rw) lock mechanism
+        - Works in conjunction with shared locks (LOCK_SH) used in the read function
+        - Uses advisory locking: relies on all processes checking and respecting lock status
+
+        Data persistence strategy:
+        - Writes exactly 8 bytes (64-bit integer) in big-endian byte order
+        - Calls flush() to ensure the OS receives the data from Python's buffers
+        - Calls fsync() to ensure data is physically written to disk media before returning
+          (protecting against power failures or system crashes)
+
+        Error handling:
+        - Catches IOError exceptions and logs a warning but allows program to continue
+        - Uses try/finally to ensure lock release even if exceptions occur, preventing deadlocks
+
+        Args:
+            lsn (int): The Log Sequence Number to write to the metadata file
+        """
+        try:
+            with open(self._lsn_meta_file, 'wb') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.write(lsn.to_bytes(8, byteorder='big'))
+                    # Flush Python's internal buffers to OS
+                    f.flush()
+                    # Ensure data is physically written to disk media (not just to OS cache)
+                    # This provides durability guarantees even across system failures
+                    os.fsync(f.fileno())
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except IOError:
+            # Log the error but continue
+            import logging
+            logging.getLogger(__name__).warning("Failed to write LSN to metadata file")
 
     def commit(self, record_id: str) -> None:
         """
@@ -176,7 +239,8 @@ class WALManager(WALInterface):
 
         return committed, pending
 
-    def _parse_line(self, line: str) -> dict:
+    @staticmethod
+    def _parse_line(line: str) -> dict:
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
@@ -185,8 +249,8 @@ class WALManager(WALInterface):
         entry.setdefault("_phase", "prepare")
         return entry
 
+    @staticmethod
     def _apply_committed(
-            self,
             committed: List[str],
             pending: Dict[str, List[dict]],
             handler: Callable[[dict], None]

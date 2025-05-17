@@ -23,7 +23,6 @@ from vecraft_db.core.lock.mvcc_manager import MVCCManager, CollectionVersion
 from vecraft_db.persistence.storage_wrapper import StorageWrapper
 from vecraft_db.visualization.tsne import generate_tsne
 from vecraft_exception_model.exception import WriteConflictException, StorageFailureException, \
-    MetadataIndexBuildingException, DocumentIndexBuildingException, VectorIndexBuildingException, \
     VectorDimensionMismatchException, ChecksumValidationFailureError, TsnePlotGeneratingFailureException, \
     NullOrZeroVectorException
 
@@ -97,6 +96,7 @@ class CollectionService:
                     'vec_snap': Path(f"{name}.idxsnap"),
                     'meta_snap': Path(f"{name}.metasnap"),
                     'doc_snap': Path(f"{name}.docsnap"),
+                    'lsn_meta': Path(f"{name}.metasnap"),  # Added reference to a metadata snapshot file
                     'initialized': False
                 }
 
@@ -128,6 +128,18 @@ class CollectionService:
             if orphaned:
                 logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
 
+            # Load stored visible_lsn from metadata file
+            stored_visible_lsn = 0
+            meta_file = self._collection_metadata[name]['lsn_meta']
+            if meta_file.exists():
+                try:
+                    import json
+                    meta_data = json.loads(meta_file.read_bytes().decode('utf-8'))
+                    stored_visible_lsn = meta_data.get('visible_lsn', 0)
+                    logger.info(f"Loaded visible_lsn={stored_visible_lsn} from metadata snapshot")
+                except Exception as e:
+                    logger.warning(f"Failed to read visible_lsn from metadata snapshot: {e}")
+
             # Load snapshots or rebuild from storage
             if self._load_snapshots(name, initial_version):
                 logger.info(f"Loaded collection {name} from snapshots")
@@ -150,6 +162,12 @@ class CollectionService:
             def _apply_if_committed(entry: dict):
                 phase = entry.get("_phase")
                 lsn = entry.get("_lsn", 0)  # Get LSN from entry
+
+                # Skip entries with LSN <= stored visible_lsn (already in snapshots)
+                if lsn <= stored_visible_lsn:
+                    logger.debug(f"Skipping WAL entry with LSN {lsn} <= visible_lsn {stored_visible_lsn}")
+                    return
+
                 if phase == "prepare":
                     self._replay_entry(entry, initial_version)
                     # Update max_lsn
@@ -158,8 +176,8 @@ class CollectionService:
             replay_count = initial_version.wal.replay(_apply_if_committed)
             logger.info(f"Replayed {replay_count} WAL entries, max_lsn={initial_version.max_lsn}")
 
-            # Set visible_lsn to max_lsn after replay
-            self._mvcc_manager._visible_lsn[name] = initial_version.max_lsn
+            # Set visible_lsn to max(stored_visible_lsn, max_lsn) after replay
+            self._mvcc_manager.visible_lsn[name] = max(stored_visible_lsn, initial_version.max_lsn)
 
             # Commit the initial version
             self._mvcc_manager.commit_version(name, initial_version)
@@ -237,8 +255,8 @@ class CollectionService:
 
             elif data_packet.type == "delete":
                 # Replay delete: first fetch the original record to get its preimage
-                pre = self._get_internal(version, data_packet.record_id)
-                self._index_delete(version, data_packet, pre)
+                preimage = self._get_internal(version, data_packet.record_id)
+                self._index_delete(version, data_packet, preimage)
 
             data_packet.validate_checksum()
             logger.debug(f"Successfully replayed {data_packet.type} for record {data_packet.record_id}")
@@ -256,26 +274,73 @@ class CollectionService:
 
     def _process_wal_queue(self):
         while not self._stop_event.is_set():
-            try:
-                # Updated to handle the LSN and version_id parameters
-                collection, pkt, preimage, op, lsn, _ = self._wal_queue.get(timeout=1)
-            except queue.Empty:
+            item = self._get_queue_item()
+            if item is None:
                 continue
 
+            collection, pkt, preimage, op, lsn, _ = item
             version = self._mvcc_manager.get_current_version(collection)
-            try:
-                if version and op == 'insert':
-                    self._index_insert(version, pkt)
-                elif version and op == 'delete':
-                    self._index_delete(version, pkt, preimage)
+            if not version:
+                continue
 
-                # Promote the version to make it visible after indexing is complete
+            try:
+                if not self._attempt_index_operation(operation=op, version=version, pkt=pkt, preimage=preimage):
+                    logger.error(f"Failed to process {op} for record {pkt.record_id} in collection {collection}")
+                    return
+
+                # Only promote if indexing succeeded
                 self._mvcc_manager.promote_version(collection, lsn)
 
+            except Exception as e:
+                self._handle_critical_error(collection, op, e)
+                return
+
             finally:
-                if version:
-                    self._mvcc_manager.release_version(collection, version)
+                self._mvcc_manager.release_version(collection, version)
                 self._wal_queue.task_done()
+
+    def _get_queue_item(self):
+        try:
+            return self._wal_queue.get(timeout=1)
+        except queue.Empty:
+            return None
+
+    def _attempt_index_operation(self, operation, version, pkt, preimage):
+        if operation == 'insert':
+            self._index_insert(version, pkt)
+        elif operation == 'delete':
+            self._index_delete(version, pkt, preimage)
+        else:
+            return False
+        return True
+
+    def _handle_critical_error(self, collection, op, exception):
+        msg = f"Critical error during async indexing for {op} in collection {collection}: {exception}"
+        logger.critical(msg, exc_info=True)
+        self._write_fatal_log(msg)
+        self._shutdown_immediately()
+
+    @staticmethod
+    def _write_fatal_log(message):
+        try:
+            with open("fatal.log", "a") as f:
+                import traceback, time
+                f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Error: {message}\n")
+                f.write(traceback.format_exc())
+                f.write("\n\n")
+        except Exception as log_err:
+            logger.critical(f"Failed to write to fatal.log: {log_err}")
+
+    @staticmethod
+    def _shutdown_immediately():
+        import os, signal, time
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(1)
+        except Exception as kill_err:
+            logger.critical(f"Failed to send SIGTERM: {kill_err}")
+            os._exit(1)
 
     # ------------------------
     # INSERT API
@@ -330,8 +395,8 @@ class CollectionService:
     # ROLLBACK INSERT HELPERS
     # ------------------------
 
+    @staticmethod
     def _rollback_insert_storage(
-            self,
             version: CollectionVersion,
             data_packet: DataPacket,
             old_loc: LocationPacket,
@@ -345,11 +410,11 @@ class CollectionService:
                 if old_loc:
                     old_loc.validate_checksum()
                     version.storage.add_record(old_loc)
-            except Exception:
-                logger.debug("Failed to rollback storage insert")
+            except Exception as e:
+                logger.debug("Failed to rollback storage insert: %s", e)
 
+    @staticmethod
     def _rollback_insert_index(
-            self,
             version: CollectionVersion,
             data_packet: DataPacket,
             preimage: DataPacket
@@ -360,8 +425,8 @@ class CollectionService:
             version.vec_index.delete(record_id=data_packet.record_id)
             if not preimage.is_nonexistent():
                 version.vec_index.add(preimage.to_vector_packet())
-        except Exception:
-            logger.debug("Failed to rollback vector index")
+        except Exception as e:
+            logger.debug("Failed to rollback vector index: %s", e)
 
         # Rollback doc and meta
         for idx_name, fn in [
@@ -397,21 +462,6 @@ class CollectionService:
             self._rollback_insert_storage(version, data_packet, old_loc, new_loc)
             raise
 
-    def _index_insert(
-        self,
-        version: CollectionVersion,
-        data_packet: DataPacket
-    ) -> None:
-        """Perform only index part of insert, with index rollback."""
-        preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
-        try:
-            self._update_meta_and_doc_indices(version, preimage, data_packet)
-            self._update_vector_index(version, data_packet)
-        except Exception:
-            logger.error(f"Index insert failed, rolling back {data_packet.record_id}", exc_info=True)
-            self._rollback_insert_index(version, data_packet, preimage)
-            raise
-
     def _prepare_preimage(self, version: CollectionVersion, data_packet: DataPacket):
         old_loc = version.storage.get_record_location(data_packet.record_id)
         if old_loc:
@@ -422,7 +472,41 @@ class CollectionService:
             preimage = DataPacket.create_nonexistent(record_id=data_packet.record_id)
         return preimage, old_loc
 
-    def _write_storage(self, version: CollectionVersion, data_packet: DataPacket) -> LocationPacket:
+    def _index_insert(self, version: CollectionVersion, data_packet: DataPacket) -> None:
+        """Perform only index part of insert, with index rollback."""
+        # Try to get the actual preimage first
+        record_id = data_packet.record_id
+        try:
+            preimage = self._get_internal(version, record_id)
+            if preimage is None:
+                preimage = DataPacket.create_nonexistent(record_id=record_id)
+        except Exception:
+            # If read fails, use non-existent preimage
+            preimage = DataPacket.create_nonexistent(record_id=record_id)
+
+        try:
+            # Handle index updates differently based on whether record exists
+            if preimage.is_nonexistent():
+                # New record - use add operations
+                logger.debug(f"Adding new record {record_id} to indexes")
+                version.meta_index.add(data_packet.to_metadata_packet())
+                version.doc_index.add(data_packet.to_document_packet())
+                version.vec_index.add(data_packet.to_vector_packet())
+            else:
+                # Existing record - use update operations
+                logger.debug(f"Updating existing record {record_id} in indexes")
+                version.meta_index.update(preimage.to_metadata_packet(), data_packet.to_metadata_packet())
+                version.doc_index.update(preimage.to_document_packet(), data_packet.to_document_packet())
+                # For vector index, delete then add is safer than update
+                version.vec_index.delete(record_id=record_id)
+                version.vec_index.add(data_packet.to_vector_packet())
+        except Exception:
+            logger.error(f"Index insert failed, rolling back {data_packet.record_id}", exc_info=True)
+            self._rollback_insert_index(version, data_packet, preimage)
+            raise
+
+    @staticmethod
+    def _write_storage(version: CollectionVersion, data_packet: DataPacket) -> LocationPacket:
         rec_bytes = data_packet.to_bytes()
         new_offset = version.storage.allocate(len(rec_bytes))
         loc = LocationPacket(
@@ -438,34 +522,6 @@ class CollectionService:
             logger.debug(msg)
             raise StorageFailureException(msg, e)
         return loc
-
-    def _update_meta_and_doc_indices(self, version: CollectionVersion, preimage: DataPacket, data_packet: DataPacket):
-        ops = [
-            ('meta_index', preimage.to_metadata_packet, data_packet.to_metadata_packet, MetadataIndexBuildingException),
-            ('doc_index', preimage.to_document_packet, data_packet.to_document_packet, DocumentIndexBuildingException),
-        ]
-        for idx_name, old_fn, new_fn, exc in ops:
-            index = getattr(version, idx_name)
-            old_pkt = old_fn()
-            new_pkt = new_fn()
-            try:
-                if preimage.is_nonexistent():
-                    index.add(new_pkt)
-                else:
-                    index.update(old_pkt, new_pkt)
-            except Exception as e:
-                msg = f"{idx_name} update failed for record {data_packet.record_id}"
-                logger.debug(msg)
-                raise exc(msg, e)
-
-    def _update_vector_index(self, version: CollectionVersion, data_packet: DataPacket):
-        try:
-            logger.debug(f"Updating vector index for record {data_packet.record_id}")
-            version.vec_index.add(data_packet.to_vector_packet())
-        except Exception as e:
-            msg = f"Vector index update failed for record {data_packet.record_id}"
-            logger.debug(msg)
-            raise VectorIndexBuildingException(msg, e)
 
     # ------------------------
     # DELETE API
@@ -561,18 +617,19 @@ class CollectionService:
                     logger.debug("Failed to rollback storage delete")
             raise StorageFailureException(f"Storage removal failed for record {record_id}", e)
 
-    def _index_delete(
-            self,
-            version: CollectionVersion,
-            data_packet: DataPacket,
-            preimage: DataPacket
-    ) -> None:
+    @staticmethod
+    def _index_delete(version: CollectionVersion, data_packet: DataPacket, preimage: DataPacket) -> None:
         """
         Perform only the metadata/doc/vector index removals (with rollback on failure).
         Expects the preimage from _storage_delete.
         """
         record_id = data_packet.record_id
         logger.debug(f"Applying index delete for record {record_id}")
+
+        # Skip if record doesn't exist in indexes
+        if preimage.is_nonexistent():
+            logger.debug(f"Record {record_id} doesn't exist in indexes, skipping delete operation")
+            return
 
         removed_meta = removed_doc = removed_vec = False
         try:
@@ -591,7 +648,7 @@ class CollectionService:
             version.vec_index.delete(record_id=record_id)
             removed_vec = True
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Index removal failed for record {record_id}, rolling back", exc_info=True)
 
             # rollback vector
@@ -651,7 +708,8 @@ class CollectionService:
         self._mvcc_manager.release_version(collection, version)
         return results
 
-    def _validate_query_packet(self, query_packet: QueryPacket, schema: CollectionSchema):
+    @staticmethod
+    def _validate_query_packet(query_packet: QueryPacket, schema: CollectionSchema):
         query_packet.validate_checksum()
         if len(query_packet.query_vector) != schema.dim:
             err = f"Query dimension mismatch: expected {schema.dim}, got {len(query_packet.query_vector)}"
@@ -670,7 +728,8 @@ class CollectionService:
                 return set()
         return allowed
 
-    def _apply_metadata_filter(self, where: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
+    @staticmethod
+    def _apply_metadata_filter(where: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
         logger.debug(f"Applying metadata filter: {where}")
         ids = version.meta_index.get_matching_ids(where)
         if ids is not None:
@@ -678,7 +737,8 @@ class CollectionService:
             return ids
         return allowed
 
-    def _apply_document_filter(self, where_doc: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
+    @staticmethod
+    def _apply_document_filter(where_doc: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
         logger.debug("Applying document filter")
         ids = version.doc_index.get_matching_ids(allowed, where_doc)
         if ids is not None:
@@ -686,7 +746,8 @@ class CollectionService:
             return ids
         return allowed
 
-    def _vector_search(self, query_packet: QueryPacket, allowed: Optional[Set[str]], version: CollectionVersion):
+    @staticmethod
+    def _vector_search(query_packet: QueryPacket, allowed: Optional[Set[str]], version: CollectionVersion):
         logger.debug(f"Performing vector search with k={query_packet.k}")
         start = time.time()
         results = version.vec_index.search(
@@ -847,47 +908,45 @@ class CollectionService:
         # first wait for any pending index work
         self._wal_queue.join()
 
-        # Get a consistent snapshot of collection names
-        with self._metadata_lock:
-            collections = list(self._collection_metadata.keys())
+        # Temporarily prevent new writes during a flush,
+        # This is a simple approach - in production you might want a more sophisticated mechanism
+        with self._global_lock.write_lock():
+            # Get a consistent snapshot of collection names
+            with self._metadata_lock:
+                collections = list(self._collection_metadata.keys())
 
-        logger.info(f"Flushing {len(collections)} collections: {collections}")
+            logger.info(f"Flushing {len(collections)} collections: {collections}")
 
-        # Flush each collection
-        for name in collections:
-            # Skip if a collection is removed between listing and flushing
-            if name not in self._collection_metadata:
-                logger.warning(f"Collection {name} no longer exists, skipping flush")
-                continue
+            # Flush each collection
+            for name in collections:
+                # Skip if a collection is removed between listing and flushing
+                if name not in self._collection_metadata:
+                    logger.warning(f"Collection {name} no longer exists, skipping flush")
+                    continue
 
-            # Get the current version
-            version = self._mvcc_manager.get_current_version(name)
-            if not version:
-                logger.warning(f"No current version for collection {name}, skipping flush")
-                continue
+                # Get the current version
+                version = self._mvcc_manager.get_current_version(name)
+                if not version:
+                    logger.warning(f"No current version for collection {name}, skipping flush")
+                    continue
 
-            logger.info(f"Flushing {name} started")
-            start_time = time.time()
+                logger.info(f"Flushing {name} started")
+                start_time = time.time()
 
-            logger.debug(f"Flushing storage for collection {name}")
-            version.storage.flush()
+                logger.debug(f"Flushing storage for collection {name}")
+                version.storage.flush()
 
-            logger.debug(f"Saving snapshots for collection {name}")
-            self._save_snapshots(name, version)
+                logger.debug(f"Saving snapshots for collection {name}")
+                self._save_snapshots(name, version)
 
-            # Promote any pending versions to avoid having hanging versions on shutdown
-            with self._mvcc_manager._lock:
-                pending_lsns = list(self._mvcc_manager._pending_versions[name].keys())
-                if pending_lsns:
-                    logger.info(f"Promoting {len(pending_lsns)} pending versions for collection {name}")
-                    for lsn in sorted(pending_lsns):
-                        self._mvcc_manager.promote_version(name, lsn)
+                # Promote any pending versions to avoid having hanging versions on shutdown
+                self._mvcc_manager.promote_pending_versions(name)
 
-            elapsed = time.time() - start_time
-            logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+                elapsed = time.time() - start_time
+                logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
 
-            # Release the version
-            self._mvcc_manager.release_version(name, version)
+                # Release the version
+                self._mvcc_manager.release_version(name, version)
 
     def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
         """
@@ -898,6 +957,9 @@ class CollectionService:
             version: Collection version to flush
             to_temp_files: If True, save to .tempsnap files and then atomically replace
                            the main snapshots; otherwise write directly to the main files.
+
+        # TODO: Consider bundling the 4 snapshot files (vec/meta/doc/lsn) into a directory #NOSONAR
+        # or compressed archive (tar.gz) to simplify multi-replica distribution and S3 storage.
         """
         metadata = self._collection_metadata[name]
 
@@ -927,10 +989,10 @@ class CollectionService:
             doc_data = version.doc_index.serialize()
             doc_path.write_bytes(doc_data)
 
-            # Write visible_lsn to snapshot.meta
+            # Write visible_lsn to metadata file
             import json
             lsn_data = json.dumps({
-                "visible_lsn": self._mvcc_manager._visible_lsn.get(name, 0),
+                "visible_lsn": self._mvcc_manager.visible_lsn.get(name, 0),
                 "timestamp": time.time()
             }).encode('utf-8')
             lsn_path.write_bytes(lsn_data)
@@ -992,19 +1054,22 @@ class CollectionService:
             self._close_storage(name, version)
             self._close_indexes(version)
 
-    def _close_wal(self, name: str, version) -> None:
+    @staticmethod
+    def _close_wal(name: str, version) -> None:
         try:
             version.wal.close()
         except Exception as e:
             logger.warning(f"WAL close failed for {name}: {e}")
 
-    def _close_storage(self, name: str, version) -> None:
+    @staticmethod
+    def _close_storage(name: str, version) -> None:
         try:
             version.storage.close()
         except Exception as e:
             logger.warning(f"Storage close failed for {name}: {e}")
 
-    def _close_indexes(self, version) -> None:
+    @staticmethod
+    def _close_indexes(version) -> None:
         for idx in (version.vec_index, version.meta_index, version.doc_index):
             if hasattr(idx, "close"):
                 try:

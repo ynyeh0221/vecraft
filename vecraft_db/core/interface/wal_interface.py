@@ -8,7 +8,7 @@ class WALInterface(Protocol):
     """
     Interface for write-ahead log (WAL) management supporting append, replay, and clear operations.
     """
-    def append(self, data_packet: DataPacket, phase: str = "prepare") -> None:
+    def append(self, data_packet: DataPacket, phase: str = "prepare") -> int:
         ...
 
     def commit(self, record_id: str) -> None:

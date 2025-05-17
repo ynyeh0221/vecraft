@@ -1,15 +1,74 @@
 """
-Multi-Version Concurrency Control (MVCC) Implementation
+Multi-Version Concurrency Control (MVCC) System
+===============================================
 
-This module provides classes for snapshot isolation and atomic writes
-in a vector-storage database. It includes:
+Version Lifecycle and Reference Counting:
+-----------------------------------------
 
-- WriteOperation: Buffer for transactional writes.
-- CollectionVersion: Immutable snapshot of a collection's state.
-- MVCCManager: Orchestrates versioning, conflict detection, and cleanup.
-- StorageWrapper: MVCC overlay for the physical storage engine.
-- MMapSQLiteStorageIndexEngine: Concrete storage with SQLite-based indexing.
-- MMapStorage: Append-only mmap file storage with fsync and locking.
+    +-------------+      +----------------+      +-----------------+      +---------------+
+    | New Version |      | Active Version |      | Pending Version |      | Current       |
+    | ref_count=0 |----->| ref_count=1   |----->| ref_count=1     |----->| Version       |
+    |             |      | (transaction)  |      | (not visible)   |      | ref_count=1   |
+    +-------------+      +----------------+      +-----------------+      +---------------+
+          |                      |                       |                       |
+    create_version()      begin_transaction()     commit_version(            promote_version()
+                                                  visible=False)            (ref transfer)
+                                                                                  |
+                                                                                  v
+                                                                          +---------------+
+                                                                          | Old Current   |
+                                                                          | Version       |
+                                                                          | ref_count=0   |
+                                                                          +---------------+
+                                                                                  |
+                                                                         _cleanup_old_versions()
+                                                                                  |
+                                                                                  v
+                                                                          [Version removed]
+
+Reference Counting Rules:
+-------------------------
+1. begin_transaction():  ref_count += 1  (transaction reference)
+2. commit_version(visible=True): ref_count += 1 (current version reference)
+3. commit_version(visible=False): keeps ref_count (still has transaction reference)
+4. promote_version():
+   a. ref_count += 1 (add current version reference)
+   b. ref_count -= 1 (remove transaction reference)
+   c. Result: reference ownership transfer, count remains same
+5. Any version with ref_count = 0 and not in the keep list becomes eligible for cleanup
+
+Concurrency Control:
+-------------------
+                  Transaction 1                             Transaction 2
+                       |                                         |
+                       v                                         v
+  T1 begins   +----------------+                     +----------------+
+              | Version V1     |                     | Version V2     |
+              | (Snapshot of   |                     | (Snapshot of   |
+              |  current state)|                     |  current state)|
+              +----------------+                     +----------------+
+                       |                                         |
+  T1 reads    [Read operations]                      [Read operations]
+  doc1        record_read("doc1")                                |
+                       |                                         |
+  T2 modifies          |                             record_modification("doc1")
+  doc1                 |                             [Modify operations]
+                       |                                         |
+  T2 commits           |                             commit_version()
+                       |                                         |
+  T1 commits?  _check_conflicts()                               done
+              (Detects RW conflict
+               if enabled)
+                       |
+              WriteConflictException
+              or ReadWriteConflictException
+
+Snapshot Isolation guarantees that:
+- Readers never block writers
+- Writers never block readers
+- Each transaction sees a consistent snapshot of the database
+- Write-write conflicts are always detected and prevented
+- Read-write conflicts can optionally be detected (serializable isolation)
 """
 import logging
 import threading
@@ -127,8 +186,8 @@ class MVCCManager:
         self._active_transactions: Dict[str, Set[int]] = defaultdict(set)
 
         # Fields for LSN-based visibility control
-        self._pending_versions: Dict[str, Dict[int, CollectionVersion]] = defaultdict(dict)
-        self._visible_lsn: Dict[str, int] = defaultdict(int)
+        self.pending_versions: Dict[str, Dict[int, CollectionVersion]] = defaultdict(dict)
+        self.visible_lsn: Dict[str, int] = defaultdict(int)
 
         # Store factories for proper cloning
         self._storage_factories = storage_factories or {}
@@ -264,22 +323,10 @@ class MVCCManager:
         """
         Commit a version as the new current state of the collection.
 
-        This method performs the following steps:
-        1. Checks for conflicts with concurrent transactions
-        2. Applies pending writes to storage
-        3. Updates version metadata
-        4. Sets this version as current
-        5. Cleans up old versions
-
         Args:
-        collection: Name of the collection
-        version: Version to commit
-        visible: If True, make this version immediately visible to readers
-                If False, persist it but don't make it visible yet
-
-        Raises:
-            WriteConflictException: If write-write conflict is detected
-            ReadWriteConflictException: If read-write conflict is detected
+            collection: Name of the collection
+            version: Version to commit
+            visible: If True, make a version immediately visible to readers
         """
         with self._lock:
             # 1) Concurrent conflict check
@@ -292,27 +339,26 @@ class MVCCManager:
             version.is_committed = True
             version.commit_time = time.time()
 
-            # After commit completes, transaction's own reference can be released by 1
-            if version.ref_count > 0:
-                version.ref_count -= 1
-
+            # Don't decrement ref_count here when visible=False
+            # Only handles references when visible=True
             if visible:
-                # 4) Set it as the current version (this step will add +1 reference)
+                # 4) Set it as the current version (adds +1 reference)
                 old_current_id = self._current_version.get(collection)
                 self._current_version[collection] = version.version_id
                 version.ref_count += 1  # Current snapshot takes reference
 
-                # Update visible LSN when making the version visible
-                self._visible_lsn[collection] = version.max_lsn
+                # Update visible LSN
+                self.visible_lsn[collection] = version.max_lsn
 
                 # Old current loses "current" status, reference -1
                 if old_current_id is not None and old_current_id in self._versions[collection]:
                     self._versions[collection][old_current_id].ref_count -= 1
             else:
-                # Store in pending versions by LSN
-                self._pending_versions[collection][version.max_lsn] = version
+                # For async indexing, store in pending versions by LSN
+                self.pending_versions[collection][version.max_lsn] = version
+                # Don't decrement ref_count yet - it will be handled in promote_version
 
-            # Remove from an active transaction set
+            # Remove from active transactions set
             self._active_transactions[collection].discard(version.version_id)
 
             logger.info(f"Committed version {version.version_id} for collection {collection}")
@@ -323,16 +369,11 @@ class MVCCManager:
     def promote_version(self, collection: str, lsn: int):
         """
         Promote a pending version to be the current visible version.
-
         Called by background thread after indexing is complete.
-
-        Args:
-            collection: Name of the collection
-            lsn: LSN to promote
         """
         with self._lock:
             # Retrieve and remove the pending version
-            version = self._pending_versions[collection].pop(lsn, None)
+            version = self.pending_versions[collection].pop(lsn, None)
             if not version:
                 logger.debug(f"No pending version found for LSN {lsn} in collection {collection}")
                 return
@@ -340,10 +381,35 @@ class MVCCManager:
             # Update current version and visible LSN
             old_current_id = self._current_version.get(collection)
             self._current_version[collection] = version.version_id
-            self._visible_lsn[collection] = lsn
+            self.visible_lsn[collection] = lsn
 
-            # Reference counting
+            # Reference counting transfer mechanism:
+            # When a version is initially committed with visible=False (asynchronous indexing mode),
+            # it retains its transaction reference (ref_count from begin_transaction).
+            # Now that indexing is complete, and we're promoting it to be the current version,
+            # we need it to:
+            #
+            # 1. The first increment ref_count to add the "current version" reference
+            #    This ensures the version won't be cleaned up during reference transition
+            #
+            # 2. Then decrement ref_count to release the original transaction reference
+            #    The transaction is complete, but the version lives on as the current version
+            #
+            # This approach maintains correct reference counting through state transitions,
+            # effectively transferring ownership from "transaction reference" to "current version reference"
+            # without ever having a moment where the version has zero references and could be cleaned up.
+            #
+            # The net effect on ref_count is neutral (increment then decrement), but the
+            # semantic meaning of the remaining reference has changed from "transaction-owned"
+            # to "current-version-owned".
+
+            # Reference counting - add reference for being current
             version.ref_count += 1  # Current snapshot takes reference
+
+            # Release the original transaction reference that was added in begin_transaction
+            # and preserved during commit_version(visible=False)
+            if version.ref_count > 0:
+                version.ref_count -= 1
 
             # Old current loses "current" status, reference -1
             if old_current_id is not None and old_current_id in self._versions[collection]:
@@ -353,6 +419,22 @@ class MVCCManager:
 
             # Clean up old versions
             self._cleanup_old_versions(collection)
+
+    def promote_pending_versions(self, collection: str):
+        """
+        Promote any pending versions for `collection` in LSN order,
+        using the normal promote_version() logic (with its own locking).
+        """
+        # grab all pending LSNs under the public lock
+        with self._lock:
+            lsns = sorted(self.pending_versions[collection].keys())
+
+        if not lsns:
+            return
+
+        logger.info(f"Promoting {len(lsns)} pending versions for collection {collection}")
+        for lsn in lsns:
+            self.promote_version(collection, lsn)
 
     def _check_conflicts(self, collection_name: str, version: CollectionVersion):
         """
@@ -399,7 +481,8 @@ class MVCCManager:
                 f"Records {overlap} were read but concurrently modified."
             )
 
-    def _apply_pending_writes(self, version: CollectionVersion):
+    @staticmethod
+    def _apply_pending_writes(version: CollectionVersion):
         """Apply buffered writes to real storage, then clear overlays."""
         for op in version.pending_writes:
             if op.operation_type == 'insert':
@@ -530,6 +613,8 @@ class MVCCManager:
 
         # Shouldn't remove versions whose ref_count > 0
         for vid, v in versions_by_id:
+            # Validate that ref_count is never negative
+            assert v.ref_count >= 0, f"Negative ref_count detected for version {vid} in collection {collection_name}"
             if v.ref_count > 0:
                 to_keep.add(vid)
 
