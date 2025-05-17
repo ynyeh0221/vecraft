@@ -96,7 +96,7 @@ class CollectionService:
                     'vec_snap': Path(f"{name}.idxsnap"),
                     'meta_snap': Path(f"{name}.metasnap"),
                     'doc_snap': Path(f"{name}.docsnap"),
-                    'lsn_meta': Path(f"{name}.metasnap"),  # Added reference to a metadata snapshot file
+                    'lsn_meta': Path(f"{name}.lsnmeta"),
                     'initialized': False
                 }
 
@@ -966,14 +966,12 @@ class CollectionService:
             vec_path = metadata['vec_snap'].with_suffix(metadata['vec_snap'].suffix + tempfile_suffix)
             meta_path = metadata['meta_snap'].with_suffix(metadata['meta_snap'].suffix + tempfile_suffix)
             doc_path = metadata['doc_snap'].with_suffix(metadata['doc_snap'].suffix + tempfile_suffix)
-            # Add a snapshot.meta file for visible_lsn
-            lsn_path = Path(f"{name}.metasnap{tempfile_suffix}")
+            lsn_path  = metadata['lsn_meta'].with_suffix(metadata['lsn_meta'].suffix + tempfile_suffix)
         else:
             vec_path = metadata['vec_snap']
             meta_path = metadata['meta_snap']
             doc_path = metadata['doc_snap']
-            # Add a snapshot.meta file for visible_lsn
-            lsn_path = Path(f"{name}.metasnap")
+            lsn_path  = metadata['lsn_meta']
 
         try:
             # serialize and write
@@ -1004,7 +1002,7 @@ class CollectionService:
                 os.replace(vec_path, metadata['vec_snap'])
                 os.replace(meta_path, metadata['meta_snap'])
                 os.replace(doc_path, metadata['doc_snap'])
-                os.replace(lsn_path, Path(f"{name}.metasnap"))
+                os.replace(lsn_path,  metadata['lsn_meta'])
 
         except Exception:
             # clean up on error

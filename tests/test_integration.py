@@ -30,7 +30,7 @@ class TestVecraftClient(unittest.TestCase):
         self.client.close()
 
         # Clean up any snapshot files created during tests
-        snapshot_patterns = ["*.idxsnap", "*.metasnap", "*.docsnap", "*.tempsnap"]
+        snapshot_patterns = ["*.idxsnap", "*.metasnap", "*.docsnap", "*.tempsnap", "*.lsnmeta"]
         for pattern in snapshot_patterns:
             for snap_file in Path.cwd().glob(pattern):
                 try:
@@ -45,7 +45,7 @@ class TestVecraftClient(unittest.TestCase):
         """Test that data persists through snapshots and is correctly loaded."""
         collection = "snapshot_test"
 
-        # Create collection
+        # Create a collection
         if collection not in self.client.list_collections():
             self.client.create_collection(
                 CollectionSchema(name=collection, dim=16, vector_type="float32")
@@ -173,13 +173,13 @@ class TestVecraftClient(unittest.TestCase):
             )
         )
 
-        # Should have 10 original - 1 deleted + 1 new = 10 records
+        # Should have original 10 records - 1 deleted + 1 new = 10 records
         self.assertEqual(10, len(all_results))
 
     def test_persistence_across_restarts(self):
         """Verify that records are reconstructed correctly after restarting the client."""
         collection = "persist_collection"
-        # Create collection if needed
+        # Create a collection if needed
         if collection not in self.client.list_collections():
             self.client.create_collection(
                 CollectionSchema(name=collection, dim=16, vector_type="float32")
@@ -305,6 +305,9 @@ class TestVecraftClient(unittest.TestCase):
             )
         )
 
+        print("Wait for async index updating")
+        time.sleep(0.5)
+
         self.assertTrue(
             any(r.data_packet.record_id == preimage.record_id
                 for r in self.client.search(
@@ -333,6 +336,9 @@ class TestVecraftClient(unittest.TestCase):
                 time.sleep(0.005 + 0.002 * attempt)
         else:
             self.fail(f"Update {preimage.record_id} failed after retries ({attempt + 1})")
+
+        print("Wait for async index updating")
+        time.sleep(0.5)
 
         # Verify old metadata doesn't return the record
         old_results = self.client.search(
@@ -397,9 +403,12 @@ class TestVecraftClient(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=5) as pool:
             pool.map(update_task, range(1, num_updates + 1))
 
+        print("Wait for async index updating")
+        time.sleep(0.5)
+
         final_record = self.client.get(collection, preimage.record_id)
         self.assertIsNotNone(final_record)
-        # allow version to remain 0 if all conflicted, or be one of the updates
+        # allow a version to remain 0 if all conflicted, or be one of the updates
         self.assertIn(final_record.original_data["version"], [0] + list(range(1, num_updates + 1)))
 
     def test_batch_operations_consistency(self):
@@ -765,7 +774,7 @@ class TestVecraftClient(unittest.TestCase):
         query_packet.query_vector = rng.random(4).astype(np.float32)
         query_packet.checksum = correct_checksum
 
-        # Searching with tampered packet should throw ChecksumValidationFailureError
+        # Searching with a tampered packet should throw ChecksumValidationFailureError
         with self.assertRaises(ChecksumValidationFailureError):
             # Need to access executor and planner directly for this test
             plan = self.client.planner.plan_search(collection=collection, query_packet=query_packet)
