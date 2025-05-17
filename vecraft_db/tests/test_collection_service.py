@@ -392,7 +392,7 @@ class TestCollectionService(unittest.TestCase):
             mock_tsne.assert_called_once()
             self.assertEqual(outfile, out)
 
-            # Create a dummy file to simulate the output being created
+            # Create a fake file to simulate the output being created
             # (This is for testing the cleanup)
             with open(outfile, 'w') as f:
                 f.write('dummy image content')
@@ -404,6 +404,32 @@ class TestCollectionService(unittest.TestCase):
             # Clean up any generated file, even if test fails
             if os.path.exists(outfile):
                 os.remove(outfile)
+
+    def test_insert_rollback_on_storage_failure(self):
+        record_id = "fail_test"
+        vec = np.array([9.0, 9.0, 9.0], dtype=np.float32)
+        data_packet = DataPacket.create_record(
+            record_id=record_id,
+            original_data={"x": 9},
+            vector=vec,
+            metadata={"m": "fail"}
+        )
+
+        # Patch the underlying storage engine so write_and_index always fails
+        from vecraft_db.persistence.mmap_storage_sqlite_based_index_engine import MMapSQLiteStorageIndexEngine
+        with patch.object(
+                MMapSQLiteStorageIndexEngine,
+                'write_and_index',
+                side_effect=RuntimeError("Simulated storage failure")
+        ):
+            # Insertion should raise RuntimeError
+            with self.assertRaises(RuntimeError):
+                self.collection_service.insert(self.collection_name, data_packet)
+
+        # And after that failure, the record must not exist anywhere
+        rec = self.collection_service.get(self.collection_name, record_id)
+        self.assertTrue(rec.is_nonexistent(),
+                        "Record should have been rolled back on storage failure")
 
 
 if __name__ == '__main__':
