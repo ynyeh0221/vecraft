@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Tuple, List, Dict
@@ -26,44 +27,58 @@ class WALManager(WALInterface):
 
     Attributes:
         _file (Path): Path to the WAL file
+        _last_lsn (int): The last used Log Sequence Number
 
     Example:
         >>> wal = WALManager(Path("/tmp/database.wal"))
         >>> data_packet = DataPacket(record_id="123", data={"key": "value"})
         >>>
         >>> # Two-phase commit
-        >>> wal.append(data_packet, phase="prepare")
+        >>> lsn = wal.append(data_packet, phase="prepare")
         >>> # ... perform actual data operations ...
         >>> wal.commit("123")
         >>>
-        >>> # Recovery after crash
+        >>> # Recovery after a crash
         >>> def handler(record):
         ...     print(f"Replaying: {record}")
         >>> count = wal.replay(handler)
     """
+
     def __init__(self, wal_path: Path):
         self._file = wal_path
+        self._last_lsn = 0  # Track the last used LSN
+        self._lsn_lock = threading.RLock()  # Lock for LSN generation
 
-    def append(self, data_packet: DataPacket, phase: str = "prepare") -> None:
+    def append(self, data_packet: DataPacket, phase: str = "prepare") -> int:
         """
-        Append a data packet to the WAL with phase marker.
+        Append a data packet to the WAL with phase marker and LSN.
 
         This method writes the data packet to the WAL file with a phase marker
-        for two-phase commit. To write is immediately flushed and fsync'd to
-        ensure durability. File locking is used for multiprocess safety.
+        for two-phase commit and an LSN (Log Sequence Number) for tracking.
+        The writing is immediately flushed and fsync'd to ensure durability.
+        File locking is used for multiprocess safety.
 
         Args:
             data_packet (DataPacket): The data packet to append
             phase (str, optional): Phase marker ("prepare" or "commit").
                                  Defaults to "prepare".
 
+        Returns:
+            int: The LSN (Log Sequence Number) assigned to this record
+
         Note:
-            The method automatically adds a "_phase" field to the record
-            to track its commit status during recovery.
+            The method automatically adds "_phase" and "_lsn" fields to the record
+            for tracking its commit status and sequence during recovery.
         """
-        # Add phase marking for two-phase commit
+        # Generate the next LSN
+        with self._lsn_lock:
+            self._last_lsn += 1
+            lsn = self._last_lsn
+
+        # Add phase and LSN marking
         record = data_packet.to_dict()
         record["_phase"] = phase
+        record["_lsn"] = lsn
 
         with open(self._file, 'a', encoding='utf-8') as f:
             # File locking for multiprocess safety
@@ -75,6 +90,8 @@ class WALManager(WALInterface):
                 os.fsync(f.fileno())
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        return lsn
 
     def commit(self, record_id: str) -> None:
         """
@@ -106,8 +123,8 @@ class WALManager(WALInterface):
         This method safely replays the WAL by:
         1. Renaming the WAL file to prevent new writes during replay
         2. Reading and parsing all entries
-        3. Applying only committed entries to the handler
-        4. Deleting the WAL file on success or restoring it on failure
+        3. Applying only committed entries to handler
+        4. Deleting the WAL file on success or restoring it to failure
 
         Only entries that have corresponding commit markers will be replayed.
 
@@ -152,6 +169,11 @@ class WALManager(WALInterface):
                     rid = entry.get("record_id")
                     pending[rid].append(entry)
 
+                # Track the last LSN as we read entries
+                lsn = entry.get("_lsn", 0)
+                if lsn > self._last_lsn:
+                    self._last_lsn = lsn
+
         return committed, pending
 
     def _parse_line(self, line: str) -> dict:
@@ -164,16 +186,26 @@ class WALManager(WALInterface):
         return entry
 
     def _apply_committed(
-        self,
-        committed: List[str],
-        pending: Dict[str, List[dict]],
-        handler: Callable[[dict], None]
+            self,
+            committed: List[str],
+            pending: Dict[str, List[dict]],
+            handler: Callable[[dict], None]
     ) -> int:
         count = 0
+        # Collect all committed entries
+        all_committed_entries = []
         for rid in committed:
             for entry in pending.get(rid, ()):
-                handler(entry)
-                count += 1
+                all_committed_entries.append(entry)
+
+        # Sort by LSN to ensure the correct replay order
+        all_committed_entries.sort(key=lambda e: e.get("_lsn", 0))
+
+        # Apply all entries in LSN order
+        for entry in all_committed_entries:
+            handler(entry)
+            count += 1
+
         return count
 
     def clear(self) -> None:
@@ -186,6 +218,7 @@ class WALManager(WALInterface):
         """
         if self._file.exists():
             self._file.unlink()
+        self._last_lsn = 0  # Reset LSN counter when clearing WAL
 
     def close(self) -> None:
         """
@@ -194,7 +227,7 @@ class WALManager(WALInterface):
         * Safe: Returns quietly even if the WAL file is deleted or the directory doesn't exist.
         """
         try:
-            # If the WAL file exists, do a 0-byte append write + fsync
+            # If the WAL file exists, do a 0-byte appended write + fsync
             if self._file.exists():
                 with open(self._file, "ab") as f:
                     f.flush()

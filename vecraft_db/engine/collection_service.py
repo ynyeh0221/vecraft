@@ -144,16 +144,22 @@ class CollectionService:
                         count += 1
                 logger.info(f"Rebuilt {count} records in {time.time() - start_time:.2f}s")
 
-            # WAL replay
+            # WAL replay - now replay by LSN order and track the max LSN
             logger.info(f"Replaying WAL for collection {name}")
 
             def _apply_if_committed(entry: dict):
                 phase = entry.get("_phase")
+                lsn = entry.get("_lsn", 0)  # Get LSN from entry
                 if phase == "prepare":
                     self._replay_entry(entry, initial_version)
+                    # Update max_lsn
+                    initial_version.max_lsn = max(initial_version.max_lsn, lsn)
 
             replay_count = initial_version.wal.replay(_apply_if_committed)
-            logger.info(f"Replayed {replay_count} WAL entries")
+            logger.info(f"Replayed {replay_count} WAL entries, max_lsn={initial_version.max_lsn}")
+
+            # Set visible_lsn to max_lsn after replay
+            self._mvcc_manager._visible_lsn[name] = initial_version.max_lsn
 
             # Commit the initial version
             self._mvcc_manager.commit_version(name, initial_version)
@@ -251,7 +257,8 @@ class CollectionService:
     def _process_wal_queue(self):
         while not self._stop_event.is_set():
             try:
-                collection, pkt, preimage, op = self._wal_queue.get(timeout=1)
+                # Updated to handle the LSN and version_id parameters
+                collection, pkt, preimage, op, lsn, _ = self._wal_queue.get(timeout=1)
             except queue.Empty:
                 continue
 
@@ -261,6 +268,10 @@ class CollectionService:
                     self._index_insert(version, pkt)
                 elif version and op == 'delete':
                     self._index_delete(version, pkt, preimage)
+
+                # Promote the version to make it visible after indexing is complete
+                self._mvcc_manager.promote_version(collection, lsn)
+
             finally:
                 if version:
                     self._mvcc_manager.release_version(collection, version)
@@ -281,8 +292,11 @@ class CollectionService:
             version.storage = wrapped_storage
 
             try:
-                # 1) WAL prepare
-                version.wal.append(data_packet, phase="prepare")
+                # 1) WAL prepare - now returns LSN
+                lsn = version.wal.append(data_packet, phase="prepare")
+
+                # Track the LSN in the version
+                version.max_lsn = lsn
 
                 # 2) storage-only insert (with rollback on failure)
                 preimage = self._storage_insert(version, data_packet)
@@ -290,13 +304,13 @@ class CollectionService:
                 # 3) WAL commit → durable on disk
                 version.wal.commit(data_packet.record_id)
 
-                # 4) enqueue async index build
-                self._wal_queue.put((collection, data_packet, None, 'insert'))
+                # 4) enqueue async index build with LSN
+                self._wal_queue.put((collection, data_packet, None, 'insert', lsn, version.version_id))
 
-                # Finish transaction
+                # Finish transaction - mark as committed but not visible
                 data_packet.validate_checksum()
                 version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=True)
+                self._mvcc_manager.commit_version(collection, version, visible=False)
                 return preimage
 
             except WriteConflictException:
@@ -468,8 +482,11 @@ class CollectionService:
             version.storage = wrapped_storage
 
             try:
-                ## 1) WAL prepare
-                version.wal.append(data_packet, phase="prepare")
+                # 1) WAL prepare - now returns LSN
+                lsn = version.wal.append(data_packet, phase="prepare")
+
+                # Track the LSN in the version
+                version.max_lsn = lsn
 
                 # 2) storage-only delete (with rollback on failure)
                 preimage = self._storage_delete(version, data_packet)
@@ -477,13 +494,13 @@ class CollectionService:
                 # 3) WAL commit → durable on disk
                 version.wal.commit(data_packet.record_id)
 
-                # 4) enqueue async index deletion
-                self._wal_queue.put((collection, data_packet, preimage, 'delete'))
+                # 4) enqueue async index deletion with LSN
+                self._wal_queue.put((collection, data_packet, preimage, 'delete', lsn, version.version_id))
 
-                # Finish transaction
+                # Finish transaction - mark as committed but not visible
                 data_packet.validate_checksum()
                 version.storage = original_storage
-                self._mvcc_manager.end_transaction(collection, version, commit=True)
+                self._mvcc_manager.commit_version(collection, version, visible=False)
                 return preimage
 
             except WriteConflictException:
@@ -843,6 +860,7 @@ class CollectionService:
                 logger.warning(f"Collection {name} no longer exists, skipping flush")
                 continue
 
+            # Get the current version
             version = self._mvcc_manager.get_current_version(name)
             if not version:
                 logger.warning(f"No current version for collection {name}, skipping flush")
@@ -857,8 +875,19 @@ class CollectionService:
             logger.debug(f"Saving snapshots for collection {name}")
             self._save_snapshots(name, version)
 
+            # Promote any pending versions to avoid having hanging versions on shutdown
+            with self._mvcc_manager._lock:
+                pending_lsns = list(self._mvcc_manager._pending_versions[name].keys())
+                if pending_lsns:
+                    logger.info(f"Promoting {len(pending_lsns)} pending versions for collection {name}")
+                    for lsn in sorted(pending_lsns):
+                        self._mvcc_manager.promote_version(name, lsn)
+
             elapsed = time.time() - start_time
             logger.info(f"Flushing {name} completed in {elapsed:.3f}s")
+
+            # Release the version
+            self._mvcc_manager.release_version(name, version)
 
     def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
         """
@@ -878,10 +907,14 @@ class CollectionService:
             vec_path = metadata['vec_snap'].with_suffix(metadata['vec_snap'].suffix + tempfile_suffix)
             meta_path = metadata['meta_snap'].with_suffix(metadata['meta_snap'].suffix + tempfile_suffix)
             doc_path = metadata['doc_snap'].with_suffix(metadata['doc_snap'].suffix + tempfile_suffix)
+            # Add a snapshot.meta file for visible_lsn
+            lsn_path = Path(f"{name}.metasnap{tempfile_suffix}")
         else:
             vec_path = metadata['vec_snap']
             meta_path = metadata['meta_snap']
             doc_path = metadata['doc_snap']
+            # Add a snapshot.meta file for visible_lsn
+            lsn_path = Path(f"{name}.metasnap")
 
         try:
             # serialize and write
@@ -894,8 +927,16 @@ class CollectionService:
             doc_data = version.doc_index.serialize()
             doc_path.write_bytes(doc_data)
 
+            # Write visible_lsn to snapshot.meta
+            import json
+            lsn_data = json.dumps({
+                "visible_lsn": self._mvcc_manager._visible_lsn.get(name, 0),
+                "timestamp": time.time()
+            }).encode('utf-8')
+            lsn_path.write_bytes(lsn_data)
+
             # fsync each
-            for p in (vec_path, meta_path, doc_path):
+            for p in (vec_path, meta_path, doc_path, lsn_path):
                 with open(p, 'rb') as f:
                     os.fsync(f.fileno())
 
@@ -904,11 +945,12 @@ class CollectionService:
                 os.replace(vec_path, metadata['vec_snap'])
                 os.replace(meta_path, metadata['meta_snap'])
                 os.replace(doc_path, metadata['doc_snap'])
+                os.replace(lsn_path, Path(f"{name}.metasnap"))
 
         except Exception:
             # clean up on error
             if to_temp_files:
-                for temp_file in (vec_path, meta_path, doc_path):
+                for temp_file in (vec_path, meta_path, doc_path, lsn_path):
                     if temp_file.exists():
                         temp_file.unlink()
             raise

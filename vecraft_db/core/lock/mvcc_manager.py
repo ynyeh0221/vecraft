@@ -75,6 +75,7 @@ class CollectionVersion:
         pending_writes: List of write operations waiting to be applied
         storage_overlay: Temporary storage for uncommitted changes
         deleted_records: Set of record IDs deleted in this version
+        max_lsn: Maximum LSN processed in this version
     """
     version_id: int
     vec_index: Index
@@ -93,6 +94,7 @@ class CollectionVersion:
     pending_writes: List[WriteOperation] = field(default_factory=list)
     storage_overlay: Dict[str, Any] = field(default_factory=dict)
     deleted_records: Set[str] = field(default_factory=set)
+    max_lsn: int = 0
 
 class MVCCManager:
     """
@@ -123,6 +125,10 @@ class MVCCManager:
         self._current_version: Dict[str, int] = {}
         self._next_version_id: Dict[str, int] = defaultdict(int)
         self._active_transactions: Dict[str, Set[int]] = defaultdict(set)
+
+        # Fields for LSN-based visibility control
+        self._pending_versions: Dict[str, Dict[int, CollectionVersion]] = defaultdict(dict)
+        self._visible_lsn: Dict[str, int] = defaultdict(int)
 
         # Store factories for proper cloning
         self._storage_factories = storage_factories or {}
@@ -220,7 +226,7 @@ class MVCCManager:
     def _clone_index(self, factory_key: str, original_index, *factory_args):
         """
         If a factory exists, use it to make a fresh instance and deserialize;
-        otherwise return the original index.
+         otherwise, return the original index.
         """
         factory = self._index_factories.get(factory_key)
         if factory:
@@ -254,7 +260,7 @@ class MVCCManager:
                 version.ref_count += 1 # protect read-only snapshot
             return version
 
-    def commit_version(self, collection_name: str, version: CollectionVersion):
+    def commit_version(self, collection: str, version: CollectionVersion, visible: bool = True):
         """
         Commit a version as the new current state of the collection.
 
@@ -266,8 +272,10 @@ class MVCCManager:
         5. Cleans up old versions
 
         Args:
-            collection_name: Name of the collection
-            version: Version to commit
+        collection: Name of the collection
+        version: Version to commit
+        visible: If True, make this version immediately visible to readers
+                If False, persist it but don't make it visible yet
 
         Raises:
             WriteConflictException: If write-write conflict is detected
@@ -275,7 +283,7 @@ class MVCCManager:
         """
         with self._lock:
             # 1) Concurrent conflict check
-            self._check_conflicts(collection_name, version)
+            self._check_conflicts(collection, version)
 
             # 2) Apply buffered writes to underlying storage
             self._apply_pending_writes(version)
@@ -288,22 +296,63 @@ class MVCCManager:
             if version.ref_count > 0:
                 version.ref_count -= 1
 
-            # 4) Set it as the current version (this step will add +1 reference)
-            old_current_id = self._current_version.get(collection_name)
-            self._current_version[collection_name] = version.version_id
+            if visible:
+                # 4) Set it as the current version (this step will add +1 reference)
+                old_current_id = self._current_version.get(collection)
+                self._current_version[collection] = version.version_id
+                version.ref_count += 1  # Current snapshot takes reference
+
+                # Update visible LSN when making the version visible
+                self._visible_lsn[collection] = version.max_lsn
+
+                # Old current loses "current" status, reference -1
+                if old_current_id is not None and old_current_id in self._versions[collection]:
+                    self._versions[collection][old_current_id].ref_count -= 1
+            else:
+                # Store in pending versions by LSN
+                self._pending_versions[collection][version.max_lsn] = version
+
+            # Remove from an active transaction set
+            self._active_transactions[collection].discard(version.version_id)
+
+            logger.info(f"Committed version {version.version_id} for collection {collection}")
+
+            # 5) Clean up old versions no longer needed
+            self._cleanup_old_versions(collection)
+
+    def promote_version(self, collection: str, lsn: int):
+        """
+        Promote a pending version to be the current visible version.
+
+        Called by background thread after indexing is complete.
+
+        Args:
+            collection: Name of the collection
+            lsn: LSN to promote
+        """
+        with self._lock:
+            # Retrieve and remove the pending version
+            version = self._pending_versions[collection].pop(lsn, None)
+            if not version:
+                logger.debug(f"No pending version found for LSN {lsn} in collection {collection}")
+                return
+
+            # Update current version and visible LSN
+            old_current_id = self._current_version.get(collection)
+            self._current_version[collection] = version.version_id
+            self._visible_lsn[collection] = lsn
+
+            # Reference counting
             version.ref_count += 1  # Current snapshot takes reference
 
             # Old current loses "current" status, reference -1
-            if old_current_id is not None and old_current_id in self._versions[collection_name]:
-                self._versions[collection_name][old_current_id].ref_count -= 1
+            if old_current_id is not None and old_current_id in self._versions[collection]:
+                self._versions[collection][old_current_id].ref_count -= 1
 
-            # Remove from an active transaction set
-            self._active_transactions[collection_name].discard(version.version_id)
+            logger.info(f"Promoted version {version.version_id} for collection {collection} to LSN {lsn}")
 
-            logger.info(f"Committed version {version.version_id} for collection {collection_name}")
-
-            # 5) Clean up old versions no longer needed
-            self._cleanup_old_versions(collection_name)
+            # Clean up old versions
+            self._cleanup_old_versions(collection)
 
     def _check_conflicts(self, collection_name: str, version: CollectionVersion):
         """
