@@ -299,7 +299,7 @@ class TestVecraftClient(unittest.TestCase):
         )
 
         print("Wait for async index updating")
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         self.assertTrue(
             any(r.data_packet.record_id == preimage.record_id
@@ -331,7 +331,7 @@ class TestVecraftClient(unittest.TestCase):
             self.fail(f"Update {preimage.record_id} failed after retries ({attempt + 1})")
 
         print("Wait for async index updating")
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         # Verify old metadata doesn't return the record
         old_results = self.client.search(
@@ -397,7 +397,7 @@ class TestVecraftClient(unittest.TestCase):
             pool.map(update_task, range(1, num_updates + 1))
 
         print("Wait for async index updating")
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         final_record = self.client.get(collection, preimage.record_id)
         self.assertIsNotNone(final_record)
@@ -435,6 +435,9 @@ class TestVecraftClient(unittest.TestCase):
                 )
             )
             record_ids.append(preimage.record_id)
+
+        print("Wait for async index updating")
+        time.sleep(0.1)
 
         # Verify all records can be fetched
         for i, rec_id in enumerate(record_ids):
@@ -533,6 +536,9 @@ class TestVecraftClient(unittest.TestCase):
             )
             record_ids.append(rec_id)
 
+        print("Wait for async index updating")
+        time.sleep(0.1)
+
         # Test filtering by single tag
         red_results = self.client.search(
             collection=collection,
@@ -605,6 +611,9 @@ class TestVecraftClient(unittest.TestCase):
             )
         )
 
+        print("Wait for async index updating")
+        time.sleep(0.1)
+
         # Verify complex data is preserved
         result = self.client.get(collection=collection, record_id=preimage.record_id)
         self.assertEqual(result.original_data["nested"]["emoji"], "😀🚀🌍")
@@ -633,6 +642,9 @@ class TestVecraftClient(unittest.TestCase):
                 metadata=large_meta
             )
         )
+
+        print("Wait for async index updating")
+        time.sleep(0.1)
 
         # Verify we can search by one of the metadata values
         results = self.client.search(
@@ -689,6 +701,9 @@ class TestVecraftClient(unittest.TestCase):
 
         insert_time = time.time() - start_time
         print(f"Inserted {num_records} records in {insert_time:.2f} seconds")
+
+        print("Wait for async index updating")
+        time.sleep(0.1)
 
         # Test search performance
         start_time = time.time()
@@ -753,6 +768,9 @@ class TestVecraftClient(unittest.TestCase):
                 metadata={"valid": True}
             )
         )
+
+        print("Wait for async index updating")
+        time.sleep(0.1)
 
         # Creating a tampered query packet (we'll need to access the client's internal components)
         query_packet = QueryPacket(

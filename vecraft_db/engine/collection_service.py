@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Callable, Tuple
+from typing import Any, Dict, List, Optional, Callable
 
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_data_model.index_packets import LocationPacket, CollectionSchema
@@ -17,6 +17,7 @@ from vecraft_db.core.interface.vector_index_interface import Index
 from vecraft_db.core.interface.wal_interface import WALInterface
 from vecraft_db.core.lock.locks import ReentrantRWLock
 from vecraft_db.core.lock.mvcc_manager import MVCCManager, CollectionVersion
+from vecraft_db.engine.service_manager import SearchManager
 from vecraft_db.engine.snapshot_manager import SnapshotManager
 from vecraft_db.engine.tsne_manager import TSNEManager
 from vecraft_db.persistence.storage_wrapper import StorageWrapper
@@ -77,6 +78,10 @@ class CollectionService:
 
         # import API managers
         self._tsne_manager = TSNEManager(logger)
+        self._search_manager = SearchManager(
+            get_record_func=self._get_internal,
+            logger=logger
+        )
 
         logger.info("CollectionService initialized with MVCC")
 
@@ -658,14 +663,11 @@ class CollectionService:
         schema = self._collection_metadata[collection]['schema']
         self._validate_query_packet(query_packet, schema)
 
-        allowed_ids = self._apply_filters(query_packet, version)
-        if allowed_ids == set():
-            logger.info("Filter returned empty result set, short-circuiting search")
-            self._mvcc_manager.release_version(collection, version)
-            return []
-
-        raw_results = self._vector_search(query_packet, allowed_ids, version)
-        results = self._fetch_search_results(raw_results, version)
+        # Delegate to search manager with the target version
+        results = self._search_manager.search(
+            query_packet=query_packet,
+            version=version
+        )
 
         query_packet.validate_checksum()
         elapsed = time.time() - start_time
@@ -681,57 +683,6 @@ class CollectionService:
             err = f"Query dimension mismatch: expected {schema.dim}, got {len(query_packet.query_vector)}"
             logger.error(err)
             raise VectorDimensionMismatchException(err)
-
-    def _apply_filters(self, query_packet: QueryPacket, version: CollectionVersion) -> Optional[Set[str]]:
-        allowed = None
-        if query_packet.where:
-            allowed = self._apply_metadata_filter(query_packet.where, allowed, version)
-            if allowed is not None and not allowed:
-                return set()
-        if query_packet.where_document:
-            allowed = self._apply_document_filter(query_packet.where_document, allowed, version)
-            if allowed is not None and not allowed:
-                return set()
-        return allowed
-
-    @staticmethod
-    def _apply_metadata_filter(where: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
-        logger.debug(f"Applying metadata filter: {where}")
-        ids = version.meta_index.get_matching_ids(where)
-        if ids is not None:
-            logger.debug(f"Metadata filter matched {len(ids)} records")
-            return ids
-        return allowed
-
-    @staticmethod
-    def _apply_document_filter(where_doc: Any, allowed: Optional[Set[str]], version: CollectionVersion) -> Optional[Set[str]]:
-        logger.debug("Applying document filter")
-        ids = version.doc_index.get_matching_ids(allowed, where_doc)
-        if ids is not None:
-            logger.debug(f"Document filter matched {len(ids)} records")
-            return ids
-        return allowed
-
-    @staticmethod
-    def _vector_search(query_packet: QueryPacket, allowed: Optional[Set[str]], version: CollectionVersion):
-        logger.debug(f"Performing vector search with k={query_packet.k}")
-        start = time.time()
-        results = version.vec_index.search(
-            query_packet.query_vector, query_packet.k, allowed_ids=allowed
-        )
-        logger.debug(f"Vector search returned {len(results)} results in {time.time() - start:.3f}s")
-        return results
-
-    def _fetch_search_results(self, raw_results: List[Tuple[str, float]], version: CollectionVersion) -> List[SearchDataPacket]:
-        logger.debug("Fetching full records for search results")
-        results: List[SearchDataPacket] = []
-        for rec_id, dist in raw_results:
-            rec = self._get_internal(version, rec_id)
-            if not rec:
-                logger.warning(f"Record {rec_id} found in index but not in storage")
-                continue
-            results.append(SearchDataPacket(data_packet=rec, distance=dist))
-        return results
 
     # ------------------------
     # GET API
