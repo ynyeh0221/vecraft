@@ -306,13 +306,18 @@ class CollectionService:
 
     @staticmethod
     def _shutdown_immediately():
-        import os, signal, time
+        import sys, logging
+
+        logging.critical("Critical error detected in database service, initiating immediate shutdown")
+        # Optional: Add any emergency cleanup here if needed
         try:
-            os.kill(os.getpid(), signal.SIGTERM)
-            time.sleep(1)
-        except Exception as kill_err:
-            logger.critical(f"Failed to send SIGTERM: {kill_err}")
-            os._exit(1)
+            # Any critical cleanup operations
+            pass
+        except Exception as cleanup_err:
+            logging.critical(f"Emergency cleanup failed: {cleanup_err}")
+
+        # Exit with error code
+        sys.exit(1)
 
     # ------------------------
     # INSERT API
