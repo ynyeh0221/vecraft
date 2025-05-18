@@ -351,7 +351,7 @@ class TestCollectionService(unittest.TestCase):
         self.assertTrue(os.path.exists(f"{self.collection_name}.metasnap"))
         self.assertTrue(os.path.exists(f"{self.collection_name}.docsnap"))
 
-    @patch('vecraft_db.engine.collection_service.generate_tsne')
+    @patch('vecraft_db.engine.tsne_manager.TSNEManager._generate_tsne')
     def test_generate_tsne_plot(self, mock_tsne):
         # Insert test records
         v1 = np.array([1, 2, 3], dtype=np.float32)

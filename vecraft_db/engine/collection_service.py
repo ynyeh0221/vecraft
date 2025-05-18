@@ -1,12 +1,9 @@
 import logging
-import os
 import queue
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable, Tuple
-
-import numpy as np
 
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_data_model.index_packets import LocationPacket, CollectionSchema
@@ -20,11 +17,11 @@ from vecraft_db.core.interface.vector_index_interface import Index
 from vecraft_db.core.interface.wal_interface import WALInterface
 from vecraft_db.core.lock.locks import ReentrantRWLock
 from vecraft_db.core.lock.mvcc_manager import MVCCManager, CollectionVersion
+from vecraft_db.engine.snapshot_manager import SnapshotManager
+from vecraft_db.engine.tsne_manager import TSNEManager
 from vecraft_db.persistence.storage_wrapper import StorageWrapper
-from vecraft_db.visualization.tsne import generate_tsne
 from vecraft_exception_model.exception import WriteConflictException, StorageFailureException, \
-    VectorDimensionMismatchException, ChecksumValidationFailureError, TsnePlotGeneratingFailureException, \
-    NullOrZeroVectorException
+    VectorDimensionMismatchException, ChecksumValidationFailureError, TsnePlotGeneratingFailureException
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -63,6 +60,9 @@ class CollectionService:
         self._collection_metadata: Dict[str, Dict[str, Any]] = {}
         self._metadata_lock = threading.Lock()
 
+        # initialize snapshot manager
+        self._snapshot_manager = SnapshotManager(self._collection_metadata, self._mvcc_manager, logger)
+
         # a queue of (collection, DataPacket, op_type) for async index updates
         self._wal_queue = queue.Queue()
         self._stop_event = threading.Event()
@@ -71,9 +71,12 @@ class CollectionService:
         )
         self._background_thread.start()
 
-        # Per-collection init locks to serialize first-time bootstrap
+        # per-collection init locks to serialize first-time bootstrap
         from collections import defaultdict
         self._init_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+        # import API managers
+        self._tsne_manager = TSNEManager(logger)
 
         logger.info("CollectionService initialized with MVCC")
 
@@ -193,44 +196,10 @@ class CollectionService:
     # ------------------------
 
     def _save_snapshots(self, name: str, version: CollectionVersion):
-        """Save snapshots to main files atomically via tempsnaps."""
-        logger.info(f"Saving snapshots for collection {name}")
-        start_time = time.time()
-
-        # write .tempsnap → main
-        self._flush_indexes(name, version, to_temp_files=True)
-
-        logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
+        self._snapshot_manager.save_snapshots(name, version)
 
     def _load_snapshots(self, name: str, version: CollectionVersion) -> bool:
-        """Load vector, metadata, and doc snapshots for the given collection, if they exist."""
-        logger.info(f"Attempting to load snapshots for collection {name}")
-        metadata = self._collection_metadata[name]
-        vec_snap, meta_snap, doc_snap = metadata['vec_snap'], metadata['meta_snap'], metadata['doc_snap']
-
-        if vec_snap.exists() and meta_snap.exists() and doc_snap.exists():
-            start_time = time.time()
-
-            # vector index
-            vec_data = vec_snap.read_bytes()
-            version.vec_index.deserialize(vec_data)
-            logger.debug(f"Loaded vector snapshot ({len(vec_data)} bytes)")
-
-            # metadata index
-            meta_data = meta_snap.read_bytes()
-            version.meta_index.deserialize(meta_data)
-            logger.debug(f"Loaded metadata snapshot ({len(meta_data)} bytes)")
-
-            # document index
-            doc_data = doc_snap.read_bytes()
-            version.doc_index.deserialize(doc_data)
-            logger.debug(f"Loaded document snapshot ({len(doc_data)} bytes)")
-
-            logger.info(f"Successfully loaded all snapshots for collection {name} in {time.time() - start_time:.2f}s")
-            return True
-
-        logger.info(f"Snapshots not found for collection {name}")
-        return False
+        return self._snapshot_manager.load_snapshots(name, version)
 
     # ------------------------
     # REPLAY
@@ -822,19 +791,6 @@ class CollectionService:
             random_state: int = 42,
             outfile: str = "tsne.png"
     ) -> str:
-        """
-        Generate a t-SNE scatter plot for the given record IDs (or all records if None).
-
-        Args:
-            name: Collection name.
-            record_ids: Optional list of record IDs to visualize.
-            perplexity: t-SNE perplexity parameter.
-            random_state: Random seed for reproducibility.
-            outfile: Path to save the generated PNG image.
-
-        Returns:
-            Path to the saved t-SNE plot image.
-        """
         self._get_or_init_collection(name)
 
         # Get current version for read-only operation
@@ -844,58 +800,15 @@ class CollectionService:
             logger.error(err_msg)
             raise TsnePlotGeneratingFailureException(err_msg, name, None)
 
-        try:
-            logger.info(f"Generating t-SNE plot for collection {name}")
-            start_time = time.time()
-
-            # Determine which IDs to plot
-            if record_ids is None:
-                record_ids = list(version.storage.get_all_record_locations().keys())
-                logger.debug(f"Using all {len(record_ids)} records in collection")
-            else:
-                logger.debug(f"Using {len(record_ids)} specified record IDs")
-
-            vectors = []
-            labels = []
-            for rid in record_ids:
-                rec = self._get_internal(version, rid)
-                if not rec:
-                    logger.warning(f"Record {rid} not found, skipping for t-SNE")
-                    continue
-                vectors.append(rec.vector)
-                labels.append(rid)
-
-            if not vectors:
-                err_msg = "No vectors available for t-SNE visualization"
-                logger.error(err_msg)
-                raise NullOrZeroVectorException(err_msg)
-
-            # Stack into a 2D array
-            data = np.vstack(vectors)
-            logger.debug(f"Processing {len(vectors)} vectors of dimension {vectors[0].shape[0]}")
-
-            # Log the parameters
-            logger.debug(f"t-SNE parameters: perplexity={perplexity}, random_state={random_state}")
-            logger.debug(f"Output file: {outfile}")
-
-            # Call the helper to generate and save the plot
-            plot = generate_tsne(
-                vectors=data,
-                labels=labels,
-                outfile=outfile,
-                perplexity=perplexity,
-                random_state=random_state
-            )
-
-            elapsed = time.time() - start_time
-            logger.info(f"T-SNE plot from {name} completed in {elapsed:.3f}s")
-
-            return plot
-
-        except Exception as e:
-            error_message = f"Error generating t-SNE plot for collection {name}: {e}"
-            logger.error(error_message)
-            raise TsnePlotGeneratingFailureException(error_message, name, e)
+        return self._tsne_manager.generate_tsne_plot(
+            name=name,
+            version=version,
+            get_record_func=self._get_internal,
+            record_ids=record_ids,
+            perplexity=perplexity,
+            random_state=random_state,
+            outfile=outfile
+        )
 
     # ------------------------
     # FLUSH
@@ -946,71 +859,7 @@ class CollectionService:
                 self._mvcc_manager.release_version(name, version)
 
     def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
-        """
-        Flush in-memory indexes to files.
-
-        Args:
-            name: Collection name
-            version: Collection version to flush
-            to_temp_files: If True, save to .tempsnap files and then atomically replace
-                           the main snapshots; otherwise write directly to the main files.
-
-        # TODO: Consider bundling the 4 snapshot files (vec/meta/doc/lsn) into a directory #NOSONAR
-        # or compressed archive (tar.gz) to simplify multi-replica distribution and S3 storage.
-        """
-        metadata = self._collection_metadata[name]
-
-        tempfile_suffix = '.tempsnap'
-        if to_temp_files:
-            # preserve the original suffix and append ".tempsnap"
-            vec_path = metadata['vec_snap'].with_suffix(metadata['vec_snap'].suffix + tempfile_suffix)
-            meta_path = metadata['meta_snap'].with_suffix(metadata['meta_snap'].suffix + tempfile_suffix)
-            doc_path = metadata['doc_snap'].with_suffix(metadata['doc_snap'].suffix + tempfile_suffix)
-            lsn_path  = metadata['lsn_meta'].with_suffix(metadata['lsn_meta'].suffix + tempfile_suffix)
-        else:
-            vec_path = metadata['vec_snap']
-            meta_path = metadata['meta_snap']
-            doc_path = metadata['doc_snap']
-            lsn_path  = metadata['lsn_meta']
-
-        try:
-            # serialize and write
-            vec_data = version.vec_index.serialize()
-            vec_path.write_bytes(vec_data)
-
-            meta_data = version.meta_index.serialize()
-            meta_path.write_bytes(meta_data)
-
-            doc_data = version.doc_index.serialize()
-            doc_path.write_bytes(doc_data)
-
-            # Write visible_lsn to metadata file
-            import json
-            lsn_data = json.dumps({
-                "visible_lsn": self._mvcc_manager.visible_lsn.get(name, 0),
-                "timestamp": time.time()
-            }).encode('utf-8')
-            lsn_path.write_bytes(lsn_data)
-
-            # fsync each
-            for p in (vec_path, meta_path, doc_path, lsn_path):
-                with open(p, 'rb') as f:
-                    os.fsync(f.fileno())
-
-            # atomic replace temps nap → main
-            if to_temp_files:
-                os.replace(vec_path, metadata['vec_snap'])
-                os.replace(meta_path, metadata['meta_snap'])
-                os.replace(doc_path, metadata['doc_snap'])
-                os.replace(lsn_path,  metadata['lsn_meta'])
-
-        except Exception:
-            # clean up on error
-            if to_temp_files:
-                for temp_file in (vec_path, meta_path, doc_path, lsn_path):
-                    if temp_file.exists():
-                        temp_file.unlink()
-            raise
+        self._snapshot_manager.flush_indexes(name, version, to_temp_files)
 
     # ------------------------
     # CLOSE
