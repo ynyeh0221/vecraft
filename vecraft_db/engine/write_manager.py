@@ -163,48 +163,49 @@ class WriteManager:
 
         # Skip if record doesn't exist in indexes
         if preimage.is_nonexistent():
-            self._logger.debug(f"Record {record_id} doesn't exist in indexes, skipping delete operation")
+            self._logger.debug(
+                f"Record {record_id} doesn't exist in indexes, skipping delete operation"
+            )
             return
 
-        removed_meta = removed_doc = removed_vec = False
+        # Prepare operations for delete and rollback
+        operations = [
+            {
+                'name': 'metadata',
+                'delete': lambda: version.meta_index.delete(preimage.to_metadata_packet()),
+                'add': lambda: version.meta_index.add(preimage.to_metadata_packet())
+            },
+            {
+                'name': 'document',
+                'delete': lambda: version.doc_index.delete(preimage.to_document_packet()),
+                'add': lambda: version.doc_index.add(preimage.to_document_packet())
+            },
+            {
+                'name': 'vector',
+                'delete': lambda: version.vec_index.delete(record_id=record_id),
+                'add': lambda: version.vec_index.add(preimage.to_vector_packet())
+            }
+        ]
+
+        executed = []
         try:
-            # B) metadata index
-            self._logger.debug(f"Removing record {record_id} from metadata index")
-            version.meta_index.delete(preimage.to_metadata_packet())
-            removed_meta = True
-
-            # C) document index
-            self._logger.debug(f"Removing record {record_id} from doc index")
-            version.doc_index.delete(preimage.to_document_packet())
-            removed_doc = True
-
-            # D) vector index
-            self._logger.debug(f"Removing record {record_id} from vector index")
-            version.vec_index.delete(record_id=record_id)
-            removed_vec = True
-
+            for op in operations:
+                self._logger.debug(
+                    f"Removing record {record_id} from {op['name']} index"
+                )
+                op['delete']()
+                executed.append(op)
         except Exception:
-            self._logger.error(f"Index removal failed for record {record_id}, rolling back", exc_info=True)
-
-            # rollback vector
-            if removed_vec:
+            self._logger.error(
+                f"Index removal failed for record {record_id}, rolling back",
+                exc_info=True
+            )
+            # Rollback in reverse order
+            for op in reversed(executed):
                 try:
-                    version.vec_index.add(preimage.to_vector_packet())
+                    op['add']()
                 except Exception:
-                    self._logger.debug("Failed to rollback vector index delete")
-
-            # rollback doc
-            if removed_doc:
-                try:
-                    version.doc_index.add(preimage.to_document_packet())
-                except Exception:
-                    self._logger.debug("Failed to rollback doc index delete")
-
-            # rollback metadata
-            if removed_meta:
-                try:
-                    version.meta_index.add(preimage.to_metadata_packet())
-                except Exception:
-                    self._logger.debug("Failed to rollback metadata index delete")
-
+                    self._logger.debug(
+                        f"Failed to rollback {op['name']} index delete"
+                    )
             raise
