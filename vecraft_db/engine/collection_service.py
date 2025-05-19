@@ -227,12 +227,12 @@ class CollectionService:
         try:
             if data_packet.type == "insert":
                 # Replay insert: only update meta/doc/vector indexes
-                self._index_insert(version, data_packet)
+                self._write_manager.index_insert(version, data_packet)
 
             elif data_packet.type == "delete":
                 # Replay delete: first fetch the original record to get its preimage
                 preimage = self._get_internal(version, data_packet.record_id)
-                self._index_delete(version, data_packet, preimage)
+                self._write_manager.index_delete(version, data_packet, preimage)
 
             data_packet.validate_checksum()
             logger.debug(f"Successfully replayed {data_packet.type} for record {data_packet.record_id}")
