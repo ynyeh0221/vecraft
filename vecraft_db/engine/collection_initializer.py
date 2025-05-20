@@ -89,7 +89,7 @@ class CollectionInitializer:
             self._full_rebuild(version)
 
         # 3) replay WAL beyond stored LSN
-        max_lsn = self._replay_wal(version, stored_lsn)
+        max_lsn = self._replay_wal(version, name, stored_lsn)
         self._mvcc_manager.visible_lsn[name] = max(stored_lsn, max_lsn)
 
         # 4) commit and mark done
@@ -145,8 +145,8 @@ class CollectionInitializer:
         elapsed = time.time() - start
         logger.info(f"Rebuilt {count} records in {elapsed:.2f}s")
 
-    def _replay_wal(self, version, stored_visible_lsn: int) -> int:
-        logger.info(f"Replaying WAL for collection {version.name}")
+    def _replay_wal(self, version, name: str, stored_visible_lsn: int) -> int:
+        logger.info(f"Replaying WAL for collection {name}")
         max_lsn = 0
 
         def _apply(entry: dict):
