@@ -30,6 +30,41 @@ from vecraft_exception_model.exception import WriteConflictException, VectorDime
 logger = logging.getLogger(__name__)
 
 class CollectionService:
+    """
+    Manages collections in a vector database with MVCC (Multi-Version Concurrency Control).
+
+    The CollectionService provides a high-level interface for managing collections of vector data
+    with strong consistency guarantees using MVCC transactions.
+    It supports operations for inserting, deleting, searching, and retrieving records, with durability provided
+    by a Write-Ahead Log (WAL).
+    The service maintains indexes for efficient vector search and uses asynchronous processing to
+    update indexes while ensuring immediate storage consistency.
+
+    Key features:
+    - MVCC transaction isolation
+    - Two-phase commit with WAL for durability
+    - Asynchronous index updates
+    - Snapshot management for persistence
+    - Vector similarity search
+    - TSNE visualization of vector spaces
+
+    Args:
+        catalog (Catalog): Global catalog for collection metadata
+        wal_factory (Callable[[str], WALInterface]): Factory function for creating WAL instances
+        storage_factory (Callable[[str, str], StorageIndexEngine]): Factory for storage engines
+        vector_index_factory (Callable[[str, int], Index]): Factory for vector indexes
+        metadata_index_factory (Callable[[], MetadataIndexInterface]): Factory for metadata indexes
+        doc_index_factory (Callable[[], DocIndexInterface]): Factory for document indexes
+
+    Attributes:
+        _global_lock (ReentrantRWLock): Global lock for service-wide operations
+        _catalog (Catalog): Global catalog for collection metadata
+        _collections (Dict[str, Dict[str, Any]]): Resources per collection
+        _mvcc_manager (MVCCManager): Manages MVCC transactions
+        _collection_metadata (Dict[str, Dict[str, Any]]): Collection schemas and other metadata
+        _snapshot_manager (SnapshotManager): Manages persistence snapshots
+        _wal_queue (Queue): Queue for asynchronous index updates
+    """
     def __init__(
         self,
         catalog: Catalog,
