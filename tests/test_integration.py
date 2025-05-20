@@ -437,7 +437,7 @@ class TestVecraftClient(unittest.TestCase):
             record_ids.append(preimage.record_id)
 
         print("Wait for async index updating")
-        time.sleep(0.1)
+        time.sleep(0.5)
 
         # Verify all records can be fetched
         for i, rec_id in enumerate(record_ids):

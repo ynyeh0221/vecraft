@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 
 from vecraft_data_model.data_packet import DataPacket
-from vecraft_data_model.index_packets import LocationPacket, CollectionSchema
+from vecraft_data_model.index_packets import CollectionSchema
 from vecraft_data_model.query_packet import QueryPacket
 from vecraft_data_model.search_data_packet import SearchDataPacket
 from vecraft_db.core.interface.catalog_interface import Catalog
@@ -17,13 +17,14 @@ from vecraft_db.core.interface.vector_index_interface import Index
 from vecraft_db.core.interface.wal_interface import WALInterface
 from vecraft_db.core.lock.locks import ReentrantRWLock
 from vecraft_db.core.lock.mvcc_manager import MVCCManager, CollectionVersion
+from vecraft_db.engine.get_manager import GetManager
 from vecraft_db.engine.service_manager import SearchManager
 from vecraft_db.engine.snapshot_manager import SnapshotManager
 from vecraft_db.engine.tsne_manager import TSNEManager
 from vecraft_db.engine.write_manager import WriteManager
 from vecraft_db.persistence.storage_wrapper import StorageWrapper
 from vecraft_exception_model.exception import WriteConflictException, VectorDimensionMismatchException, \
-    ChecksumValidationFailureError, TsnePlotGeneratingFailureException
+    TsnePlotGeneratingFailureException
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class CollectionService:
             logger=logger
         )
         self._write_manager = WriteManager(logger, self._get_internal)
+        self._get_manager = GetManager(logger)
 
         logger.info("CollectionService initialized with MVCC")
 
@@ -487,24 +489,7 @@ class CollectionService:
         """Get with read tracking for conflict detection"""
         # Record the read for conflict detection
         self._mvcc_manager.record_read(version, record_id)
-
-        loc = version.storage.get_record_location(record_id)
-        if not loc:
-            return DataPacket.create_nonexistent(record_id=record_id)
-
-        data = version.storage.read(LocationPacket(record_id=record_id, offset=loc.offset, size=loc.size))
-        if not data:
-            return DataPacket.create_nonexistent(record_id=record_id)
-
-        data_packet = DataPacket.from_bytes(data)
-
-        # Verify that the returned record is the one that we request
-        if data_packet.record_id != record_id:
-            error_message = f"Returned record {data_packet.record_id} does not match expected record {record_id}"
-            logger.error(error_message)
-            raise ChecksumValidationFailureError(error_message)
-
-        return data_packet
+        return self._get_manager.get(version, record_id)
 
     # ------------------------
     # GENERATE TSNE PLOT API
