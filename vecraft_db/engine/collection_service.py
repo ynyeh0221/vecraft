@@ -16,12 +16,12 @@ from vecraft_db.core.interface.vector_index_interface import Index
 from vecraft_db.core.interface.wal_interface import WALInterface
 from vecraft_db.core.lock.locks import ReentrantRWLock
 from vecraft_db.core.lock.mvcc_manager import MVCCManager, CollectionVersion
-from vecraft_db.engine.collection_initializer import CollectionInitializer
-from vecraft_db.engine.get_manager import GetManager
-from vecraft_db.engine.service_manager import SearchManager
-from vecraft_db.engine.snapshot_manager import SnapshotManager
-from vecraft_db.engine.tsne_manager import TSNEManager
-from vecraft_db.engine.write_manager import WriteManager
+from vecraft_db.engine.manager.collection_initializer import CollectionInitializer
+from vecraft_db.engine.manager.get_manager import GetManager
+from vecraft_db.engine.manager.service_manager import SearchManager
+from vecraft_db.engine.manager.snapshot_manager import SnapshotManager
+from vecraft_db.engine.manager.tsne_manager import TSNEManager
+from vecraft_db.engine.manager.write_manager import WriteManager
 from vecraft_db.persistence.storage_wrapper import StorageWrapper
 from vecraft_exception_model.exception import WriteConflictException, VectorDimensionMismatchException, \
     TsnePlotGeneratingFailureException

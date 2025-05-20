@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from vecraft_db.engine.tsne_manager import TSNEManager
+from vecraft_db.engine.manager.tsne_manager import TSNEManager
 from vecraft_exception_model.exception import TsnePlotGeneratingFailureException
 
 
@@ -170,7 +170,7 @@ class TestTSNEManager(unittest.TestCase):
                 outfile=self.outfile
             )
 
-    @patch('vecraft_db.engine.tsne_manager.TSNE')
+    @patch('vecraft_db.engine.manager.tsne_manager.TSNE')
     @patch('matplotlib.pyplot.subplots')
     @patch('matplotlib.pyplot.close')
     def test_generate_tsne_method(self, mock_close, mock_subplots, mock_tsne_class):
