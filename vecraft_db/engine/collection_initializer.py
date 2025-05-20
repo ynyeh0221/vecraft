@@ -38,107 +38,128 @@ class CollectionInitializer:
 
     def get_or_init_collection(self, name: str):
         """Initialize a collection with consistency check on startup."""
-        # Fast-path: if already initialized, do nothing
+        # Fast‐path metadata registration / check
         with self._metadata_lock:
-            if name in self._collection_metadata and self._collection_metadata[name].get('initialized'):
+            if self._is_initialized(name):
                 return
-            # Register metadata skeleton on first ever call
-            if name not in self._collection_metadata:
-                logger.info(f"Registering collection {name}")
-                schema = self._catalog.get_schema(name)
-                self._collection_metadata[name] = {
-                    'schema': schema,
-                    'vec_snap': Path(f"{name}.idxsnap"),
-                    'meta_snap': Path(f"{name}.metasnap"),
-                    'doc_snap': Path(f"{name}.docsnap"),
-                    'lsn_meta': Path(f"{name}.lsnmeta"),
-                    'initialized': False
-                }
+            self._ensure_metadata(name)
 
-        # Ensure only one thread does the heavy initialization
+        # Heavy initialization guarded by a per‐collection lock
         init_lock = self._init_locks[name]
         with init_lock:
-            # Double-check under metadata lock after acquiring init_lock
+            # Double‐check under metadata lock
             with self._metadata_lock:
                 if self._collection_metadata[name]['initialized']:
                     return
 
-            logger.info(f"Initializing collection {name} resources")
+            self._initialize_resources(name)
 
-            # Create an initial version
-            initial_version = self._mvcc_manager.create_version(name)
+    def _is_initialized(self, name: str) -> bool:
+        return (
+            name in self._collection_metadata
+            and self._collection_metadata[name].get('initialized', False)
+        )
 
-            # Wire up WAL, storage, and indexes
-            initial_version.wal = self._wal_factory(f"{name}.wal")
-            initial_version.storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
-            schema = self._collection_metadata[name]['schema']
-            initial_version.vec_index = self._vector_index_factory("hnsw", schema.dim)
-            initial_version.vec_dimension = schema.dim
-            initial_version.meta_index = self._metadata_index_factory()
-            initial_version.doc_index = self._doc_index_factory()
+    def _ensure_metadata(self, name: str):
+        if name not in self._collection_metadata:
+            logger.info(f"Registering collection {name}")
+            schema = self._catalog.get_schema(name)
+            self._collection_metadata[name] = {
+                'schema': schema,
+                'vec_snap': Path(f"{name}.idxsnap"),
+                'meta_snap': Path(f"{name}.metasnap"),
+                'doc_snap': Path(f"{name}.docsnap"),
+                'lsn_meta': Path(f"{name}.lsnmeta"),
+                'initialized': False
+            }
 
-            # Consistency check
-            logger.info(f"Verifying storage consistency for collection {name}")
-            orphaned = initial_version.storage.verify_consistency()
-            if orphaned:
-                logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
+    def _initialize_resources(self, name: str):
+        logger.info(f"Initializing collection {name} resources")
 
-            # Load stored visible_lsn from metadata file
-            stored_visible_lsn = 0
-            meta_file = self._collection_metadata[name]['lsn_meta']
-            if meta_file.exists():
-                try:
-                    import json
-                    meta_data = json.loads(meta_file.read_bytes().decode('utf-8'))
-                    stored_visible_lsn = meta_data.get('visible_lsn', 0)
-                    logger.info(f"Loaded visible_lsn={stored_visible_lsn} from metadata snapshot")
-                except Exception as e:
-                    logger.warning(f"Failed to read visible_lsn from metadata snapshot: {e}")
+        # 1) create version and wire up
+        version = self._mvcc_manager.create_version(name)
+        self._wire_up_components(version, name)
 
-            # Load snapshots or rebuild from storage
-            if self._load_snapshots(name, initial_version):
-                logger.info(f"Loaded collection {name} from snapshots")
-            else:
-                logger.info(f"No snapshots for {name}, performing full rebuild")
-                start_time = time.time()
-                count = 0
-                for rid in initial_version.storage.get_all_record_locations().keys():
-                    pkt = self._get_internal(initial_version, rid)
-                    if pkt:
-                        initial_version.vec_index.add(pkt.to_vector_packet())
-                        initial_version.meta_index.add(pkt.to_metadata_packet())
-                        initial_version.doc_index.add(pkt.to_document_packet())
-                        count += 1
-                logger.info(f"Rebuilt {count} records in {time.time() - start_time:.2f}s")
+        # 2) run consistency and load/rebuild
+        self._consistency_check(version, name)
+        stored_lsn = self._load_visible_lsn(name)
+        if self._load_snapshots(name, version):
+            logger.info(f"Loaded collection {name} from snapshots")
+        else:
+            self._full_rebuild(version)
 
-            # WAL replay - now replay by LSN order and track the max LSN
-            logger.info(f"Replaying WAL for collection {name}")
+        # 3) replay WAL beyond stored LSN
+        max_lsn = self._replay_wal(version, stored_lsn)
+        self._mvcc_manager.visible_lsn[name] = max(stored_lsn, max_lsn)
 
-            def _apply_if_committed(entry: dict):
-                phase = entry.get("_phase")
-                lsn = entry.get("_lsn", 0)  # Get LSN from entry
+        # 4) commit and mark done
+        self._mvcc_manager.commit_version(name, version)
+        with self._metadata_lock:
+            self._collection_metadata[name]['initialized'] = True
 
-                # Skip entries with LSN <= stored visible_lsn (already in snapshots)
-                if lsn <= stored_visible_lsn:
-                    logger.debug(f"Skipping WAL entry with LSN {lsn} <= visible_lsn {stored_visible_lsn}")
-                    return
+        logger.info(f"Collection {name} initialized successfully")
 
-                if phase == "prepare":
-                    self._replay_entry(entry, initial_version)
-                    # Update max_lsn
-                    initial_version.max_lsn = max(initial_version.max_lsn, lsn)
+    def _wire_up_components(self, version, name: str):
+        version.wal = self._wal_factory(f"{name}.wal")
+        version.storage = self._storage_factory(f"{name}_storage", f"{name}_location_index")
+        dim = self._collection_metadata[name]['schema'].dim
+        version.vec_index = self._vector_index_factory("hnsw", dim)
+        version.vec_dimension = dim
+        version.meta_index = self._metadata_index_factory()
+        version.doc_index = self._doc_index_factory()
 
-            replay_count = initial_version.wal.replay(_apply_if_committed)
-            logger.info(f"Replayed {replay_count} WAL entries, max_lsn={initial_version.max_lsn}")
+    @staticmethod
+    def _consistency_check(version, name: str):
+        logger.info(f"Verifying storage consistency for collection {name}")
+        orphaned = version.storage.verify_consistency()
+        if orphaned:
+            logger.warning(f"Found {len(orphaned)} orphaned records in collection {name}")
 
-            # Set visible_lsn to max(stored_visible_lsn, max_lsn) after replay
-            self._mvcc_manager.visible_lsn[name] = max(stored_visible_lsn, initial_version.max_lsn)
+    def _load_visible_lsn(self, name: str) -> int:
+        meta_file = self._collection_metadata[name]['lsn_meta']
+        if not meta_file.exists():
+            return 0
 
-            # Commit the initial version
-            self._mvcc_manager.commit_version(name, initial_version)
+        try:
+            import json
+            data = json.loads(meta_file.read_bytes())
+            lsn = data.get('visible_lsn', 0)
+            logger.info(f"Loaded visible_lsn={lsn} from metadata snapshot")
+            return lsn
+        except Exception as e:
+            logger.warning(f"Failed to read visible_lsn: {e}")
+            return 0
 
-            # Mark initialization complete
-            with self._metadata_lock:
-                self._collection_metadata[name]['initialized'] = True
+    def _full_rebuild(self, version):
+        logger.info("No snapshots, performing full rebuild")
+        start = time.time()
+        count = 0
+        for rid in version.storage.get_all_record_locations().keys():
+            pkt = self._get_internal(version, rid)
+            if not pkt:
+                continue
+            version.vec_index.add(pkt.to_vector_packet())
+            version.meta_index.add(pkt.to_metadata_packet())
+            version.doc_index.add(pkt.to_document_packet())
+            count += 1
+        elapsed = time.time() - start
+        logger.info(f"Rebuilt {count} records in {elapsed:.2f}s")
 
-            logger.info(f"Collection {name} initialized successfully")
+    def _replay_wal(self, version, stored_visible_lsn: int) -> int:
+        logger.info(f"Replaying WAL for collection {version.name}")
+        max_lsn = 0
+
+        def _apply(entry: dict):
+            lsn = entry.get('_lsn', 0)
+            if lsn <= stored_visible_lsn:
+                logger.debug(f"Skipping LSN {lsn} <= {stored_visible_lsn}")
+                return
+            if entry.get('_phase') == 'prepare':
+                self._replay_entry(entry, version)
+                nonlocal max_lsn
+                max_lsn = max(max_lsn, lsn)
+
+        count = version.wal.replay(_apply)
+        logger.info(f"Replayed {count} WAL entries, max_lsn={max_lsn}")
+        version.max_lsn = max_lsn
+        return max_lsn
