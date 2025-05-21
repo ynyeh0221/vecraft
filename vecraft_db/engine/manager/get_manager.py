@@ -5,11 +5,47 @@ from vecraft_exception_model.exception import ChecksumValidationFailureError
 
 
 class GetManager:
+    """Manager for retrieving records from storage with validation.
+
+    This class provides a method to retrieve records from storage, performing
+    validation checks to ensure data integrity. It handles cases where records
+    don't exist and validates that retrieved records match the requested IDs.
+
+    Attributes:
+        _logger: Logger instance for recording diagnostic information.
+    """
     def __init__(self, logger):
         self._logger = logger
 
     def get(self, version: CollectionVersion, record_id: str) -> DataPacket:
-        """Get a record from storage with validation"""
+        """Retrieve a record from storage with validation.
+
+        This method retrieves a record from storage based on its ID and performs
+        validation to ensure data integrity. If the record doesn't exist or can't
+        be read, a nonexistent DataPacket is returned.
+
+        The method performs these steps:
+        1. Get the record location from storage
+        2. If location doesn't exist, return a nonexistent DataPacket
+        3. Read the data from storage using location information
+        4. If data can't be read, return a nonexistent DataPacket
+        5. Convert the binary data to a DataPacket
+        6. Verify that the returned record ID matches the requested record ID
+
+        Args:
+            version: CollectionVersion object that contains storage and other
+                    collection-related components.
+            record_id: String identifier of the record to retrieve.
+
+        Returns:
+            DataPacket: The retrieved and validated record data.
+                       If the record doesn't exist, returns a nonexistent DataPacket.
+
+        Raises:
+            ChecksumValidationFailureError: If the record ID in the retrieved data
+                                           doesn't match the requested record ID,
+                                           indicating potential data corruption.
+        """
         loc = version.storage.get_record_location(record_id)
         if not loc:
             return DataPacket.create_nonexistent(record_id=record_id)

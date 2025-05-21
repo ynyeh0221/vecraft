@@ -6,6 +6,41 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 class CollectionInitializer:
+    """A utility class that handles collection initialization with consistency checks.
+
+    This class manages the initialization process for collections in a database system.
+    It ensures thread-safe initialization, handles metadata registration, performs
+    consistency checks, and rebuilds collections from snapshots or WAL entries when needed.
+
+    The initialization process includes:
+    1. Registering collection metadata if not already registered
+    2. Creating a new version via MVCC manager
+    3. Setting up storage, WAL, and various indexes
+    4. Performing consistency checks on the collection storage
+    5. Loading from snapshots if available, or performing a full rebuild
+    6. Replaying the write-ahead log (WAL) beyond the stored LSN
+    7. Committing the version and marking the collection as initialized
+
+    Attributes:
+        _metadata_lock: Lock for thread-safe access to collection metadata.
+        _init_locks: Dict of per-collection locks to prevent concurrent initialization.
+        _collection_metadata: Dict storing metadata for all collections.
+        _catalog: Catalog service that provides collection schemas.
+        _mvcc_manager: Manager for multi-version concurrency control.
+        _wal_factory: Factory function for creating write-ahead logs.
+        _storage_factory: Factory function for creating storage components.
+        _vector_index_factory: Factory function for creating vector indexes.
+        _metadata_index_factory: Factory function for creating metadata indexes.
+        _doc_index_factory: Factory function for creating document indexes.
+        _load_snapshots: Function to load collection data from snapshots.
+        _get_internal: Function to retrieve internal record data.
+        _replay_entry: Function to replay a WAL entry.
+
+    Thread Safety:
+        The class uses locks to ensure thread-safe initialization of collections.
+        A global metadata lock protects access to collection metadata,
+        while per-collection locks prevent concurrent initialization of the same collection.
+    """
     def __init__(
         self,
         metadata_lock,

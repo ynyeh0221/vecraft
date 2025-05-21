@@ -4,12 +4,50 @@ from vecraft_exception_model.exception import StorageFailureException
 
 
 class WriteManager:
+    """Manages write operations (inserts and deletes) to both storage and indexes.
+
+    This class provides methods to handle the storage and indexing aspects of write
+    operations separately, with built-in rollback capabilities for error recovery.
+    Operations are split into storage and index components to enable fine-grained
+    control and transaction-like behavior.
+
+    The manager supports:
+    1. Two-phase inserts (storage then indexes)
+    2. Two-phase deletes (storage then indexes)
+    3. Automatic rollback on failures
+    4. Preimage capture for update operations
+
+    Attributes:
+        _logger: Logger instance for recording diagnostic information.
+        _get_record: Function to retrieve a record by ID from storage.
+    """
     def __init__(self, logger, get_record_func):
         self._logger = logger
         self._get_record = get_record_func
 
     def storage_insert(self, version, data_packet):
-        """Perform only storage part of insert, with storage rollback."""
+        """Perform only the storage part of an insert operation with rollback capability.
+
+        This method handles writing data to storage and manages rollback in case of
+        failures. It captures the preimage (previous state) of the record if it exists,
+        which is returned to allow for index updates.
+
+        Args:
+            version: CollectionVersion object containing storage.
+            data_packet: DataPacket object containing the record data to insert.
+
+        Returns:
+            DataPacket: The preimage (previous state) of the record, or a nonexistent
+                       DataPacket if the record is new.
+
+        Raises:
+            StorageFailureException: If storage operations fail and cannot be rolled back.
+            Exception: Any exception that occurs during storage operations.
+
+        Note:
+            If an exception occurs during storage operations, this method attempts to
+            roll back the storage state before re-raising the exception.
+        """
         preimage, old_loc = self._prepare_preimage(version, data_packet)
         new_loc = None
         try:
@@ -31,7 +69,28 @@ class WriteManager:
         return preimage, old_loc
 
     def index_insert(self, version, data_packet, preimage=None):
-        """Perform only index part of insert, with index rollback."""
+        """Perform only the index part of an insert operation with rollback capability.
+
+        This method handles updating all indexes (metadata, document, vector) and manages
+        rollback in case of failures. It uses different operations based on whether
+        the record already exists.
+
+        Args:
+            version: CollectionVersion object containing the indexes.
+            data_packet: DataPacket object containing the record data to index.
+            preimage: Optional DataPacket representing the previous state of the record.
+                     If not provided, it will be retrieved using the get_record function.
+
+        Raises:
+            Exception: Any exception that occurs during index operations.
+
+        Note:
+            - For new records, add operations are used on all indexes.
+            - For existing records, update operations are used for metadata and document
+              indexes, while the vector index uses delete-then-add for safety.
+            - If an exception occurs during indexing, this method attempts to roll back
+              the index state before re-raising the exception.
+        """
         record_id = data_packet.record_id
         if preimage is None:
             try:
@@ -115,9 +174,26 @@ class WriteManager:
                 self._logger.debug(f"Failed to rollback {idx_name}")
 
     def storage_delete(self, version, data_packet):
-        """
-        Perform only the storage portion of a deleted (with rollback on failure).
-        Returns the preimage so that the index step can use it.
+        """Perform only the storage part of a delete operation with rollback capability.
+
+        This method handles removing data from storage and manages rollback in case of
+        failures. It captures the preimage (state before deletion) of the record,
+        which is returned to allow for index updates.
+
+        Args:
+            version: CollectionVersion object containing storage.
+            data_packet: DataPacket object containing the record ID to delete.
+
+        Returns:
+            DataPacket: The preimage (state before deletion) of the record, or a nonexistent
+                       DataPacket if the record didn't exist.
+
+        Raises:
+            StorageFailureException: If storage operations fail and cannot be rolled back.
+
+        Note:
+            If an exception occurs during storage operations, this method attempts to
+            roll back the storage state before re-raising the exception.
         """
         record_id = data_packet.record_id
         self._logger.debug(f"Applying storage delete for record {record_id}")
@@ -154,9 +230,25 @@ class WriteManager:
             raise StorageFailureException(f"Storage removal failed for record {record_id}", e)
 
     def index_delete(self, version, data_packet, preimage):
-        """
-        Perform only the metadata/doc/vector index removals (with rollback on failure).
-        Expects the preimage from _storage_delete.
+        """Perform only the index part of a delete operation with rollback capability.
+
+        This method handles removing the record from all indexes (metadata, document, vector)
+        and manages rollback in case of failures.
+
+        Args:
+            version: CollectionVersion object containing the indexes.
+            data_packet: DataPacket object containing the record ID to delete.
+            preimage: DataPacket representing the state of the record before deletion,
+                     typically obtained from storage_delete().
+
+        Raises:
+            Exception: Any exception that occurs during index operations.
+
+        Note:
+            - If the preimage indicates the record doesn't exist, this method does nothing.
+            - Operations are executed in order: metadata index, document index, vector index.
+            - If an exception occurs during indexing, this method attempts to roll back
+              the executed operations in reverse order before re-raising the exception.
         """
         record_id = data_packet.record_id
         self._logger.debug(f"Applying index delete for record {record_id}")

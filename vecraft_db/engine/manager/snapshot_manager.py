@@ -6,13 +6,42 @@ from vecraft_db.core.lock.mvcc_manager import CollectionVersion
 
 
 class SnapshotManager:
+    """Manages the persistence of collection indexes through snapshots.
+
+    This class provides functionality to save and load snapshots of collection indexes
+    (vector, metadata, and document indexes) to and from the disk. It supports atomic
+    operations through temporary files to ensure data integrity during persistence.
+
+    The manager handles three types of index snapshots:
+    1. Vector index snapshots (.idxsnap)
+    2. Metadata index snapshots (.metasnap)
+    3. Document index snapshots (.docsnap)
+    4. LSN (Log Sequence Number) metadata (.lsnmeta)
+
+    Attributes:
+        _collection_metadata: Dictionary containing metadata for all collections.
+        _mvcc_manager: Manager for multi-version concurrency control.
+        _logger: Logger instance for recording diagnostic information.
+    """
     def __init__(self, collection_metadata, mvcc_manager, logger=None):
         self._collection_metadata = collection_metadata
         self._mvcc_manager = mvcc_manager
         self._logger = logger or logging.getLogger(__name__)
 
     def save_snapshots(self, name: str, version: CollectionVersion):
-        """Save snapshots to main files atomically via tempsnaps."""
+        """Save snapshots for a collection to disk atomically.
+
+        This method saves the vector, metadata, and document indexes to disk using
+        temporary files to ensure atomicity. It first writes to temporary files and
+        then atomically replaces the main snapshot files.
+
+        Args:
+            name: Name of the collection to save snapshots for.
+            version: CollectionVersion object containing the indexes to snapshot.
+
+        Note:
+            This operation is atomic - either all snapshots are updated or none.
+        """
         self._logger.info(f"Saving snapshots for collection {name}")
         start_time = time.time()
 
@@ -22,7 +51,23 @@ class SnapshotManager:
         self._logger.info(f"Successfully saved all snapshots for collection {name} in {time.time() - start_time:.2f}s")
 
     def load_snapshots(self, name: str, version: CollectionVersion) -> bool:
-        """Load vector, metadata, and doc snapshots for the given collection, if they exist."""
+        """Load snapshots for a collection from disk.
+
+        Attempts to load vector, metadata, and document index snapshots for the
+        given collection. All three snapshots must exist for loading to succeed.
+
+        Args:
+            name: Name of the collection to load snapshots for.
+            version: CollectionVersion object where the loaded indexes will be stored.
+
+        Returns:
+            bool: True if all snapshots were successfully loaded, False if any snapshot
+                  files are missing.
+
+        Note:
+            This method does not raise exceptions for missing snapshot files but
+            returns False instead.
+        """
         self._logger.info(f"Attempting to load snapshots for collection {name}")
         metadata = self._collection_metadata[name]
         vec_snap, meta_snap, doc_snap = metadata['vec_snap'], metadata['meta_snap'], metadata['doc_snap']
@@ -52,14 +97,28 @@ class SnapshotManager:
         return False
 
     def flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
-        """
-        Flush in-memory indexes to files.
+        """Flush in-memory indexes to snapshot files.
+
+        Serializes the vector, metadata, and document indexes to disk, along with
+        LSN metadata. Can write directly to the main snapshot files or use temporary
+        files for atomic operations.
 
         Args:
-            name: Collection name
-            version: Collection version to flush
-            to_temp_files: If True, save to .tempsnap files and then atomically replace
-                           the main snapshots; otherwise write directly to the main files.
+            name: Name of the collection to flush indexes for.
+            version: CollectionVersion object containing the indexes to flush.
+            to_temp_files: If True, save to temporary files and then atomically replace
+                          the main snapshots; otherwise write directly to the main files.
+                          Defaults to True.
+
+        Raises:
+            Exception: Any exception that occurs during serialization or file operations.
+                      If using temporary files, all created temporary files are cleaned up
+                      on error.
+
+        Note:
+            When using temporary files (to_temp_files=True), this operation is atomic -
+            either all snapshots are updated or none. Each file is also fsync'ed to ensure
+            durability.
         """
         metadata = self._collection_metadata[name]
 
