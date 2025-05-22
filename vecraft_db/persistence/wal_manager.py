@@ -13,7 +13,7 @@ from vecraft_exception_model.exception import InvalidDataException
 
 class WALManager(WALInterface):
     """
-    Write-Ahead Logging manager with two-phase commit support.
+    Write-Ahead Logging manager with two-phase commit support and compaction.
 
     This class implements a WAL mechanism with two-phase commit protocol to ensure
     data durability and crash recovery. It provides multiprocess safety through
@@ -25,15 +25,22 @@ class WALManager(WALInterface):
 
     Only data with commit markers will be replayed during recovery.
 
+    Compaction removes WAL entries that have been safely persisted to snapshots,
+    based on the visible_lsn watermark.
+
     Attributes:
         _file (Path): Path to the WAL file
         _last_lsn (int): The last used Log Sequence Number
+        _compaction_lock (threading.RLock): Lock for compaction operations
+        _compaction_threshold (int): Size threshold for triggering compaction
     """
 
-    def __init__(self, wal_path: Path):
+    def __init__(self, wal_path: Path, compaction_threshold: int = 1024 * 1024):  # 1MB default
         self._file = wal_path
         self._last_lsn = 0
         self._lsn_lock = threading.RLock()
+        self._compaction_lock = threading.RLock()
+        self._compaction_threshold = compaction_threshold
         # Add a metadata file path for LSN persistence
         self._lsn_meta_file = wal_path.with_name(f"{wal_path.name}.lsn.meta")
         # Initialize LSN from a meta file if it exists
@@ -70,6 +77,167 @@ class WALManager(WALInterface):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         return lsn
+
+    def compact(self, visible_lsn: int) -> Tuple[int, int]:
+        """
+        Compact the WAL by removing entries with LSN <= visible_lsn.
+
+        This method safely removes WAL entries that have been persisted to snapshots.
+        It uses a similar approach to replay() - rename the file during processing
+        to prevent new writes, then atomically replace it with the compacted version.
+
+        Args:
+            visible_lsn (int): The highest LSN that has been safely persisted to snapshots.
+                              Entries with LSN <= this value will be removed.
+
+        Returns:
+            Tuple[int, int]: (entries_before, entries_after) for compaction statistics
+
+        Raises:
+            Exception: If compaction fails, the original WAL file is restored
+        """
+        with self._compaction_lock:
+            if not self._file.exists():
+                return (0, 0)
+
+            # Check if compaction is worthwhile
+            file_size = self._file.stat().st_size
+            if file_size < self._compaction_threshold:
+                return (0, 0)  # Skip compaction for small files
+
+            return self._perform_compaction(visible_lsn)
+
+    def _perform_compaction(self, visible_lsn: int) -> Tuple[int, int]:
+        """
+        Perform the actual compaction operation.
+
+        Uses the rename pattern to prevent concurrent writes during compaction,
+        similar to the replay() method.
+        """
+        # Rename WAL file to prevent new writes during compaction
+        compact_file = self._file.with_suffix(".compact")
+        self._file.rename(compact_file)
+
+        try:
+            entries_before, entries_after = self._compact_entries(compact_file, visible_lsn)
+
+            # If no entries remain, just delete the compact file
+            if entries_after == 0:
+                compact_file.unlink()
+            else:
+                # Rename the compacted file back to original WAL name
+                compact_file.rename(self._file)
+
+            return (entries_before, entries_after)
+
+        except Exception:
+            # Restore original file on failure
+            compact_file.rename(self._file)
+            raise
+
+    def _compact_entries(self, compact_file: Path, visible_lsn: int) -> Tuple[int, int]:
+        """
+        Read entries from the compact file and write back only those with LSN > visible_lsn.
+        """
+        entries_to_keep = []
+        entries_before = 0
+
+        # Read all entries and filter
+        with open(compact_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                entries_before += 1
+                entry = self._parse_line(line)
+                entry_lsn = entry.get("_lsn", 0)
+
+                # Keep entries that are newer than visible_lsn
+                if entry_lsn > visible_lsn:
+                    entries_to_keep.append(line.rstrip('\n'))
+
+        entries_after = len(entries_to_keep)
+
+        # Write compacted entries back to file (only if there are entries to keep)
+        if entries_after > 0:
+            with open(compact_file, 'w', encoding='utf-8') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    for entry_line in entries_to_keep:
+                        f.write(entry_line)
+                        f.write("\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        return (entries_before, entries_after)
+
+    def should_compact(self, visible_lsn: int) -> bool:
+        """
+        Check if WAL compaction should be triggered.
+
+        Args:
+            visible_lsn (int): Current visible LSN from snapshots
+
+        Returns:
+            bool: True if compaction is recommended
+        """
+        if not self._file.exists():
+            return False
+
+        file_size = self._file.stat().st_size
+        if file_size < self._compaction_threshold:
+            return False
+
+        # Sample first few entries to estimate compaction benefit
+        try:
+            with open(self._file, 'r', encoding='utf-8') as f:
+                sample_lines = []
+                for i, line in enumerate(f):
+                    if i >= 10:  # Sample first 10 entries
+                        break
+                    sample_lines.append(line)
+
+                # Count how many of the sampled entries are old
+                old_entries = 0
+                for line in sample_lines:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("_lsn", 0) <= visible_lsn:
+                            old_entries += 1
+                    except json.JSONDecodeError:
+                        continue
+
+                # Recommend compaction if >50% of sampled entries are old
+                return old_entries > len(sample_lines) * 0.5
+
+        except (IOError, OSError):
+            return False
+
+    def get_compaction_stats(self) -> Dict[str, any]:
+        """
+        Get statistics about the current WAL file for compaction decisions.
+
+        Returns:
+            Dict with keys: file_size, entry_count, estimated_old_entries
+        """
+        if not self._file.exists():
+            return {"file_size": 0, "entry_count": 0, "estimated_old_entries": 0}
+
+        try:
+            file_size = self._file.stat().st_size
+            entry_count = 0
+
+            with open(self._file, 'r', encoding='utf-8') as f:
+                for _ in f:
+                    entry_count += 1
+
+            return {
+                "file_size": file_size,
+                "entry_count": entry_count,
+                "needs_compaction": file_size > self._compaction_threshold
+            }
+
+        except (IOError, OSError):
+            return {"file_size": 0, "entry_count": 0, "estimated_old_entries": 0}
 
     def _read_lsn_from_meta(self) -> Optional[int]:
         """Read the last LSN (Log Sequence Number) from the metadata file.

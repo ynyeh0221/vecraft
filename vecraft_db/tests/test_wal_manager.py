@@ -297,6 +297,151 @@ class TestWALManager(unittest.TestCase):
         # Handler should not have been called
         mock_handler.assert_not_called()
 
+    @patch('fcntl.flock')
+    def test_compact_basic(self, mock_flock):
+        self.wal_manager._compaction_threshold = 1
+        """Test basic compaction functionality."""
+        # Create test entries with different LSNs
+        test_entries = []
+        for i in range(5):
+            entry = DataPacket.create_record(
+                record_id=f"user:{i}",
+                original_data={"name": f"User {i}"},
+                vector=np.array([i, i, i], dtype=np.float32),
+                metadata={}
+            )
+            test_entries.append(entry)
+
+        # Append all entries
+        lsns = []
+        for entry in test_entries:
+            lsn = self.wal_manager.append(entry)
+            lsns.append(lsn)
+
+        # Verify file has entries
+        with open(self.wal_path, 'r', encoding='utf-8') as f:
+            lines_before = f.readlines()
+        self.assertEqual(len(lines_before), 5)
+
+        # Compact with visible_lsn = 3 (should remove first 3 entries)
+        visible_lsn = lsns[2]  # LSN of third entry
+        entries_before, entries_after = self.wal_manager.compact(visible_lsn)
+
+        self.assertEqual(entries_before, 5)
+        self.assertEqual(entries_after, 2)
+
+        # Verify remaining entries
+        with open(self.wal_path, 'r', encoding='utf-8') as f:
+            lines_after = f.readlines()
+        self.assertEqual(len(lines_after), 2)
+
+        # Check that remaining entries have LSN > visible_lsn
+        for line in lines_after:
+            entry = json.loads(line)
+            self.assertGreater(entry["_lsn"], visible_lsn)
+
+    @patch('fcntl.flock')
+    def test_compact_all_entries_old(self, mock_flock):
+        self.wal_manager._compaction_threshold = 1
+        """Test compaction when all entries are old."""
+        # Create test entries
+        test_entries = []
+        for i in range(3):
+            entry = DataPacket.create_record(
+                record_id=f"user:{i}",
+                original_data={"name": f"User {i}"},
+                vector=np.array([i, i, i], dtype=np.float32),
+                metadata={}
+            )
+            test_entries.append(entry)
+
+        # Append all entries
+        lsns = []
+        for entry in test_entries:
+            lsn = self.wal_manager.append(entry)
+            lsns.append(lsn)
+
+        # Compact with visible_lsn higher than all entries
+        visible_lsn = max(lsns) + 10
+        entries_before, entries_after = self.wal_manager.compact(visible_lsn)
+
+        self.assertEqual(entries_before, 3)
+        self.assertEqual(entries_after, 0)
+
+        # Verify WAL file is deleted when no entries remain
+        self.assertFalse(self.wal_path.exists())
+
+    @patch('fcntl.flock')
+    def test_compact_no_entries_to_remove(self, mock_flock):
+        self.wal_manager._compaction_threshold = 1
+        """Test compaction when no entries need to be removed."""
+        # Create test entries
+        test_entries = []
+        for i in range(3):
+            entry = DataPacket.create_record(
+                record_id=f"user:{i}",
+                original_data={"name": f"User {i}"},
+                vector=np.array([i, i, i], dtype=np.float32),
+                metadata={}
+            )
+            test_entries.append(entry)
+
+        # Append all entries
+        lsns = []
+        for entry in test_entries:
+            lsn = self.wal_manager.append(entry)
+            lsns.append(lsn)
+
+        # Compact with visible_lsn = 0 (should remove no entries)
+        visible_lsn = 0
+        entries_before, entries_after = self.wal_manager.compact(visible_lsn)
+
+        self.assertEqual(entries_before, 3)
+        self.assertEqual(entries_after, 3)
+
+        # Verify all entries remain
+        with open(self.wal_path, 'r', encoding='utf-8') as f:
+            lines_after = f.readlines()
+        self.assertEqual(len(lines_after), 3)
+
+    @patch('fcntl.flock')
+    def test_compact_preserves_lsn_order(self, mock_flock):
+        self.wal_manager._compaction_threshold = 1
+        """Test that compaction preserves LSN ordering."""
+        # Create entries with non-sequential record IDs to test LSN ordering
+        test_data = [
+            ("user:c", {"name": "Charlie"}),
+            ("user:a", {"name": "Alice"}),
+            ("user:b", {"name": "Bob"}),
+            ("user:d", {"name": "David"}),
+        ]
+
+        lsns = []
+        for record_id, data in test_data:
+            entry = DataPacket.create_record(
+                record_id=record_id,
+                original_data=data,
+                vector=np.array([1, 2, 3], dtype=np.float32),
+                metadata={}
+            )
+            lsn = self.wal_manager.append(entry)
+            lsns.append(lsn)
+
+        # Compact to remove first entry only (use LSN of first entry as visible_lsn)
+        visible_lsn = lsns[0]
+        self.wal_manager.compact(visible_lsn)
+
+        # Verify remaining entries are in LSN order
+        with open(self.wal_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        prev_lsn = visible_lsn  # Start from visible_lsn
+        for line in lines:
+            entry = json.loads(line)
+            current_lsn = entry["_lsn"]
+            self.assertGreater(current_lsn, prev_lsn)
+            prev_lsn = current_lsn
+
 
 if __name__ == '__main__':
     unittest.main()
