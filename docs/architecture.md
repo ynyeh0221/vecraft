@@ -2,7 +2,7 @@
 
 *Revision: 2025‑05‑22*
 
----
+
 
 ## 1  Goals & Design Tenets
 
@@ -12,7 +12,7 @@
 4. **Tiny operational footprint** – Single‑process, embeddable library; optional REST server wraps it.
 5. **Observable & debuggable** – Prometheus metrics, structured logging, self‑verifying checksums.
 
----
+
 
 ## 2  Component Diagram
 
@@ -39,7 +39,7 @@
               Version objects   Durable log   HNSW + Inverted
 ```
 
----
+
 
 ## 3  Write Path (Insert / Delete)
 
@@ -72,7 +72,7 @@ sequenceDiagram
 * **Two‑phase commit** ensures durability before visibility.
 * **Async index thread** processes the WAL queue and calls `promote_version()` only after a successful index build.
 
----
+
 
 ## 4  Read Path
 
@@ -82,7 +82,7 @@ sequenceDiagram
 
 Reads never block writers and vice versa.
 
----
+
 
 ## 5  MVCC Internals
 
@@ -111,7 +111,7 @@ create_version() → begin_tx → commit_version(visible=false)
 
 Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detection = True`.
 
----
+
 
 ## 6  Durability & Recovery
 
@@ -119,7 +119,7 @@ Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detecti
 2. On startup, `WALManager.replay()` hands committed entries to `CollectionService._replay_entry()`, which rebuilds **in‑memory indexes** only – storage is already durable.
 3. After replay, snapshot files (`snapshots/`) are loaded if newer than WAL contents to skip rebuilds.
 
----
+
 
 ## 7  Storage Engine Layout
 
@@ -127,7 +127,7 @@ Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detecti
 * `SQLiteRecordLocationIndex` maps `record_id → (offset, size)` and supports atomic updates via a single transaction.
 * Consistency scanner at startup vacuums orphans, mismatches, and uncommitted garbage.
 
----
+
 
 ## 8  Index Subsystem
 
@@ -146,14 +146,14 @@ Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detecti
 
 Both are in‑process and serializable via `pickle` for snapshots.
 
----
+
 
 ## 9  Async Index Thread – Failure Handling
 
 * Any exception during `index_insert` / `index_delete` triggers a **fatal log** + immediate process exit (`_shutdown_immediately()`).
 * On next start, WAL replay + snapshot restore guarantee data consistency.
 
----
+
 
 ## 10  Observability
 
@@ -161,7 +161,7 @@ Both are in‑process and serializable via `pickle` for snapshots.
 * **Structured logs**: JSON lines with `log_id`, `collection`, `version`, `lsn` fields.
 * **Fatal path**: critical errors are written to `fatal.log` before `sys.exit(1)`.
 
----
+
 
 ## 11  Extensibility Points
 
@@ -171,7 +171,7 @@ Both are in‑process and serializable via `pickle` for snapshots.
 
 Register factories in `VectorDB` constructor.
 
----
+
 
 ## 12  Threading Model
 
@@ -183,7 +183,7 @@ Register factories in `VectorDB` constructor.
 
 Locks are minimized: `ReentrantRWLock` guards collection‑level critical sections; most reads are lock‑free thanks to immutable versions.
 
----
+
 
 ## 13  Deployment Options
 
@@ -191,7 +191,7 @@ Locks are minimized: `ReentrantRWLock` guards collection‑level critical sectio
 * **Docker** – `docker run your-org/vecraftdb` exposes REST + metrics.
 * **Kubernetes** – StatefulSet with PVC; liveness ➜ `/healthz`, readiness ➜ `/readyz`.
 
----
+
 
 ## 14  Future Work
 
@@ -200,4 +200,3 @@ Locks are minimized: `ReentrantRWLock` guards collection‑level critical sectio
 * Delta‑based snapshot compression.
 * Logical CDC stream for near‑real‑time analytics.
 
----
