@@ -43,7 +43,7 @@
 
 ## 3  Write Path (Insert / Delete)
 
-```mermaid
+```
 sequenceDiagram
     participant C as Client
     participant CS as CollectionService
