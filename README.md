@@ -40,11 +40,11 @@ from vecraft_data_model import DataPacket, CollectionSchema, VectorPacket
 
 client = VecraftClient(root="./vecraft-data")
 
-# 1️⃣  Create a collection
+# 1️)  Create a collection
 schema = CollectionSchema(name="images", dim=128, vector_type="float")
 client.create_collection(schema)
 
-# 2️⃣  Insert a vector
+# 2️)  Insert a vector
 pkt = DataPacket(
     record_id="img-001",
     vector=VectorPacket.from_numpy(np.random.rand(128)),
@@ -52,7 +52,7 @@ pkt = DataPacket(
 )
 client.insert("images", pkt)
 
-# 3️⃣  Search
+# 3️)  Search
 query = QueryPacket(query_vector=np.random.rand(128), k=5)
 results = client.search("images", query)
 for r in results:
