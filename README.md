@@ -148,7 +148,7 @@ The test‑suite spins up an in‑memory database, covering MVCC edge‑cases an
 
 
 
-## 📄 License
+## License
 
 VecraftDB is released under the [MIT license](https://github.com/ynyeh0221/vecraft-vector-database/blob/main/LICENSE).
 
