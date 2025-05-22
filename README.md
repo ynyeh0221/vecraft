@@ -4,7 +4,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/ynyeh0221/vecraft/badge.svg?branch=main)](https://coveralls.io/github/ynyeh0221/vecraft?branch=main)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ynyeh0221/vecraft-vector-database)
 
-VecraftDB is an embeddable, **MVCC‑powered** vector database that brings fully transactional semantics, rich filtering, and blazing‑fast similarity search into a single Python package.
+VecraftDB is an embeddable, MVCC‑powered vector database that brings fully transactional semantics, rich filtering, and blazing‑fast similarity search into a single Python package.
 
 
 
