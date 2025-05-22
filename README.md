@@ -6,7 +6,7 @@
 
 VecraftDB is an embeddable, **MVCC‑powered** vector database that brings fully transactional semantics, rich filtering, and blazing‑fast similarity search into a single Python package.
 
----
+
 
 ## ✨ Key Features
 
@@ -20,7 +20,7 @@ VecraftDB is an embeddable, **MVCC‑powered** vector database that brings fully
 | **Analytics**     | Built‑in t‑SNE plot generator for quick embedding exploration                    |
 | **Ops**           | FastAPI REST server • Prometheus metrics • Kubernetes‑aware client               |
 
----
+
 
 ## 🚀 Quickstart
 
@@ -72,7 +72,7 @@ curl -X POST "http://localhost:8000/collections/images/search" -H "content-type:
 
 See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 
----
+
 
 ## 🏗️ Architecture Overview
 
@@ -100,7 +100,6 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 
 For an in‑depth journey, check the [architecture docs](./docs/architecture.md).
 
----
 
 ## 🔑 Concepts
 
@@ -116,7 +115,7 @@ Contains the query vector, `k`, and optional `where` / `where_document` filters.
 
 Defines dimension (`dim`), vector type, and checksum algorithm at collection creation.
 
----
+
 
 ## ⚙️ Configuration
 
@@ -129,7 +128,7 @@ VecraftDB is **zero‑config** by default, but you can tune:
 | `EFRuntime` via `HNSW.set_ef()` | 50               | Search depth         |
 | `VCRAFT_ROOT`                   | `./vecraft-data` | Storage root         |
 
----
+
 
 ## 📈 Observability
 
@@ -137,7 +136,7 @@ VecraftDB is **zero‑config** by default, but you can tune:
 * Built‑in counters/histograms for latency & throughput.
 * Health (`/healthz`) & readiness (`/readyz`) endpoints.
 
----
+
 
 ## 🧪 Running Tests
 
@@ -147,10 +146,9 @@ pytest -q
 
 The test‑suite spins up an in‑memory database, covering MVCC edge‑cases and WAL recovery.
 
----
+
 
 ## 📄 License
 
 VecraftDB is released under the [MIT license](https://github.com/ynyeh0221/vecraft-vector-database/blob/main/LICENSE).
 
----
