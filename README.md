@@ -8,7 +8,7 @@ VecraftDB is an embeddable, MVCC‑powered vector database that brings fully tra
 
 
 
-## ✨ Key Features
+## Key Features
 
 | Category          | Highlights                                                                       |
 | ----------------- | -------------------------------------------------------------------------------- |
@@ -22,7 +22,7 @@ VecraftDB is an embeddable, MVCC‑powered vector database that brings fully tra
 
 
 
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
 # 1. Install (Python ≥3.10)
@@ -74,7 +74,7 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 
 
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
 ┌────────────┐   WAL   ┌──────────────┐      ┌────────────┐
@@ -101,7 +101,7 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 For an in‑depth journey, check the [architecture docs](./docs/architecture.md).
 
 
-## 🔑 Concepts
+## Concepts
 
 ### DataPacket
 
@@ -117,7 +117,7 @@ Defines dimension (`dim`), vector type, and checksum algorithm at collection cre
 
 
 
-## ⚙️ Configuration
+## Configuration
 
 VecraftDB is **zero‑config** by default, but you can tune:
 
@@ -130,7 +130,7 @@ VecraftDB is **zero‑config** by default, but you can tune:
 
 
 
-## 📈 Observability
+## Observability
 
 * **Prometheus** metrics exposed at `/metrics`
 * Built‑in counters/histograms for latency & throughput.
@@ -138,7 +138,7 @@ VecraftDB is **zero‑config** by default, but you can tune:
 
 
 
-## 🧪 Running Tests
+## Running Tests
 
 ```bash
 pytest -q
