@@ -25,7 +25,7 @@ VecraftDB is an embeddable, MVCC‑powered vector database that brings fully tra
 ## Quickstart
 
 ```bash
-# 1. Install (Python ≥3.10)
+# 1. Install (Python ≥3.11)
 pip install vecraftdb  # coming soon – for now, clone & `pip install -e .`
 
 # 2. Spin up the example REST server
