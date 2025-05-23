@@ -1,3 +1,362 @@
+"""
+CollectionService Architecture & Data Flow
+
+The CollectionService is the central orchestrator for vector database operations with MVCC isolation.
+It coordinates between storage, indexes, WAL, and snapshots for data consistency and durability.
+
+========================================================================================================
+                                      SYSTEM OVERVIEW
+========================================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  CollectionService                                      │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────┐   │
+│  │   API Layer     │  │   MVCC Manager   │  │  Snapshot Mgr   │  │  Background      │   │
+│  │  ┌───────────┐  │  │  ┌─────────────┐ │  │  ┌────────────┐ │  │  ┌─────────────┐ │   │
+│  │  │Insert/Del │  │  │  │Version Ctrl │ │  │  │Save/Load   │ │  │  │Index Update │ │   │
+│  │  │Search/Get │  │  │  │Transaction  │ │  │  │Persistence │ │  │  │Queue Proc   │ │   │
+│  │  └───────────┘  │  │  └─────────────┘ │  │  └────────────┘ │  │  └─────────────┘ │   │
+│  └─────────────────┘  └──────────────────┘  └─────────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+         ┌──────────────────────────────────────────────────────────────┐
+         │                   Collection Version                         │
+         │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
+         │  │ Storage  │ │   WAL    │ │ Indexes  │ │     Metadata     │ │
+         │  │ Engine   │ │ Manager  │ │Vec/Meta/ │ │   Schema/LSN     │ │
+         │  │          │ │          │ │   Doc    │ │                  │ │
+         │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘ │
+         └──────────────────────────────────────────────────────────────┘
+
+========================================================================================================
+                                  INSERT OPERATION FLOW
+========================================================================================================
+
+Client Request: INSERT(collection, data_packet)
+│
+├─1─► CollectionService.insert()
+│     │
+│     ├─── get_or_init_collection(name) ──► CollectionInitializer
+│     │                                     │
+│     │                                     └─► Load/Create Collection Resources
+│     │
+│     ├─── mvcc_manager.begin_transaction() ──► Create Version
+│     │
+│     ├─── WAL.append(data_packet, "prepare") ──┐
+│     │                                         │
+│     │    ┌────────────────────────────────────┘
+│     │    ▼
+│     │    WAL File: [{"record_id": "123", "data": "...", "_phase": "prepare", "_lsn": 100}]
+│     │
+│     ├─── storage.insert(data_packet) ──► Immediate Persistence
+│     │
+│     ├─── WAL.commit(record_id) ──┐
+│     │                            │
+│     │    ┌───────────────────────┘
+│     │    ▼
+│     │    WAL File: [{"record_id": "123", "_phase": "commit"}]
+│     │
+│     ├─── wal_queue.put(async_index_update) ──┐
+│     │                                        │
+│     │    ┌───────────────────────────────────┘
+│     │    ▼
+│     │    Background Thread: Index Update Queue
+│     │           │
+│     │           ├─► Update Vector Index
+│     │           ├─► Update Metadata Index
+│     │           ├─► Update Document Index
+│     │           └─► mvcc_manager.promote_version()
+│     │
+│     └─── mvcc_manager.commit_version(visible=False)
+│
+└─2─► Return Response
+
+========================================================================================================
+                                    SEARCH OPERATION FLOW
+========================================================================================================
+
+Client Request: SEARCH(collection, query_packet)
+│
+├─1─► CollectionService.search()
+│     │
+│     ├─── get_or_init_collection(name)
+│     │
+│     ├─── mvcc_manager.get_current_version() ──► Get Latest Visible Version
+│     │
+│     ├─── search_manager.search(query_packet, version)
+│     │     │
+│     │     ├─── Vector Index Search ──► Candidate Records
+│     │     │
+│     │     ├─── Metadata Filtering ──► Filtered Candidates
+│     │     │
+│     │     └─── Storage Retrieval ──► Final Results
+│     │
+│     ├─── mvcc_manager.release_version()
+│     │
+│     └─── Return Search Results
+│
+└─2─► Return Response
+
+========================================================================================================
+                                     FLUSH OPERATION FLOW
+========================================================================================================
+
+System Maintenance: FLUSH()
+│
+├─1─► CollectionService.flush()
+│     │
+│     ├─── wal_queue.join() ──► Wait for Async Operations
+│     │
+│     ├─── For Each Collection:
+│     │     │
+│     │     ├─── storage.flush() ──► Persist Storage Changes
+│     │     │
+│     │     ├─── snapshot_manager.save_snapshots()
+│     │     │     │
+│     │     │     ├─── Serialize Vector Index ──► .idxsnap
+│     │     │     ├─── Serialize Metadata Index ──► .metasnap
+│     │     │     ├─── Serialize Document Index ──► .docsnap
+│     │     │     └─── Save visible_lsn ──► .lsnmeta
+│     │     │
+│     │     ├─── compact_wal_after_snapshots() ──► NEW FEATURE
+│     │     │     │
+│     │     │     ├─── Check if Compaction Needed
+│     │     │     ├─── Remove WAL Entries ≤ visible_lsn
+│     │     │     └─── Log Compaction Results
+│     │     │
+│     │     └─── mvcc_manager.promote_pending_versions()
+│     │
+│     └─── All Collections Flushed
+│
+└─2─► System Ready
+
+========================================================================================================
+                                    STARTUP/RECOVERY FLOW
+========================================================================================================
+
+System Startup: CollectionService.init()
+│
+├─1─► Collection Initialization (Per Collection)
+│     │
+│     ├─── CollectionInitializer.get_or_init_collection()
+│     │     │
+│     │     ├─── Load Collection Metadata
+│     │     │
+│     │     ├─── Create MVCC Version
+│     │     │
+│     │     ├─── Wire Up Components (Storage, WAL, Indexes)
+│     │     │
+│     │     ├─── Storage Consistency Check
+│     │     │
+│     │     ├─── Load Snapshots (if available)
+│     │     │     │
+│     │     │     ├─── Load .idxsnap ──► Vector Index
+│     │     │     ├─── Load .metasnap ──► Metadata Index
+│     │     │     ├─── Load .docsnap ──► Document Index
+│     │     │     └─── Load .lsnmeta ──► stored_lsn
+│     │     │
+│     │     ├─── OR Full Rebuild (if no snapshots)
+│     │     │     │
+│     │     │     └─── Rebuild Indexes from Storage
+│     │     │
+│     │     ├─── WAL Replay (entries > stored_lsn)
+│     │     │     │
+│     │     │     ├─── Parse WAL Entries
+│     │     │     ├─── Apply Committed Operations
+│     │     │     └─── Update Indexes
+│     │     │
+│     │     └─── Set visible_lsn = max(stored_lsn, replayed_lsn)
+│     │
+│     └─── Collection Ready
+│
+└─2─► System Ready
+
+========================================================================================================
+                                      MVCC TRANSACTION FLOW
+========================================================================================================
+
+Transaction Lifecycle:
+│
+├─1─► begin_transaction()
+│     │
+│     ├─── Create New Version
+│     │     │
+│     │     ├─── Copy Indexes (Copy-on-Write)
+│     │     ├─── Initialize Read/Write Sets
+│     │     └─── Assign Transaction ID
+│     │
+│     └─── Return Version Handle
+│
+├─2─► Operation Execution
+│     │
+│     ├─── Record Reads/Writes
+│     ├─── Conflict Detection
+│     └─── Isolation Enforcement
+│
+├─3─► commit_version()
+│     │
+│     ├─── Conflict Check
+│     ├─── Two-Phase Commit
+│     │     │
+│     │     ├─── Phase 1: WAL Prepare
+│     │     └─── Phase 2: WAL Commit
+│     │
+│     └─── Version Promotion (Async)
+│
+└─4─► Transaction Complete
+
+========================================================================================================
+                                      BACKGROUND PROCESSING
+========================================================================================================
+
+Background Index Update Thread:
+│
+├─1─► process_wal_queue() [Continuous Loop]
+│     │
+│     ├─── Get Queue Item: (collection, packet, preimage, operation, lsn, version)
+│     │
+│     ├─── Apply Index Updates:
+│     │     │
+│     │     ├─── Insert: Update Vector/Metadata/Document Indexes
+│     │     └─── Delete: Remove from Vector/Metadata/Document Indexes
+│     │
+│     ├─── On Success: mvcc_manager.promote_version(lsn)
+│     │
+│     ├─── On Failure: Critical Error Handling
+│     │
+│     └─── Continue Loop
+│
+└─2─► Thread Cleanup on Shutdown
+
+========================================================================================================
+                                       WAL COMPACTION FLOW
+========================================================================================================
+
+WAL Compaction (NEW FEATURE):
+│
+├─1─► compact_wal_after_snapshots()
+│     │
+│     ├─── Get visible_lsn (from MVCC Manager)
+│     │
+│     ├─── Check if Compaction Needed
+│     │     │
+│     │     ├─── File Size > Threshold
+│     │     ├─── Estimate Old Entries
+│     │     └─── Cost/Benefit Analysis
+│     │
+│     ├─── Perform Compaction
+│     │     │
+│     │     ├─── Rename WAL File (.compact)
+│     │     ├─── Filter Entries: Keep LSN > visible_lsn
+│     │     ├─── Write Filtered Entries
+│     │     └─── Atomic Replace
+│     │
+│     └─── Log Compaction Results
+│
+└─2─► WAL Size Reduced
+
+========================================================================================================
+                                       PERSISTENCE LAYER
+========================================================================================================
+
+Storage Components:
+│
+├─── Storage Engine
+│     │
+│     ├─── Record Storage (Key-Value)
+│     ├─── Location Index (Record ID → Storage Location)
+│     └─── Consistency Verification
+│
+├─── WAL (Write-Ahead Log)
+│     │
+│     ├─── Two-Phase Commit Support
+│     ├─── LSN (Log Sequence Number) Tracking
+│     ├─── Crash Recovery Support
+│     └─── Compaction Support (NEW)
+│
+├─── Indexes
+│     │
+│     ├─── Vector Index (HNSW/IVF)
+│     ├─── Metadata Index (B-Tree/Hash)
+│     └─── Document Index (Inverted Index)
+│
+└─── Snapshots
+      │
+      ├─── Index Snapshots (.idxsnap, .metasnap, .docsnap)
+      ├─── LSN Metadata (.lsnmeta)
+      └─── Atomic Persistence (Temp Files → Atomic Replace)
+
+========================================================================================================
+                                      CONCURRENCY CONTROL
+========================================================================================================
+
+MVCC (Multi-Version Concurrency Control):
+│
+├─── Version Management
+│     │
+│     ├─── Current Version (Visible to Readers)
+│     ├─── Pending Versions (Async Index Updates)
+│     └─── Transaction Versions (Isolation)
+│
+├─── Conflict Detection
+│     │
+│     ├─── Read Set Tracking
+│     ├─── Write Set Tracking
+│     └─── Write-Write Conflicts
+│
+├─── Isolation Levels
+│     │
+│     ├─── Read Committed (Default)
+│     ├─── Snapshot Isolation
+│     └─── Conflict Serializable
+│
+└─── Lock Management
+      │
+      ├─── Global Service Lock (RW Lock)
+      ├─── Collection Metadata Lock
+      └─── Per-Collection Init Locks
+
+========================================================================================================
+                                       ERROR HANDLING
+========================================================================================================
+
+Error Recovery Strategies:
+│
+├─── Transient Errors
+│     │
+│     ├─── Retry Logic (Write Conflicts)
+│     ├─── Exponential Backoff
+│     └─── Graceful Degradation
+│
+├─── Critical Errors
+│     │
+│     ├─── Fatal Log Writing
+│     ├─── Emergency Shutdown
+│     └─── Data Integrity Protection
+│
+├─── Corruption Detection
+│     │
+│     ├─── Checksum Validation
+│     ├─── Consistency Checks
+│     └─── Orphaned Record Detection
+│
+└─── Recovery Procedures
+      │
+      ├─── WAL Replay
+      ├─── Snapshot Restoration
+      └─── Index Rebuilding
+
+========================================================================================================
+
+Key Design Principles:
+1. **Durability**: Two-phase commit ensures data is never lost
+2. **Consistency**: MVCC provides transaction isolation
+3. **Availability**: Asynchronous indexing maintains system responsiveness
+4. **Performance**: Snapshot-based persistence and WAL compaction optimize I/O
+5. **Reliability**: Comprehensive error handling and recovery mechanisms
+6. **Scalability**: Lock-free read operations and efficient storage structures
+"""
 import logging
 import queue
 import threading
