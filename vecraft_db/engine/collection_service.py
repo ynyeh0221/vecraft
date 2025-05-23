@@ -508,6 +508,10 @@ class CollectionService:
 
                 logger.debug(f"Saving snapshots for collection {name}")
                 self._save_snapshots(name, version)
+                # At this point: indexes are persisted, visible_lsn is written to a lsn_meta file
+
+                # Compact WAL after snapshots are completely saved
+                self._compact_wal_after_snapshots(name, version)
 
                 # Promote any pending versions to avoid having hanging versions on shutdown
                 self._mvcc_manager.promote_pending_versions(name)
@@ -520,6 +524,49 @@ class CollectionService:
 
     def _flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
         self._snapshot_manager.flush_indexes(name, version, to_temp_files)
+
+    def _compact_wal_after_snapshots(self, name: str, version):
+        """
+        Compact WAL after snapshots are completely saved using the visible LSN.
+
+        This is the optimal timing for compaction because:
+        1. SnapshotManager just persisted all indexes to disk
+        2. visible_lsn was written to the lsn_meta file during snapshot saving
+        3. We can safely remove WAL entries with LSN <= visible_lsn
+        4. All snapshot data is atomically committed to disk
+        5. It's part of the maintenance flush cycle
+        """
+        try:
+            # Get the visible LSN that was just persisted by SnapshotManager.flush_indexes()
+            visible_lsn = self._mvcc_manager.visible_lsn.get(name, 0)
+
+            if visible_lsn <= 0:
+                logger.debug(f"No visible LSN for collection {name}, skipping WAL compaction")
+                return
+
+            # Check if compaction is worthwhile before doing the work
+            if not version.wal.should_compact(visible_lsn):
+                logger.debug(f"WAL compaction not needed for collection {name}")
+                return
+
+            # Perform the compaction
+            logger.info(f"Compacting WAL for collection {name} (visible_lsn={visible_lsn})")
+            start_time = time.time()
+
+            entries_before, entries_after = version.wal.compact(visible_lsn)
+
+            elapsed = time.time() - start_time
+            removed_entries = entries_before - entries_after
+
+            if removed_entries > 0:
+                logger.info(f"WAL compaction for {name} completed in {elapsed:.3f}s: "
+                            f"removed {removed_entries} entries ({entries_before} → {entries_after})")
+            else:
+                logger.debug(f"WAL compaction for {name} completed with no entries removed")
+
+        except Exception as e:
+            # WAL compaction failure should not break the flush operation
+            logger.warning(f"WAL compaction failed for collection {name}: {e}", exc_info=True)
 
     # ------------------------
     # CLOSE
