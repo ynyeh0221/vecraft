@@ -1,3 +1,90 @@
+"""
+Write-Ahead Logging manager with two-phase commit support and compaction.
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           WAL SYSTEM ARCHITECTURE                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌─────────────────┐
+│   Client    │    │  WALManager  │    │  WAL File   │    │   LSN Metadata  │
+│ Application │    │              │    │             │    │      File       │
+└─────┬───────┘    └──────┬───────┘    └─────┬───────┘    └─────────┬───────┘
+      │                   │                  │                      │
+      │ 1. append()       │                  │                      │
+      ├──────────────────►│                  │                      │
+      │                   │ 2. get LSN       │                      │
+      │                   ├────────────────────────────────────────►│
+      │                   │                  │                      │
+      │                   │ 3. write entry   │                      │
+      │                   ├─────────────────►│                      │
+      │                   │                  │                      │
+      │ 4. commit()       │                  │                      │
+      ├──────────────────►│                  │                      │
+      │                   │ 5. write commit  │                      │
+      │                   ├─────────────────►│                      │
+      │                   │                  │                      │
+      │ 6. replay()       │                  │                      │
+      ├──────────────────►│ 7. read & apply  │                      │
+      │                   ├─────────────────►│                      │
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TWO-PHASE COMMIT PROTOCOL                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Phase 1 (PREPARE):                    Phase 2 (COMMIT):
+┌─────────────────┐                   ┌─────────────────┐
+│   Data Entry    │                   │  Commit Marker  │
+│ {               │                   │ {               │
+│   "id": "123",  │                   │   "record_id":  │
+│   "data": "...",│                   │   "123",        │
+│   "_phase":     │                   │   "_phase":     │
+│   "prepare",    │                   │   "commit"      │
+│   "_lsn": 42    │                   │ }               │
+│ }               │                   └─────────────────┘
+└─────────────────┘                            │
+         │                                     │
+         ▼                                     ▼
+┌─────────────────────────────────────────────────────────┐
+│              WAL FILE STRUCTURE                         │
+│ ┌─────────────┬─────────────┬─────────────┬──────────┐  │
+│ │ Prepare #1  │ Prepare #2  │ Commit #1   │ ...      │  │
+│ └─────────────┴─────────────┴─────────────┴──────────┘  │
+└─────────────────────────────────────────────────────────┘
+
+Only entries with matching commit markers are replayed during recovery!
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          COMPACTION PROCESS                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Before Compaction (visible_lsn = 100):
+┌────────────────────────────────────────────────────────────────────────────┐
+│ LSN: 50│ LSN: 75│ LSN: 90│ LSN: 110│ LSN: 120│ LSN: 130│                   │
+│ (old)  │ (old)  │ (old)  │ (keep)  │ (keep)  │ (keep)  │                   │
+└────────────────────────────────────────────────────────────────────────────┘
+               ▼ compact(visible_lsn=100) ▼
+After Compaction:
+┌────────────────────────────────────────────────────────────────────────────┐
+│ LSN: 110│ LSN: 120│ LSN: 130│                                              │
+│ (keep)  │ (keep)  │ (keep)  │        ← Old entries removed                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+This class implements a WAL mechanism with two-phase commit protocol to ensure
+data durability and crash recovery. It provides multiprocess safety through
+file locking and maintains atomicity of operations.
+
+The WAL works in two phases:
+1. Prepare phase: Data is written to WAL but not committed
+2. Commit phase: A commit marker is written to finalize the transaction
+
+Only data with commit markers will be replayed during recovery.
+
+Compaction removes WAL entries that have been safely persisted to snapshots,
+based on the visible_lsn watermark.
+
+Performance optimization: Uses batched fsync to reduce disk I/O overhead
+while maintaining durability guarantees.
+"""
 import fcntl
 import json
 import os
@@ -151,12 +238,12 @@ class WALManager(WALInterface):
         """
         with self._compaction_lock:
             if not self._file.exists():
-                return (0, 0)
+                return 0, 0
 
             # Check if compaction is worthwhile
             file_size = self._file.stat().st_size
             if file_size < self._compaction_threshold:
-                return (0, 0)  # Skip compaction for small files
+                return 0, 0  # Skip compaction for small files
 
             return self._perform_compaction(visible_lsn)
 
@@ -181,7 +268,7 @@ class WALManager(WALInterface):
                 # Rename the compacted file back to original WAL name
                 compact_file.rename(self._file)
 
-            return (entries_before, entries_after)
+            return entries_before, entries_after
 
         except Exception:
             # Restore original file on failure
@@ -221,7 +308,7 @@ class WALManager(WALInterface):
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
-        return (entries_before, entries_after)
+        return entries_before, entries_after
 
     def should_compact(self, visible_lsn: int) -> bool:
         """
