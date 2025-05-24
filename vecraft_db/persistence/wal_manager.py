@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import threading
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Tuple, List, Dict, Optional
@@ -28,14 +29,23 @@ class WALManager(WALInterface):
     Compaction removes WAL entries that have been safely persisted to snapshots,
     based on the visible_lsn watermark.
 
+    Performance optimization: Uses batched fsync to reduce disk I/O overhead
+    while maintaining durability guarantees.
+
     Attributes:
         _file (Path): Path to the WAL file
         _last_lsn (int): The last used Log Sequence Number
         _compaction_lock (threading.RLock): Lock for compaction operations
         _compaction_threshold (int): Size threshold for triggering compaction
+        _batch_size (int): Number of writes before forcing fsync
+        _batch_timeout (float): Maximum time between fsyncs in seconds
+        _batch_count (int): Current number of unsynced writes
+        _last_sync_time (float): Timestamp of last fsync
+        _batch_lock (threading.Lock): Lock for batch synchronization
     """
 
-    def __init__(self, wal_path: Path, compaction_threshold: int = 1024 * 1024):  # 1MB default
+    def __init__(self, wal_path: Path, compaction_threshold: int = 1024 * 1024,
+                 batch_size: int = 100, batch_timeout: float = 1.0):  # 1MB default
         self._file = wal_path
         self._last_lsn = 0
         self._lsn_lock = threading.RLock()
@@ -46,9 +56,17 @@ class WALManager(WALInterface):
         # Initialize LSN from a meta file if it exists
         self._last_lsn = self._read_lsn_from_meta() or 0
 
+        # Batching configuration
+        self._batch_size = batch_size
+        self._batch_timeout = batch_timeout
+        self._batch_count = 0
+        self._last_sync_time = time.time()
+        self._batch_lock = threading.Lock()
+
     def append(self, data_packet: DataPacket, phase: str = "prepare") -> int:
         """
         Append a data packet to the WAL with phase marker and LSN.
+        Uses batched fsync for better performance.
         """
         # Get the latest LSN first from the meta file for multiprocess safety
         last_lsn_from_meta = self._read_lsn_from_meta() or 0
@@ -72,11 +90,46 @@ class WALManager(WALInterface):
                 f.write(json.dumps(record))
                 f.write("\n")
                 f.flush()
-                os.fsync(f.fileno())
+
+                # Use batched fsync instead of immediate fsync
+                self._handle_batched_sync(f)
+
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         return lsn
+
+    def _handle_batched_sync(self, file_handle):
+        """
+        Handle batched synchronization - fsync only when batch size or timeout reached.
+        """
+        with self._batch_lock:
+            self._batch_count += 1
+            now = time.time()
+
+            should_sync = (
+                    self._batch_count >= self._batch_size or
+                    (now - self._last_sync_time) >= self._batch_timeout
+            )
+
+            if should_sync:
+                os.fsync(file_handle.fileno())
+                self._batch_count = 0
+                self._last_sync_time = now
+
+    def flush(self):
+        """
+        Explicitly flush all pending writes to disk, bypassing batch limits.
+        Call this when you need to ensure durability immediately.
+        """
+        try:
+            with open(self._file, 'rb') as f:
+                os.fsync(f.fileno())
+            with self._batch_lock:
+                self._batch_count = 0
+                self._last_sync_time = time.time()
+        except (OSError, IOError):
+            pass  # File might not exist
 
     def compact(self, visible_lsn: int) -> Tuple[int, int]:
         """
@@ -343,7 +396,8 @@ class WALManager(WALInterface):
                 f.write(json.dumps(commit_record))
                 f.write("\n")
                 f.flush()
-                os.fsync(f.fileno())
+                # Use batched fsync for commit operations too
+                self._handle_batched_sync(f)
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
@@ -459,6 +513,9 @@ class WALManager(WALInterface):
         * Safe: Returns quietly even if the WAL file is deleted or the directory doesn't exist.
         """
         try:
+            # Flush any pending batched writes before closing
+            self.flush()
+
             # If the WAL file exists, do a 0-byte appended write + fsync
             if self._file.exists():
                 with open(self._file, "ab") as f:

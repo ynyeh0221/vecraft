@@ -19,7 +19,7 @@ class TestWALManager(unittest.TestCase):
         # Create a temporary directory for testing
         self.temp_dir = tempfile.TemporaryDirectory()
         self.wal_path = Path(self.temp_dir.name) / "test_wal.json"
-        self.wal_manager = WALManager(self.wal_path)
+        self.wal_manager = WALManager(wal_path=self.wal_path, batch_size=1)
 
     def tearDown(self):
         # Clean up the temporary directory
@@ -86,7 +86,7 @@ class TestWALManager(unittest.TestCase):
         # Commit the record
         self.wal_manager.commit("user:123")
 
-        # Read the file and verify content: two prepares + one commit
+        # Read the file and verify content: two preparing and one commit
         with open(self.wal_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         self.assertEqual(len(lines), 3)
@@ -570,6 +570,214 @@ class TestWALManager(unittest.TestCase):
 
         print(
             f"Successfully verified {expected_total_operations} unique, monotonically increasing LSNs from {num_workers} concurrent workers")
+
+    @patch('os.fsync')
+    @patch('fcntl.flock')
+    def test_batched_fsync_behavior(self, mock_flock, mock_fsync):
+        """Test batched fsync behavior with custom batch size and timeout."""
+        # Create a separate WAL manager with larger batch size for this test
+        batched_wal_path = Path(self.temp_dir.name) / "test_batched_wal.json"
+        batch_size = 3
+        batch_timeout = 0.5
+        batched_wal = WALManager(
+            wal_path=batched_wal_path,
+            batch_size=batch_size,
+            batch_timeout=batch_timeout
+        )
+
+        # Create test data packets
+        test_packets = []
+        for i in range(5):
+            packet = DataPacket.create_record(
+                record_id=f"user:{i}",
+                original_data={"name": f"User {i}"},
+                vector=np.array([i, i, i], dtype=np.float32),
+                metadata={}
+            )
+            test_packets.append(packet)
+
+        # Reset fsync call count (it may have been called during WAL initialization)
+        mock_fsync.reset_mock()
+
+        # Test 1: Append entries less than batch size - should not trigger fsync for WAL
+        for i in range(batch_size - 1):  # batch_size - 1 = 2 entries
+            batched_wal.append(test_packets[i])
+
+        # fsync should have been called for an LSN meta file writes, but not yet for batch
+        # We expect at least 2 fsync calls (one for each LSN meta write)
+        initial_fsync_count = mock_fsync.call_count
+        self.assertGreaterEqual(initial_fsync_count, 2,
+                                "Expected fsync calls for LSN meta writes")
+
+        # Test 2: Append one more entry to reach batch size - should trigger batch fsync
+        batched_wal.append(test_packets[batch_size - 1])
+
+        # Now we should have additional fsync call for the batch
+        batch_fsync_count = mock_fsync.call_count
+        self.assertGreater(batch_fsync_count, initial_fsync_count,
+                           "Batch fsync should be triggered when batch size is reached")
+
+        # Reset for next test
+        mock_fsync.reset_mock()
+
+        # Test 3: Test explicit flush() - should trigger fsync immediately
+        batched_wal.append(test_packets[4])  # Add one more entry (not reaching batch size)
+
+        flush_before_count = mock_fsync.call_count
+        batched_wal.flush()  # Explicit flush
+        flush_after_count = mock_fsync.call_count
+
+        self.assertGreater(flush_after_count, flush_before_count,
+                           "flush() should trigger fsync immediately")
+
+        # Test 4: Test timeout behavior
+        mock_fsync.reset_mock()
+
+        # Create another WAL manager with very short timeout for testing
+        timeout_wal_path = Path(self.temp_dir.name) / "test_timeout_wal.json"
+        timeout_wal = WALManager(
+            wal_path=timeout_wal_path,
+            batch_size=10,  # Large batch size so we test timeout, not batch size
+            batch_timeout=0.1  # Very short timeout (100 ms)
+        )
+
+        # Append one entry
+        timeout_wal.append(test_packets[0])
+        fsync_before_timeout = mock_fsync.call_count
+
+        # Wait for timeout plus small buffer
+        time.sleep(0.15)
+
+        # Append another entry - this should trigger timeout-based fsync
+        timeout_wal.append(test_packets[1])
+        fsync_after_timeout = mock_fsync.call_count
+
+        self.assertGreater(fsync_after_timeout, fsync_before_timeout,
+                           "Timeout should trigger fsync even when batch size not reached")
+
+        # Test 5: Verify commit operations also use batched fsync
+        mock_fsync.reset_mock()
+
+        # Use the original batched_wal with batch_size=3
+        batched_wal.commit("user:0")  # First commit
+        batched_wal.commit("user:1")  # Second commit
+
+        commits_before_batch = mock_fsync.call_count
+        batched_wal.commit("user:2")  # Third commit - should trigger batch fsync
+        commits_after_batch = mock_fsync.call_count
+
+        self.assertGreater(commits_after_batch, commits_before_batch,
+                           "Commit operations should also respect batch fsync behavior")
+
+        # Test 6: Verify close() calls flush()
+        mock_fsync.reset_mock()
+
+        # Add an entry that won't reach batch size
+        batched_wal.append(test_packets[0])
+        close_before_count = mock_fsync.call_count
+
+        batched_wal.close()
+        close_after_count = mock_fsync.call_count
+
+        self.assertGreater(close_after_count, close_before_count,
+                           "close() should flush pending batched writes")
+
+    @patch('fcntl.flock')
+    def test_batched_vs_immediate_performance_characteristics(self, mock_flock):
+        """Test performance characteristics of batched vs. immediate fsync."""
+        # This test verifies the batching behavior without mocking fsync
+        # to ensure the actual file operations work correctly
+
+        # Create two WAL managers: one with immediate fsync, one with batched
+        immediate_wal_path = Path(self.temp_dir.name) / "immediate_wal.json"
+        batched_wal_path = Path(self.temp_dir.name) / "batched_wal.json"
+
+        immediate_wal = WALManager(wal_path=immediate_wal_path, batch_size=1)
+        batched_wal = WALManager(wal_path=batched_wal_path, batch_size=5)
+
+        # Create test data
+        test_packets = []
+        for i in range(10):
+            packet = DataPacket.create_record(
+                record_id=f"perf_test:{i}",
+                original_data={"name": f"Performance Test {i}"},
+                vector=np.array([i, i, i], dtype=np.float32),
+                metadata={"test": "performance"}
+            )
+            test_packets.append(packet)
+
+        # Test that both produce identical results
+        immediate_lsns = []
+        batched_lsns = []
+
+        for packet in test_packets:
+            immediate_lsns.append(immediate_wal.append(packet))
+            batched_lsns.append(batched_wal.append(packet))
+
+        # Explicitly flush the batched WAL to ensure all writes are persisted
+        batched_wal.flush()
+
+        # Both files should exist and have the same number of entries
+        self.assertTrue(immediate_wal_path.exists())
+        self.assertTrue(batched_wal_path.exists())
+
+        # Read and verify both files have identical content structure
+        with open(immediate_wal_path, 'r', encoding='utf-8') as f:
+            immediate_lines = f.readlines()
+
+        with open(batched_wal_path, 'r', encoding='utf-8') as f:
+            batched_lines = f.readlines()
+
+        self.assertEqual(len(immediate_lines), len(batched_lines))
+        self.assertEqual(len(immediate_lines), len(test_packets))
+
+        # Verify that both approaches produce valid, parseable entries
+        for i, (immediate_line, batched_line) in enumerate(zip(immediate_lines, batched_lines)):
+            immediate_entry = json.loads(immediate_line)
+            batched_entry = json.loads(batched_line)
+
+            # Both should have valid LSNs and phases
+            self.assertIn("_lsn", immediate_entry)
+            self.assertIn("_lsn", batched_entry)
+            self.assertIn("_phase", immediate_entry)
+            self.assertIn("_phase", batched_entry)
+            self.assertEqual(immediate_entry["_phase"], "prepare")
+            self.assertEqual(batched_entry["_phase"], "prepare")
+
+            # LSNs should be positive and unique
+            self.assertGreater(immediate_entry["_lsn"], 0)
+            self.assertGreater(batched_entry["_lsn"], 0)
+
+        # Test replay behavior is identical
+        immediate_wal.close()
+        batched_wal.close()
+
+        # Add commits and test replay
+        for i, packet in enumerate(test_packets):
+            immediate_wal.commit(packet.record_id)
+            batched_wal.commit(packet.record_id)
+
+        # Ensure batched commits are flushed
+        batched_wal.flush()
+
+        # Test replay produces same results
+        immediate_replayed = []
+        batched_replayed = []
+
+        def immediate_handler(entry):
+            immediate_replayed.append(entry)
+
+        def batched_handler(entry):
+            batched_replayed.append(entry)
+
+        immediate_count = immediate_wal.replay(immediate_handler)
+        batched_count = batched_wal.replay(batched_handler)
+
+        self.assertEqual(immediate_count, batched_count)
+        self.assertEqual(len(immediate_replayed), len(batched_replayed))
+        self.assertEqual(immediate_count, len(test_packets))
+
+        print(f"Performance test completed: {len(test_packets)} entries processed identically by both WAL modes")
 
 
 if __name__ == '__main__':
