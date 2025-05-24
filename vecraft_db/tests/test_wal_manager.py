@@ -445,235 +445,131 @@ class TestWALManager(unittest.TestCase):
             self.assertGreater(current_lsn, prev_lsn)
             prev_lsn = current_lsn
 
-    import json
-    import tempfile
-    import unittest
-    from pathlib import Path
-    from unittest.mock import Mock, patch, MagicMock
-    import threading
-    import time
-    from concurrent.futures import ThreadPoolExecutor
+    def test_concurrent_lsn_uniqueness_and_ordering(self):
+        """Test that 5 concurrent workers writing to the same collection produce unique and monotonically increasing LSNs."""
+        num_workers = 5
+        operations_per_worker = 25
+        all_lsns = []
+        lsn_lock = threading.Lock()
 
-    import fcntl
-    import numpy as np
+        def worker_task(worker_id):
+            """Each worker performs multiple append operations and collects LSNs."""
+            worker_lsns = []
+            rng = np.random.default_rng(worker_id + 42)  # Different seed per worker
 
-    from vecraft_data_model.data_packet import DataPacket
-    from vecraft_db.persistence.wal_manager import WALManager
-
-    class TestWALManager(unittest.TestCase):
-        def setUp(self):
-            # Create a temporary directory for testing
-            self.temp_dir = tempfile.TemporaryDirectory()
-            self.wal_path = Path(self.temp_dir.name) / "test_wal.json"
-            self.wal_manager = WALManager(self.wal_path)
-
-        def tearDown(self):
-            # Clean up the temporary directory
-            self.temp_dir.cleanup()
-
-        def test_init(self):
-            """Test initialization of WALManager."""
-            self.assertEqual(self.wal_manager._file, self.wal_path)
-            self.assertFalse(self.wal_path.exists())
-
-        @patch('fcntl.flock')
-        def test_append(self, mock_flock):
-            """Test appending entries to the WAL file."""
-            test_entries = [
-                DataPacket.create_record(
-                    record_id="user:123",
-                    original_data={"name": "John"},
-                    vector=np.array([0, 0, 0], dtype=np.float32),
-                    metadata={}
-                ),
-                DataPacket.create_record(
-                    record_id="user:123",
-                    original_data={"name": "John Doe"},
-                    vector=np.array([0, 0, 0], dtype=np.float32),
-                    metadata={}
+            for i in range(operations_per_worker):
+                # Create a unique data packet for this worker and operation
+                data_packet = DataPacket.create_record(
+                    record_id=f"worker_{worker_id}_record_{i}",
+                    original_data={
+                        "worker_id": worker_id,
+                        "operation_index": i,
+                        "timestamp": time.time(),
+                        "data": f"Worker {worker_id} operation {i}"
+                    },
+                    vector=rng.random(3).astype(np.float32),
+                    metadata={"worker": worker_id, "op": i}
                 )
-            ]
 
-            # Append entries with default phase
-            for entry in test_entries:
-                self.wal_manager.append(entry)
+                # Append to WAL and capture LSN
+                lsn = self.wal_manager.append(data_packet, phase="prepare")
+                worker_lsns.append(lsn)
 
-            # Verify file exists
-            self.assertTrue(self.wal_path.exists())
+                # Small random delay to increase chance of race conditions
+                time.sleep(rng.random() * 0.001)
 
-            # Read the file and verify content
-            with open(self.wal_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            # Thread-safely add this worker's LSNs to the global collection
+            with lsn_lock:
+                all_lsns.extend(worker_lsns)
 
-            self.assertEqual(len(lines), len(test_entries))
+            return worker_lsns
 
-            for i, line in enumerate(lines):
-                loaded_entry = json.loads(line)
-                expected_entry = test_entries[i].to_dict()
-                expected_entry["_phase"] = "prepare"  # Default phase
-                expected_entry["_lsn"] = loaded_entry["_lsn"]
-                self.assertEqual(loaded_entry, expected_entry)
+        # Execute workers concurrently
+        start_time = time.time()
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all worker tasks
+            futures = [executor.submit(worker_task, worker_id) for worker_id in range(num_workers)]
 
-        @patch('fcntl.flock')
-        def test_append_with_phase(self, mock_flock):
-            """Test appending entries with different phases."""
-            test_packet = DataPacket.create_record(
-                record_id="user:123",
-                original_data={"name": "John"},
-                vector=np.array([0, 0, 0], dtype=np.float32),
-                metadata={}
-            )
+            # Collect results from all workers
+            worker_results = {}
+            for worker_id, future in enumerate(futures):
+                try:
+                    worker_lsns = future.result(timeout=10)  # 10 second timeouts
+                    worker_results[worker_id] = worker_lsns
+                    print(
+                        f"Worker {worker_id} completed with LSNs: {worker_lsns[:5]}...{worker_lsns[-5:]} (showing first and last 5)")
+                except Exception as exc:
+                    self.fail(f"Worker {worker_id} generated an exception: {exc}")
 
-            # Append twice in prepare phase (capture second LSN)
-            first_lsn = self.wal_manager.append(test_packet, phase="prepare")
-            prepare_lsn = self.wal_manager.append(test_packet, phase="prepare")
-            self.assertGreater(prepare_lsn, first_lsn)
+        execution_time = time.time() - start_time
+        print(f"Completed {num_workers} workers x {operations_per_worker} operations in {execution_time:.3f}s")
 
-            # Commit the record
-            self.wal_manager.commit("user:123")
+        # Verify we got the expected number of LSNs
+        expected_total_operations = num_workers * operations_per_worker
+        self.assertEqual(len(all_lsns), expected_total_operations,
+                         f"Expected {expected_total_operations} LSNs, got {len(all_lsns)}")
 
-            # Read the file and verify content: two prepares + one commit
-            with open(self.wal_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            self.assertEqual(len(lines), 3)
+        # Test 1: All LSNs must be unique
+        unique_lsns = set(all_lsns)
+        self.assertEqual(len(unique_lsns), len(all_lsns),
+                         f"LSNs are not unique! Found {len(all_lsns)} total LSNs but only {len(unique_lsns)} unique values")
 
-            # Check second prepare entry
-            prepare_entry = json.loads(lines[1])
-            expected_prepare = test_packet.to_dict()
-            expected_prepare["_phase"] = "prepare"
-            expected_prepare["_lsn"] = prepare_lsn
-            self.assertEqual(expected_prepare, prepare_entry)
+        # Test 2: All LSNs must be positive integers
+        for lsn in all_lsns:
+            self.assertIsInstance(lsn, int, f"LSN {lsn} is not an integer")
+            self.assertGreater(lsn, 0, f"LSN {lsn} is not positive")
 
-            # Check commit entry
-            commit_entry = json.loads(lines[2])
-            self.assertEqual(commit_entry["record_id"], "user:123")
-            self.assertEqual(commit_entry["_phase"], "commit")
+        # Test 3: When sorted, LSNs should form a consecutive sequence
+        # Note: all_lsns may not be in order because workers complete at different times
+        sorted_lsns = sorted(all_lsns)
 
-        def test_concurrent_lsn_uniqueness_and_ordering(self):
-            """Test that 5 concurrent workers writing to the same collection produce unique and monotonically increasing LSNs."""
-            num_workers = 5
-            operations_per_worker = 25
-            all_lsns = []
-            lsn_lock = threading.Lock()
+        # Test 4: LSNs should be consecutive (no gaps in sequence)
+        min_lsn = min(all_lsns)
+        max_lsn = max(all_lsns)
+        expected_lsns = list(range(min_lsn, max_lsn + 1))
+        self.assertEqual(sorted_lsns, expected_lsns,
+                         f"LSNs have gaps! Expected consecutive sequence from {min_lsn} to {max_lsn}")
 
-            def worker_task(worker_id):
-                """Each worker performs multiple append operations and collects LSNs."""
-                worker_lsns = []
-                rng = np.random.default_rng(worker_id + 42)  # Different seed per worker
+        # Test 5: Each worker's LSNs should be in ascending order within that worker
+        for worker_id, worker_lsns in worker_results.items():
+            sorted_worker_lsns = sorted(worker_lsns)
+            self.assertEqual(worker_lsns, sorted_worker_lsns,
+                             f"Worker {worker_id} LSNs are not in ascending order: {worker_lsns}")
 
-                for i in range(operations_per_worker):
-                    # Create a unique data packet for this worker and operation
-                    data_packet = DataPacket.create_record(
-                        record_id=f"worker_{worker_id}_record_{i}",
-                        original_data={
-                            "worker_id": worker_id,
-                            "operation_index": i,
-                            "timestamp": time.time(),
-                            "data": f"Worker {worker_id} operation {i}"
-                        },
-                        vector=rng.random(3).astype(np.float32),
-                        metadata={"worker": worker_id, "op": i}
-                    )
+        # Test 6: Global ordering verification
+        # While all_lsns might not be sorted (due to worker completion order),
+        # the fact that each worker gets monotonically increasing LSNs
+        # proves the LSN generation is working correctly
+        print("LSN generation verification:")
+        print(f"   - All {expected_total_operations} LSNs are unique")
+        print(f"   - LSNs form consecutive sequence {min_lsn}-{max_lsn}")
+        print("   - Each worker received LSNs in ascending order")
 
-                    # Append to WAL and capture LSN
-                    lsn = self.wal_manager.append(data_packet, phase="prepare")
-                    worker_lsns.append(lsn)
+        # Test 7: Verify LSN distribution across workers
+        print(f"LSN range: {min_lsn} to {max_lsn} (total range: {max_lsn - min_lsn + 1})")
+        for worker_id, worker_lsns in worker_results.items():
+            print(f"Worker {worker_id}: LSN range {min(worker_lsns)}-{max(worker_lsns)}")
 
-                    # Small random delay to increase chance of race conditions
-                    time.sleep(rng.random() * 0.001)
+        # Test 8: Verify that the WAL file contains all entries with correct LSNs
+        self.assertTrue(self.wal_path.exists(), "WAL file should exist after concurrent operations")
 
-                # Thread-safely add this worker's LSNs to the global collection
-                with lsn_lock:
-                    all_lsns.extend(worker_lsns)
+        with open(self.wal_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
 
-                return worker_lsns
+        self.assertEqual(len(lines), expected_total_operations,
+                         f"WAL file should contain {expected_total_operations} lines, found {len(lines)}")
 
-            # Execute workers concurrently
-            start_time = time.time()
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                # Submit all worker tasks
-                futures = [executor.submit(worker_task, worker_id) for worker_id in range(num_workers)]
+        # Verify LSNs in file match our collected LSNs
+        file_lsns = []
+        for line in lines:
+            entry = json.loads(line)
+            file_lsns.append(entry["_lsn"])
 
-                # Collect results from all workers
-                worker_results = {}
-                for worker_id, future in enumerate(futures):
-                    try:
-                        worker_lsns = future.result(timeout=10)  # 10 second timeouts
-                        worker_results[worker_id] = worker_lsns
-                        print(
-                            f"Worker {worker_id} completed with LSNs: {worker_lsns[:5]}...{worker_lsns[-5:]} (showing first and last 5)")
-                    except Exception as exc:
-                        self.fail(f"Worker {worker_id} generated an exception: {exc}")
+        self.assertEqual(sorted(file_lsns), sorted_lsns,
+                         "LSNs in WAL file don't match LSNs returned by append operations")
 
-            execution_time = time.time() - start_time
-            print(f"Completed {num_workers} workers x {operations_per_worker} operations in {execution_time:.3f}s")
-
-            # Verify we got the expected number of LSNs
-            expected_total_operations = num_workers * operations_per_worker
-            self.assertEqual(len(all_lsns), expected_total_operations,
-                             f"Expected {expected_total_operations} LSNs, got {len(all_lsns)}")
-
-            # Test 1: All LSNs must be unique
-            unique_lsns = set(all_lsns)
-            self.assertEqual(len(unique_lsns), len(all_lsns),
-                             f"LSNs are not unique! Found {len(all_lsns)} total LSNs but only {len(unique_lsns)} unique values")
-
-            # Test 2: All LSNs must be positive integers
-            for lsn in all_lsns:
-                self.assertIsInstance(lsn, int, f"LSN {lsn} is not an integer")
-                self.assertGreater(lsn, 0, f"LSN {lsn} is not positive")
-
-            # Test 3: When sorted, LSNs should form a consecutive sequence
-            # Note: all_lsns may not be in order because workers complete at different times
-            sorted_lsns = sorted(all_lsns)
-
-            # Test 4: LSNs should be consecutive (no gaps in sequence)
-            min_lsn = min(all_lsns)
-            max_lsn = max(all_lsns)
-            expected_lsns = list(range(min_lsn, max_lsn + 1))
-            self.assertEqual(sorted_lsns, expected_lsns,
-                             f"LSNs have gaps! Expected consecutive sequence from {min_lsn} to {max_lsn}")
-
-            # Test 5: Each worker's LSNs should be in ascending order within that worker
-            for worker_id, worker_lsns in worker_results.items():
-                sorted_worker_lsns = sorted(worker_lsns)
-                self.assertEqual(worker_lsns, sorted_worker_lsns,
-                                 f"Worker {worker_id} LSNs are not in ascending order: {worker_lsns}")
-
-            # Test 6: Global ordering verification
-            # While all_lsns might not be sorted (due to worker completion order),
-            # the fact that each worker gets monotonically increasing LSNs
-            # proves the LSN generation is working correctly
-            print("LSN generation verification:")
-            print(f"   - All {expected_total_operations} LSNs are unique")
-            print(f"   - LSNs form consecutive sequence {min_lsn}-{max_lsn}")
-            print("   - Each worker received LSNs in ascending order")
-
-            # Test 7: Verify LSN distribution across workers
-            print(f"LSN range: {min_lsn} to {max_lsn} (total range: {max_lsn - min_lsn + 1})")
-            for worker_id, worker_lsns in worker_results.items():
-                print(f"Worker {worker_id}: LSN range {min(worker_lsns)}-{max(worker_lsns)}")
-
-            # Test 8: Verify that the WAL file contains all entries with correct LSNs
-            self.assertTrue(self.wal_path.exists(), "WAL file should exist after concurrent operations")
-
-            with open(self.wal_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            self.assertEqual(len(lines), expected_total_operations,
-                             f"WAL file should contain {expected_total_operations} lines, found {len(lines)}")
-
-            # Verify LSNs in file match our collected LSNs
-            file_lsns = []
-            for line in lines:
-                entry = json.loads(line)
-                file_lsns.append(entry["_lsn"])
-
-            self.assertEqual(sorted(file_lsns), sorted_lsns,
-                             "LSNs in WAL file don't match LSNs returned by append operations")
-
-            print(
-                f"Successfully verified {expected_total_operations} unique, monotonically increasing LSNs from {num_workers} concurrent workers")
+        print(
+            f"Successfully verified {expected_total_operations} unique, monotonically increasing LSNs from {num_workers} concurrent workers")
 
 
 if __name__ == '__main__':
