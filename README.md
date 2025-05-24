@@ -6,6 +6,8 @@
 
 VecraftDB is an embeddable, MVCC‑powered vector database that brings fully transactional semantics, rich filtering, and blazing‑fast similarity search into a single Python package.
 
+[DEEPWIKI](https://deepwiki.com/ynyeh0221/vecraft-vector-database)
+
 
 
 ## Key Features
