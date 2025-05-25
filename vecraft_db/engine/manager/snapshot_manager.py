@@ -1,3 +1,84 @@
+"""
+Manages the persistence of collection indexes through snapshots.
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        SNAPSHOT SYSTEM ARCHITECTURE                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────────────┐
+│   Collection    │    │ SnapshotManager  │    │      Disk Storage           │
+│   (In Memory)   │    │                  │    │                             │
+│                 │    │                  │    │                             │
+│ ┌─────────────┐ │    │  save_snapshots  │    │ ┌─────────────────────────┐ │
+│ │Vector Index │ ├────┼─────────────────►├────┤ │collection.idxsnap       │ │
+│ └─────────────┘ │    │                  │    │ └─────────────────────────┘ │
+│ ┌─────────────┐ │    │                  │    │ ┌─────────────────────────┐ │
+│ │Meta Index   │ ├────┼─────────────────►├────┤ │collection.metasnap      │ │
+│ └─────────────┘ │    │                  │    │ └─────────────────────────┘ │
+│ ┌─────────────┐ │    │                  │    │ ┌─────────────────────────┐ │
+│ │Doc Index    │ ├────┼─────────────────►├────┤ │collection.docsnap       │ │
+│ └─────────────┘ │    │                  │    │ └─────────────────────────┘ │
+│                 │    │                  │    │ ┌─────────────────────────┐ │
+│ LSN: 12345      │    │                  │    │ │collection.lsnmeta       │ │
+│                 │    │                  │    │ └─────────────────────────┘ │
+└─────────────────┘    │  load_snapshots  │    └─────────────────────────────┘
+         ▲             │                  │                     │
+         │             │◄─────────────────┼─────────────────────┘
+         └─────────────┘                  │
+                                          │
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ATOMIC SNAPSHOT PROCESS                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Phase 1: Write to Temporary Files
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Memory                    Temporary Files              Permanent Files      │
+│ ┌─────────────┐          ┌─────────────────┐          ┌─────────────────┐   │
+│ │Vector Index │─────────►│.idxsnap.tempsnap│          │.idxsnap         │   │
+│ └─────────────┘          └─────────────────┘          └─────────────────┘   │
+│ ┌─────────────┐          ┌─────────────────┐          ┌─────────────────┐   │
+│ │Meta Index   │─────────►│.metasnap.tempsnap│         │.metasnap        │   │
+│ └─────────────┘          └─────────────────┘          └─────────────────┘   │
+│ ┌─────────────┐          ┌─────────────────┐          ┌─────────────────┐   │
+│ │Doc Index    │─────────►│.docsnap.tempsnap│          │.docsnap         │   │
+│ └─────────────┘          └─────────────────┘          └─────────────────┘   │
+│ ┌─────────────┐          ┌─────────────────┐          ┌─────────────────┐   │
+│ │LSN Data     │─────────►│.lsnmeta.tempsnap│          │.lsnmeta         │   │
+│ └─────────────┘          └─────────────────┘          └─────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ▼ fsync() all temporary files
+Phase 2: Atomic Replacement (All or Nothing)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              os.replace()                                   │
+│ ┌─────────────────┐                          ┌─────────────────┐            │
+│ │.idxsnap.tempsnap│─────────────────────────►│.idxsnap         │            │
+│ └─────────────────┘                          └─────────────────┘            │
+│ ┌─────────────────┐                          ┌─────────────────┐            │
+│ │.metasnap.tempsnap│────────────────────────►│.metasnap        │            │
+│ └─────────────────┘                          └─────────────────┘            │
+│ ┌─────────────────┐                          ┌─────────────────┐            │
+│ │.docsnap.tempsnap│─────────────────────────►│.docsnap         │            │
+│ └─────────────────┘                          └─────────────────┘            │
+│ ┌─────────────────┐                          ┌─────────────────┐            │
+│ │.lsnmeta.tempsnap│─────────────────────────►│.lsnmeta         │            │
+│ └─────────────────┘                          └─────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Benefits of This Approach:
+• Atomic: Either all snapshots update or none (crash-safe)
+• Consistent: Readers always see a complete, valid snapshot set
+• Durable: fsync() ensures data reaches disk before replacement
+
+This class provides functionality to save and load snapshots of collection indexes
+(vector, metadata, and document indexes) to and from the disk. It supports atomic
+operations through temporary files to ensure data integrity during persistence.
+
+The manager handles three types of index snapshots:
+1. Vector index snapshots (.idxsnap)
+2. Metadata index snapshots (.metasnap)
+3. Document index snapshots (.docsnap)
+4. LSN (Log Sequence Number) metadata (.lsnmeta)
+"""
 import logging
 import os
 import time
@@ -29,7 +110,30 @@ class SnapshotManager:
         self._logger = logger or logging.getLogger(__name__)
 
     def save_snapshots(self, name: str, version: CollectionVersion):
-        """Save snapshots for a collection to disk atomically.
+        """
+        Save snapshots for a collection to disk atomically.
+
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                        SAVE SNAPSHOTS FLOW                              │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────┐    ┌────────────────┐    ┌──────────────────┐
+        │ Collection    │    │ Serialize      │    │ Write to Temp    │
+        │ Version       │───►│ All Indexes    │───►│ Files + fsync    │
+        │ (Memory)      │    │                │    │                  │
+        └───────────────┘    └────────────────┘    └──────────────────┘
+                                                             │
+                                                             ▼
+        ┌───────────────┐    ┌────────────────┐    ┌──────────────────┐
+        │ Success       │◄───│ Atomic Replace │◄───│ All Temps Ready  │
+        │ All Updated   │    │ os.replace()   │    │                  │
+        └───────────────┘    └────────────────┘    └──────────────────┘
+                                     │
+                                     ▼ (On Error)
+                             ┌──────────────────┐
+                             │ Cleanup Temp     │
+                             │ Files (Rollback) │
+                             └──────────────────┘
 
         This method saves the vector, metadata, and document indexes to disk using
         temporary files to ensure atomicity. It first writes to temporary files and
@@ -52,6 +156,36 @@ class SnapshotManager:
 
     def load_snapshots(self, name: str, version: CollectionVersion) -> bool:
         """Load snapshots for a collection from disk.
+
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                        LOAD SNAPSHOTS FLOW                              │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │ Prerequisite Check: All Snapshot Files Must Exist                       │
+        │                                                                         │
+        │ ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
+        │ │.idxsnap     │  │.metasnap    │  │.docsnap     │  │.lsnmeta     │      │
+        │ │   ✓         │  │   ✓         │  │   ✓         │  │   ✓         │      │
+        │ └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘      │
+        │                                    │                                    │
+        │                                    ▼                                    │
+        │                            ┌─────────────┐                              │
+        │                            │ Load All    │                              │
+        │                            │ or None     │                              │
+        │                            └─────────────┘                              │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        Loading Process:
+        ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────┐
+        │ Read Binary     │    │ Deserialize     │    │ Populate Collection │
+        │ Snapshot Data   │───►│ Index Data      │───►│ Version in Memory   │
+        └─────────────────┘    └─────────────────┘    └─────────────────────┘
+
+        For each index type:
+        • Vector Index: .idxsnap  → version.vec_index.deserialize()
+        • Meta Index:   .metasnap → version.meta_index.deserialize()
+        • Doc Index:    .docsnap  → version.doc_index.deserialize()
 
         Attempts to load vector, metadata, and document index snapshots for the
         given collection. All three snapshots must exist for loading to succeed.
@@ -97,7 +231,69 @@ class SnapshotManager:
         return False
 
     def flush_indexes(self, name: str, version: CollectionVersion, to_temp_files: bool = True):
-        """Flush in-memory indexes to snapshot files.
+        """
+        Flush in-memory indexes to snapshot files.
+
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                      FLUSH INDEXES PROCESS                              │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        Path Selection Logic:
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │ to_temp_files = True (ATOMIC):      │ to_temp_files = False (DIRECT):   │
+        │                                     │                                   │
+        │ .idxsnap → .idxsnap.tempsnap        │ .idxsnap → .idxsnap               │
+        │ .metasnap → .metasnap.tempsnap      │ .metasnap → .metasnap             │
+        │ .docsnap → .docsnap.tempsnap        │ .docsnap → .docsnap               │
+        │ .lsnmeta → .lsnmeta.tempsnap        │ .lsnmeta → .lsnmeta               │
+        │                                     │                                   │
+        │ Then: os.replace() all at once      │ Direct write (no atomicity)       │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        Serialization and Persistence Pipeline:
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                                                                         │
+        │ ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌───────────┐  │
+        │ │Vector Index │───►│ serialize() │───►│write_bytes()│───►│ fsync()   │  │
+        │ └─────────────┘    └─────────────┘    └─────────────┘    └───────────┘  │
+        │                                                                         │
+        │ ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌───────────┐  │
+        │ │Meta Index   │───►│ serialize() │───►│write_bytes()│───►│ fsync()   │  │
+        │ └─────────────┘    └─────────────┘    └─────────────┘    └───────────┘  │
+        │                                                                         │
+        │ ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌───────────┐  │
+        │ │Doc Index    │───►│ serialize() │───►│write_bytes()│───►│ fsync()   │  │
+        │ └─────────────┘    └─────────────┘    └─────────────┘    └───────────┘  │
+        │                                                                         │
+        │ ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌───────────┐  │
+        │ │LSN Metadata │───►│JSON encode  │───►│write_bytes()│───►│ fsync()   │  │
+        │ └─────────────┘    └─────────────┘    └─────────────┘    └───────────┘  │
+        │                                                                         │
+        └─────────────────────────────────────────────────────────────────────────┘
+                                        ▼
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                        ATOMIC REPLACEMENT                               │
+        │                     (if to_temp_files=True)                             │
+        │                                                                         │
+        │ os.replace(.idxsnap.tempsnap,  .idxsnap)                                │
+        │ os.replace(.metasnap.tempsnap, .metasnap)                               │
+        │ os.replace(.docsnap.tempsnap,  .docsnap)                                │
+        │ os.replace(.lsnmeta.tempsnap,  .lsnmeta)                                │
+        │                                                                         │
+        │ → All four files updated atomically or none                             │
+        └─────────────────────────────────────────────────────────────────────────┘
+
+        Error Handling:
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │ If ANY error occurs during process:                                     │
+        │                                                                         │
+        │ 1. Catch exception                                                      │
+        │ 2. Clean up ALL temporary files                                         │
+        │ 3. Re-raise exception                                                   │
+        │ 4. Original snapshots remain unchanged                                  │
+        │                                                                         │
+        │ → Guarantees: Never leave partial/corrupted snapshot sets               │
+        └─────────────────────────────────────────────────────────────────────────┘
 
         Serializes the vector, metadata, and document indexes to disk, along with
         LSN metadata. Can write directly to the main snapshot files or use temporary
