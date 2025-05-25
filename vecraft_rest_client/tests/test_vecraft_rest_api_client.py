@@ -14,21 +14,19 @@ from vecraft_rest_client.vecraft_rest_api_client import VecraftFastAPIClient
 
 
 class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self): #NOSONAR
-        """Set up test fixtures before each test method."""
-        # Setup test vectors
-        rng = np.random.default_rng(42)  # Use seeded generator for reproducibility
+    def setUp(self):
+        # synchronous setup—no awaits needed
+        rng = np.random.default_rng(42)
         self.test_vector = rng.random(5)
         self.test_query_vector = rng.random(5)
 
-        # Create test data
         self.test_collection = "test_collection"
         self.test_record_id = "record_123"
         self.test_original_data = {"content": "Test content", "id": 123}
         self.test_metadata = {"source": "test", "timestamp": "2024-01-01"}
         self.test_checksum_algorithm = "sha256"
 
-        # Create a test DataPacket
+        # build packets & models
         self.data_packet = DataPacket.create_record(
             record_id=self.test_record_id,
             original_data=self.test_original_data,
@@ -36,8 +34,6 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             checksum_algorithm=self.test_checksum_algorithm,
             vector=self.test_vector
         )
-
-        # Create a test DataPacketModel
         self.data_packet_model = DataPacketModel(
             type="RECORD",
             record_id=self.test_record_id,
@@ -47,8 +43,6 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             vector=NumpyArray.from_numpy(self.test_vector),
             checksum=self.data_packet.checksum
         )
-
-        # Create a test QueryPacket
         self.query_packet = QueryPacket(
             query_vector=self.test_query_vector,
             k=10,
@@ -56,8 +50,6 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             where_document={"content": "test"},
             checksum_algorithm=self.test_checksum_algorithm
         )
-
-        # Create a test QueryPacketModel
         self.query_packet_model = QueryPacketModel(
             query_vector=NumpyArray.from_numpy(self.test_query_vector),
             k=10,
@@ -67,18 +59,17 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
             checksum=self.query_packet.checksum
         )
 
-        # Create the client
+        # client + mocked session
         self.client = VecraftFastAPIClient(base_url="https://testserver")
-
-        # Mock the httpx.AsyncClient
         self.mock_session = AsyncMock()
         self.client.session = self.mock_session
 
-    async def asyncTearDown(self): #NOSONAR
-        """Clean up after each test method."""
+    def tearDown(self):
+        # close the AsyncMock session in a quick run-loop
         if self.client and self.client.session:
-            # Ensure the session is closed
-            await self.client.session.aclose()
+            import asyncio
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self.client.session.aclose())
 
     async def test_context_manager(self):
         """Test the async context manager protocol."""
