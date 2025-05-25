@@ -82,7 +82,7 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 ┌────────────┐   WAL   ┌──────────────┐      ┌────────────┐
 │  Client    │◄───────►│ Collection   │◄────►│  Storage   │
 │  (REST/SDK)│         │  Service     │      │  Engine    │
-└────────────┘  MVCC   └────┬─────────┘      └────┬───────┘
+└────────────┘  MVCC   └────┬─────────┘      └─────┬──────┘
                             │                   mmap + SQLite
                             ▼
                      ┌─────────────┐
