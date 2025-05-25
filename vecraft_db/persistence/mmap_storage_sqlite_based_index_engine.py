@@ -1,3 +1,92 @@
+"""
+MMapSQLiteStorageIndexEngine Workflow Explanation
+=================================================
+
+This storage engine implements a dual-layer persistence system that combines:
+1. Memory-mapped file storage (MMapStorage) for raw data
+2. SQLite database for record location indexing
+
+CORE DESIGN PRINCIPLES:
+----------------------
+- **Atomic Operations**: Write operations are atomic - either both data and index
+  are updated successfully, or neither are (with rollback capability)
+- **Append-Only Storage**: New data is always appended to the mmap file
+- **Two-Phase Commit**: Records start as UNCOMMITTED, then marked COMMITTED only
+  after successful index updates
+- **Consistency Verification**: Built-in mechanisms to detect and repair
+  inconsistencies between data file and index
+
+MAIN WORKFLOW (write_and_index):
+-------------------------------
+1. **Initial Write**:
+   - Allocate space in mmap file
+   - Write raw data with status = UNCOMMITTED (0)
+   - This ensures data exists but won't be read until fully committed
+
+2. **Validation**:
+   - Check if record_id already exists in index
+   - Validate checksum consistency to prevent corruption
+
+3. **Index Management** (Critical Section):
+   - Mark any existing record with the same ID as deleted
+   - Remove old index entry
+   - Add new LocationPacket to SQLite index
+   - This step must succeed for data to become accessible
+
+4. **Commit Phase**:
+   - Mark the mmap record as COMMITTED (1)
+   - Record is now readable and accessible
+   - If this fails, index rollback occurs automatically
+
+5. **Error Handling**:
+   - On any failure, mark new record as deleted in index
+   - Restore previous record location if it existed
+   - Leave mmap data as uncommitted (cleanup happens at startup)
+
+CONSISTENCY VERIFICATION WORKFLOW:
+---------------------------------
+The verify_consistency() method performs startup recovery:
+
+1. **Size Validation**: Remove index entries pointing beyond actual file size
+2. **Uncommitted Cleanup**: Find records with status=0, remove from index,
+   mark storage slots as deleted
+3. **Location Mismatch**: Remove index entries where offset/size doesn't
+   match actual file location
+4. **Orphan Detection**: Log committed records in file but missing from index
+
+READ WORKFLOW:
+-------------
+- Query SQLite index for record location (offset, size)
+- Read directly from the mmap file at specified location
+- Only reads COMMITTED records (status=1)
+
+ALLOCATION WORKFLOW:
+-------------------
+- Request space from MMapStorage
+- Returns offset where new record can be written
+- Space is reserved but not yet marked as used
+
+CLEANUP WORKFLOW:
+----------------
+- Records marked as deleted remain in file but become inaccessible
+- Index maintains a deleted record list for potential space reuse
+- Physical cleanup happens during consistency verification
+
+KEY BENEFITS:
+------------
+- **Crash Recovery**: Uncommitted records are automatically cleaned up
+- **Atomic Updates**: No partial writes visible to readers
+- **Space Efficiency**: Append-only design with deleted space tracking
+- **Performance**: Direct mmap access for reads, SQLite for fast lookups
+- **Reliability**: Multiple consistency checks and automatic repair
+
+FAILURE SCENARIOS HANDLED:
+-------------------------
+- Process crash during writing (uncommitted data cleaned up at startup)
+- Index corruption (mismatched entries removed, orphans logged)
+- File truncation (index entries beyond file size removed)
+- Partial commits (rollback to previous state)
+"""
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
