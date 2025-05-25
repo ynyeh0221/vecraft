@@ -1,3 +1,349 @@
+"""
+CollectionInitializer Workflow Documentation
+
+Overview
+========
+
+The CollectionInitializer is a critical component of a database system that manages the initialization of collections
+with multi-version concurrency control (MVCC), write-ahead logging (WAL), and various indexing strategies.
+It ensures thread-safe initialization while maintaining data consistency and supporting recovery from snapshots or full rebuilds.
+
+High-Level Architecture
+======================
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    Collection Database System                   │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
+│  │    Catalog      │  │ MVCC Manager │  │CollectionInitializer│ │
+│  │   (Schemas)     │  │  (Versions)  │  │   (Coordinator)     │ │
+│  └─────────────────┘  └──────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
+│  │   Storage       │  │     WAL      │  │     Indexes         │ │
+│  │  (Records)      │  │  (Recovery)  │  │ Vec│Meta│Doc        │ │
+│  └─────────────────┘  └──────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
+│  │   Snapshots     │  │  Metadata    │  │    Thread Locks     │ │
+│  │ Vec│Meta│Doc    │  │    Store     │  │Global│Per-Collection│ │
+│  └─────────────────┘  └──────────────┘  └─────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+
+Main Workflow: Collection Initialization
+==========================================
+
+User Request: get_or_init_collection(name)
+│
+├─ FAST PATH ────────────────────────────────────────────────────┐
+│  │                                                             │
+│  ▼                                                             │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │            Acquire Metadata Lock                        │   │
+│  │                    │                                    │   │
+│  │  ┌─────────────────▼────────────────┐                   │   │
+│  │  │     Is Collection Initialized?   │ ─── YES ──────────┼───┼─► RETURN
+│  │  └─────────────────┬────────────────┘                   │   │
+│  │                    │ NO                                 │   │
+│  │                    ▼                                    │   │
+│  │  ┌─────────────────────────────────────────────────┐    │   │
+│  │  │          Ensure Metadata Exists                 │    │   │
+│  │  │  ┌─────────────────────────────────────────┐    │    │   │
+│  │  │  │ • Get schema from catalog               │    │    │   │
+│  │  │  │ • Create snapshot file paths            │    │    │   │
+│  │  │  │ • Initialize metadata structure         │    │    │   │
+│  │  │  │ • Set initialized = False               │    │    │   │
+│  │  │  └─────────────────────────────────────────┘    │    │   │
+│  │  └─────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                │
+├─ HEAVY INITIALIZATION ─────────────────────────────────────────┘
+│
+▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Acquire Per-Collection Lock                        │
+│                         │                                       │
+│   ┌─────────────────────▼───────────────────┐                   │
+│   │        Double-Check Initialization      │ ─── YES ──────────┼─► RETURN
+│   └─────────────────────┬───────────────────┘                   │
+│                         │ NO                                    │
+│                         ▼                                       │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              Initialize Resources                       │   │
+│   │                     │                                   │   │
+│   │              ┌──────▼─────────┐                         │   │
+│   │              │ See Detailed   │                         │   │
+│   │              │ Flow Below     │                         │   │
+│   │              └────────────────┘                         │   │
+│   └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+
+Detailed Resource Initialization Flow
+====================================
+
+_initialize_resources(name)
+│
+├─ PHASE 1: SETUP ───────────────────────────────────────────────┐
+│  │                                                             │
+│  ▼                                                             │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              Create MVCC Version                        │   │
+│  │  ┌─────────────────────────────────────────────────┐    │   │
+│  │  │ version = mvcc_manager.create_version(name)     │    │   │
+│  │  └─────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│  │                                                             │
+│  ▼                                                             │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                Wire Up Components                       │   │
+│  │  ┌─────────────────────────────────────────────────┐    │   │
+│  │  │ • version.wal = wal_factory(name.wal)           │    │   │
+│  │  │ • version.storage = storage_factory(...)        │    │   │
+│  │  │ • version.vec_index = vector_index_factory(...) │    │   │
+│  │  │ • version.meta_index = metadata_index_factory() │    │   │
+│  │  │ • version.doc_index = doc_index_factory()       │    │   │
+│  │  └─────────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                │
+├─ PHASE 2: CONSISTENCY & RECOVERY ─────────────────────────────┐│
+│  │                                                            ││
+│  ▼                                                            ││
+│  ┌─────────────────────────────────────────────────────────┐  ││
+│  │              Consistency Check                          │  ││
+│  │  ┌─────────────────────────────────────────────────┐    │  ││
+│  │  │ orphaned = version.storage.verify_consistency() │    │  ││
+│  │  │ if orphaned: log warning                        │    │  ││
+│  │  └─────────────────────────────────────────────────┘    │  ││
+│  └─────────────────────────────────────────────────────────┘  ││
+│  │                                                            ││
+│  ▼                                                            ││
+│  ┌─────────────────────────────────────────────────────────┐  ││
+│  │              Load Visible LSN                           │  ││
+│  │  ┌─────────────────────────────────────────────────┐    │  ││
+│  │  │ stored_lsn = load_visible_lsn(name)             │    │  ││
+│  │  │ • Read from {name}.lsnmeta file                 │    │  ││
+│  │  │ • Parse JSON for 'visible_lsn'                  │    │  ││
+│  │  │ • Default to 0 if file missing/corrupt          │    │  ││
+│  │  └─────────────────────────────────────────────────┘    │  ││
+│  └─────────────────────────────────────────────────────────┘  ││
+│  │                                                            ││
+│  ▼                                                            ││
+│  ┌─────────────────────────────────────────────────────────┐  ││
+│  │           Snapshot Loading Decision                     │  ││
+│  │                         │                               │  ││
+│  │   ┌─────────────────────▼────────────────────┐          │  ││
+│  │   │    load_snapshots(name, version)         │          │  ││
+│  │   └─────────────────────┬────────────────────┘          │  ││
+│  │                         │                               │  ││
+│  │      ┌─────SUCCESS──────┼────────FAILURE──────┐         │  ││
+│  │      ▼                  │                     ▼         │  ││
+│  │  ┌───────────┐          │              ┌─────────────┐  │  ││
+│  │  │ Log       │          │              │ Full        │  │  ││
+│  │  │ Success   │          │              │ Rebuild     │  │  ││
+│  │  └───────────┘          │              │             │  │  ││
+│  │                         │              │ ┌─────────┐ │  │  ││
+│  │                         │              │ │ Iterate │ │  │  ││
+│  │                         │              │ │ Records │ │  │  ││
+│  │                         │              │ │ Build   │ │  │  ││
+│  │                         │              │ │ Indexes │ │  │  ││
+│  │                         │              │ └─────────┘ │  │  ││
+│  │                         │              └─────────────┘  │  ││
+│  │                         │                               │  ││
+│  └─────────────────────────┼───────────────────────────────┘  ││
+│                            │                                  ││
+├─ PHASE 3: WAL REPLAY ──────┼─────────────────────────────────┐││
+│  │                         │                                 │││
+│  ▼                         │                                 │││
+│  ┌─────────────────────────▼───────────────────────────────┐ │││
+│  │                   WAL Replay                            │ │││
+│  │  ┌─────────────────────────────────────────────────┐    │ │││
+│  │  │ max_lsn = replay_wal(version, name, stored_lsn) │    │ │││
+│  │  │                                                 │    │ │││
+│  │  │ For each WAL entry:                             │    │ │││
+│  │  │   if entry.lsn <= stored_lsn: skip              │    │ │││
+│  │  │   if entry.phase == 'prepare':                  │    │ │││
+│  │  │     replay_entry(entry, version)                │    │ │││
+│  │  │     max_lsn = max(max_lsn, entry.lsn)           │    │ │││
+│  │  └─────────────────────────────────────────────────┘    │ │││
+│  └─────────────────────────────────────────────────────────┘ │││
+│  │                                                           │││
+│  ▼                                                           │││
+│  ┌─────────────────────────────────────────────────────────┐ │││
+│  │            Update Visible LSN                           │ │││
+│  │  ┌─────────────────────────────────────────────────┐    │ │││
+│  │  │ mvcc_manager.visible_lsn[name] =                │    │ │││
+│  │  │     max(stored_lsn, max_lsn)                    │    │ │││
+│  │  └─────────────────────────────────────────────────┘    │ │││
+│  └─────────────────────────────────────────────────────────┘ │││
+│                                                              │││
+├─ PHASE 4: FINALIZATION ─────────────────────────────────────┐│││
+│  │                                                          ││││
+│  ▼                                                          ││││
+│  ┌─────────────────────────────────────────────────────────┐││││
+│  │                Commit Version                           │││││
+│  │  ┌─────────────────────────────────────────────────┐    │││││
+│  │  │ mvcc_manager.commit_version(name, version)      │    │││││
+│  │  └─────────────────────────────────────────────────┘    │││││
+│  └─────────────────────────────────────────────────────────┘││││
+│  │                                                          ││││
+│  ▼                                                          ││││
+│  ┌─────────────────────────────────────────────────────────┐││││
+│  │             Mark as Initialized                         │││││
+│  │  ┌─────────────────────────────────────────────────┐    │││││
+│  │  │ with metadata_lock:                             │    │││││
+│  │  │   collection_metadata[name]['initialized'] =    │    │││││
+│  │  │       True                                      │    │││││
+│  │  └─────────────────────────────────────────────────┘    │││││
+│  └─────────────────────────────────────────────────────────┘││││
+│                                                             ││││
+└─────────────────────────────────────────────────────────────┘│││
+ └─────────────────────────────────────────────────────────────┘││
+  └─────────────────────────────────────────────────────────────┘│
+   └─────────────────────────────────────────────────────────────┘
+
+Component Relationships
+======================
+
+Collection Request
+         │
+         ▼
+┌───────────────────┐
+│ CollectionInit    │────────────────┐
+│ (Coordinator)     │                │
+└────────┬──────────┘                │
+         │                           │
+         ▼                           ▼
+    ┌──────────┐              ┌─────────────┐
+    │ Metadata │              │    Locks    │
+    │  Store   │              │ ┌─────────┐ │
+    │          │              │ │ Global  │ │
+    └────┬─────┘              │ │  Meta   │ │
+         │                    │ └─────────┘ │
+         ▼                    │ ┌─────────┐ │
+    ┌──────────┐              │ │   Per   │ │
+    │ Catalog  │              │ │ Collect │ │
+    │(Schemas) │              │ └─────────┘ │
+    └────┬─────┘              └─────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    MVCC Version                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │     WAL     │  │   Storage   │  │        Indexes          │  │
+│  │  ┌───────┐  │  │  ┌───────┐  │  │  ┌─────┐ ┌─────┐ ┌───┐  │  │
+│  │  │ Entry │  │  │  │Record │  │  │  │Vec  │ │Meta │ │Doc│  │  │
+│  │  │ Entry │  │  │  │Record │  │  │  │Index│ │Index│ │Idx│  │  │
+│  │  │  ...  │  │  │  │  ...  │  │  │  └─────┘ └─────┘ └───┘  │  │
+│  │  └───────┘  │  │  └───────┘  │  └─────────────────────────┘  │
+│  └─────────────┘  └─────────────┘                               │
+└─────────────────────────────────────────────────────────────────┘
+
+Thread Safety Model
+==================
+
+Thread 1                    Thread 2                    Thread 3
+    │                          │                          │
+    │ get_or_init_collection   │ get_or_init_collection   │ other_operation
+    │        (name="A")        │        (name="A")        │     (name="B")
+    │                          │                          │
+    ▼                          │                          │
+┌─────────────────┐            │                          │
+│ metadata_lock   │◄───────────┼──────────────────────────┼─── BLOCKS
+│   (GLOBAL)      │            │                          │    ALL THREADS
+└─────────────────┘            │                          │
+    │                          │                          │
+    │ (fast check passes)      │                          │
+    │                          │                          │
+    ▼                          │                          │
+┌─────────────────┐            │                          │
+│ init_locks["A"] │            │                          │
+│ (PER-COLLECTION)│            │                          │
+└─────────────────┘            │                          │
+    │                          │                          │
+    │ (heavy init starts)      │                          │
+    │                          ▼                          │
+    │                    ┌─────────────────┐              │
+    │                    │ metadata_lock   │              │
+    │                    │   (GLOBAL)      │              │
+    │                    └─────────────────┘              │
+    │                          │                          │
+    │                          │ (fast check passes)      │
+    │                          │                          │
+    │                          ▼                          │
+    │                    ┌─────────────────┐              │
+    │                    │ init_locks["A"] │◄─────────────┼─── BLOCKS
+    │                    │ (PER-COLLECTION)│ (WAITS)      │    Thread 2
+    │                    └─────────────────┘              │
+    │                                                     │
+    │ (init completes)                                    │
+    │                                                     ▼
+    ▼                                                ┌─────────────────┐
+ RETURN                                              │ metadata_lock   │
+                                                     │   (GLOBAL)      │
+                                                     └─────────────────┘
+                                                          │
+                                                          │ (operates on B)
+                                                          │
+                                                          ▼
+                                                    ┌─────────────────┐
+                                                    │ init_locks["B"] │
+                                                    │ (INDEPENDENT)   │
+                                                    └─────────────────┘
+
+Error Handling & Recovery Scenarios
+===================================
+
+Initialization Scenarios:
+
+1. CLEAN START (No snapshots, empty WAL)
+   ┌─────────────────────────────────────┐
+   │ stored_lsn = 0                      │
+   │ load_snapshots() → False            │
+   │ full_rebuild() → Build all indexes  │
+   │ replay_wal() → No entries to replay │
+   │ Result: Fresh collection            │
+   └─────────────────────────────────────┘
+
+2. SNAPSHOT RECOVERY (Snapshots exist)
+   ┌─────────────────────────────────────┐
+   │ stored_lsn = 1000                   │
+   │ load_snapshots() → True             │
+   │ replay_wal() → Replay LSN 1001+     │
+   │ Result: Fast recovery               │
+   └─────────────────────────────────────┘
+
+3. CORRUPTION RECOVERY (Snapshots fail)
+   ┌─────────────────────────────────────┐
+   │ stored_lsn = 1000                   │
+   │ load_snapshots() → False (corrupt)  │
+   │ full_rebuild() → Rebuild everything │
+   │ replay_wal() → Replay LSN 1001+     │
+   │ Result: Slow but complete recovery  │
+   └─────────────────────────────────────┘
+
+4. ORPHANED RECORDS
+   ┌─────────────────────────────────────┐
+   │ consistency_check() → Find orphans  │
+   │ Log warning about orphaned records  │
+   │ Continue with normal initialization │
+   │ Result: System remains operational  │
+   └─────────────────────────────────────┘
+
+Key Design Principles
+====================
+
+1. **Double-Checked Locking**: Fast path with global lock, heavy initialization with per-collection locks
+2. **MVCC Integration**: All operations work within versioned contexts
+3. **WAL-First Recovery**: Write-ahead log ensures durability and consistency
+4. **Graceful Degradation**: System continues operating even with some corruption
+5. **Snapshot Optimization**: Fast startup when snapshots are available
+6. **Thread Safety**: Multiple collections can initialize concurrently
+7. **Consistency Verification**: Storage integrity is verified on every startup
+
+This design ensures that the database system can reliably initialize collections while maintaining high availability,
+consistency, and performance even under concurrent access patterns.
+"""
 import logging
 import time
 from pathlib import Path
