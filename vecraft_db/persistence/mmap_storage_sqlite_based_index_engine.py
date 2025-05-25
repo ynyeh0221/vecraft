@@ -6,6 +6,30 @@ This storage engine implements a dual-layer persistence system that combines:
 1. Memory-mapped file storage (MMapStorage) for raw data
 2. SQLite database for record location indexing
 
+SYSTEM ARCHITECTURE:
+====================
+┌─────────────────────────────────────┐
+│        Application Layer            │
+└─────────────┬───────────────────────┘
+              │
+┌─────────────▼───────────────────────┐
+│  MMapSQLiteStorageIndexEngine       │
+│  ┌─────────────┐ ┌─────────────────┐│
+│  │ MMapStorage │ │ SQLiteRecordLoc ││
+│  │   (Data)    │ │   (Index)       ││
+│  │             │ │                 ││
+│  │ ┌─────────┐ │ │ ┌─────────────┐ ││
+│  │ │ Record1 │ │ │ │record_id    │ ││
+│  │ │ Status  │ │ │ │offset       │ ││
+│  │ │ Data    │ │ │ │size         │ ││
+│  │ └─────────┘ │ │ │checksum     │ ││
+│  │ ┌─────────┐ │ │ └─────────────┘ ││
+│  │ │ Record2 │ │ │                 ││
+│  │ │ ...     │ │ │                 ││
+│  │ └─────────┘ │ │                 ││
+│  └─────────────┘ └─────────────────┘│
+└─────────────────────────────────────┘
+
 CORE DESIGN PRINCIPLES:
 ----------------------
 - **Atomic Operations**: Write operations are atomic - either both data and index
@@ -17,59 +41,160 @@ CORE DESIGN PRINCIPLES:
   inconsistencies between data file and index
 
 MAIN WORKFLOW (write_and_index):
--------------------------------
-1. **Initial Write**:
-   - Allocate space in mmap file
-   - Write raw data with status = UNCOMMITTED (0)
-   - This ensures data exists but won't be read until fully committed
+=================================
 
-2. **Validation**:
-   - Check if record_id already exists in index
-   - Validate checksum consistency to prevent corruption
+ATOMIC WRITE SEQUENCE:
+┌─────────────────────────────────────────────────────────────┐
+│ 1. ALLOCATE & WRITE (Uncommitted)                           │
+│    ┌─────────────┐                                          │
+│    │ MMap File   │ ← Write data with status=0               │
+│    │ [0][data...]│   (UNCOMMITTED)                          │
+│    └─────────────┘                                          │
+│                                                             │
+│ 2. VALIDATE                                                 │
+│    ┌─────────────┐                                          │
+│    │SQLite Index │ ← Check existing record_id               │
+│    │record_id: X │   Validate checksums                     │
+│    └─────────────┘                                          │
+│                                                             │
+│ 3. UPDATE INDEX (Critical Section)                          │
+│    ┌─────────────┐                                          │
+│    │SQLite Index │ ← Mark old record deleted                │
+│    │record_id: X │   Add new LocationPacket                 │
+│    │status: DEL  │                                          │
+│    │record_id: X │                                          │
+│    │offset: new  │                                          │
+│    └─────────────┘                                          │
+│                                                             │
+│ 4. COMMIT                                                   │
+│    ┌─────────────┐                                          │
+│    │ MMap File   │ ← Change status=1                        │
+│    │ [1][data...]│   (COMMITTED)                            │
+│    └─────────────┘                                          │
+│                                                             │
+│ 5. ERROR HANDLING (if any step fails)                       │
+│    ┌─────────────┐   ┌─────────────┐                        │
+│    │ MMap File   │   │SQLite Index │                        │
+│    │ [0][data...]│   │Rollback to  │                        │
+│    │(stays       │   │previous     │                        │
+│    │ uncommitted)│   │state        │                        │
+│    └─────────────┘   └─────────────┘                        │
+└─────────────────────────────────────────────────────────────┘
 
-3. **Index Management** (Critical Section):
-   - Mark any existing record with the same ID as deleted
-   - Remove old index entry
-   - Add new LocationPacket to SQLite index
-   - This step must succeed for data to become accessible
-
-4. **Commit Phase**:
-   - Mark the mmap record as COMMITTED (1)
-   - Record is now readable and accessible
-   - If this fails, index rollback occurs automatically
-
-5. **Error Handling**:
-   - On any failure, mark new record as deleted in index
-   - Restore previous record location if it existed
-   - Leave mmap data as uncommitted (cleanup happens at startup)
+RECORD STATE TRANSITIONS:
+┌──────────┐    write_and_index()    ┌───────────┐
+│   NEW    │ ───────────────────────▶│UNCOMMITTED│
+│ (empty)  │                         │(status=0) │
+└──────────┘                         └─────┬─────┘
+                                           │
+                                    index update
+                                       success
+                                           │
+                                           ▼
+┌──────────┐   consistency_check()   ┌───────────┐
+│ DELETED  │ ◀───────────────────────│COMMITTED  │
+│(marked)  │      (if orphaned)      │(status=1) │
+└──────────┘                         └───────────┘
 
 CONSISTENCY VERIFICATION WORKFLOW:
----------------------------------
-The verify_consistency() method performs startup recovery:
+==================================
 
-1. **Size Validation**: Remove index entries pointing beyond actual file size
-2. **Uncommitted Cleanup**: Find records with status=0, remove from index,
-   mark storage slots as deleted
-3. **Location Mismatch**: Remove index entries where offset/size doesn't
-   match actual file location
-4. **Orphan Detection**: Log committed records in file but missing from index
+STARTUP RECOVERY PROCESS:
+┌─────────────────────────────────────────────────────────────┐
+│ 1. VACUUM SIZE ORPHANS                                      │
+│    ┌─────────────────┐    ┌─────────────────┐               │
+│    │ SQLite Index    │    │ MMap File       │               │
+│    │ record_id: A    │    │ [1][data_A]     │ ✓ Valid       │
+│    │ offset: 100     │    │ [1][data_B]     │               │
+│    │                 │    │ [EOF]           │               │
+│    │ record_id: C    │    │                 │               │
+│    │ offset: 300     │    │ <- Beyond EOF!  │ ✗ Remove      │
+│    └─────────────────┘    └─────────────────┘               │
+│                                                             │
+│ 2. CLEANUP UNCOMMITTED                                      │
+│    ┌─────────────────┐                                      │
+│    │ MMap File       │                                      │
+│    │ [1][data_A] ✓   │ ← Committed, keep                    │
+│    │ [0][data_B] ✗   │ ← Uncommitted, remove from index     │
+│    │ [1][data_C] ✓   │ ← Committed, keep                    │
+│    └─────────────────┘                                      │
+│                                                             │
+│ 3. FIX LOCATION MISMATCHES                                  │
+│    Index says offset=200, but file has record at offset=250 │
+│    → Remove from index (will become orphaned)               │
+│                                                             │
+│ 4. LOG ORPHANED BLOCKS                                      │
+│    Committed records in file but not in index               │
+│    → Log warning for manual recovery                        │
+└─────────────────────────────────────────────────────────────┘
+
+FILE LAYOUT STRUCTURE:
+┌─────────────────────────────────────────────────────────────┐
+│ MMAP FILE LAYOUT:                                           │
+│                                                             │
+│ Offset 0:    [Status][Size][RecordID][Checksum][Data...]    │
+│              │   1   │ 4  │   32    │   8     │  N bytes    │
+│              │       │    │         │         │             │
+│ Offset 45:   [Status][Size][RecordID][Checksum][Data...]    │
+│              │   0   │ 4  │   32    │   8     │  M bytes    │
+│              │(Uncom)│    │         │         │             │
+│              │       │    │         │         │             │
+│ Offset 90:   [Status][Size][RecordID][Checksum][Data...]    │
+│              │   1   │ 4  │   32    │   8     │  P bytes    │
+│                                                             │
+│ Status Byte: 0 = UNCOMMITTED, 1 = COMMITTED                 │
+└─────────────────────────────────────────────────────────────┘
+
+SQLITE INDEX STRUCTURE:
+┌─────────────────────────────────────────────────────────────┐
+│ TABLE: record_locations                                     │
+│ ┌─────────────┬─────────┬─────────┬─────────────┬─────────┐ │
+│ │ record_id   │ offset  │  size   │  checksum   │ status  │ │
+│ │   (TEXT)    │ (INT)   │ (INT)   │   (TEXT)    │ (TEXT)  │ │
+│ ├─────────────┼─────────┼─────────┼─────────────┼─────────┤ │
+│ │ "record_A"  │   0     │   45    │ "abc123"    │"ACTIVE" │ │
+│ │ "record_B"  │   90    │   55    │ "def456"    │"ACTIVE" │ │
+│ │ "record_C"  │   45    │   45    │ "ghi789"    │"DELETED"│ │
+│ └─────────────┴─────────┴─────────┴─────────────┴─────────┘ │
+└─────────────────────────────────────────────────────────────┘
 
 READ WORKFLOW:
--------------
-- Query SQLite index for record location (offset, size)
-- Read directly from the mmap file at specified location
-- Only reads COMMITTED records (status=1)
+=============
+┌──────────────┐    1. Query by record_id    ┌──────────────┐
+│              │ ────────────────────────── ▶│              │
+│ Application  │                             │SQLite Index  │
+│              │ ◀───────────────────────────│              │
+└──────┬───────┘  2. Return LocationPacket   └──────────────┘
+       │             (offset, size)
+       │
+       │ 3. Read from mmap
+       │    at offset
+       ▼
+┌──────────────┐
+│  MMap File   │
+│ [1][data...] │ ← Only reads COMMITTED records
+└──────────────┘
 
 ALLOCATION WORKFLOW:
--------------------
-- Request space from MMapStorage
-- Returns offset where new record can be written
-- Space is reserved but not yet marked as used
+===================
+┌─────────────┐  allocate(size)  ┌─────────────┐
+│ Application │ ────────────────▶│ MMapStorage │
+│             │                  │             │
+│             │ ◀────────────────│             │
+└─────────────┘  return offset   └─────────────┘
+                                        │
+                Space reserved but      │
+                not yet written         ▼
+                                 ┌─────────────┐
+                                 │  MMap File  │
+                                 │ [.......][  │ ← New space
+                                 │           ] │   allocated
+                                 └─────────────┘
 
 CLEANUP WORKFLOW:
 ----------------
 - Records marked as deleted remain in file but become inaccessible
-- Index maintains a deleted record list for potential space reuse
+- Index maintains deleted record list for potential space reuse
 - Physical cleanup happens during consistency verification
 
 KEY BENEFITS:
@@ -82,7 +207,7 @@ KEY BENEFITS:
 
 FAILURE SCENARIOS HANDLED:
 -------------------------
-- Process crash during writing (uncommitted data cleaned up at startup)
+- Process crash during write (uncommitted data cleaned up at startup)
 - Index corruption (mismatched entries removed, orphans logged)
 - File truncation (index entries beyond file size removed)
 - Partial commits (rollback to previous state)
