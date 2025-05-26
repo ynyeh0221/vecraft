@@ -1,3 +1,159 @@
+"""
+WriteManager Workflow Diagram
+============================
+
+Two-Phase Write Operations with Rollback Support
+
+INSERT OPERATION FLOW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                INSERT WORKFLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │   Client Call   │───▶│              PHASE 1: STORAGE                    │    │
+│  │  storage_insert │    │                                                  │    │
+│  └─────────────────┘    │  1. Get old location & prepare preimage          │    │
+│                         │     ├─ Record exists? → Load preimage            │    │
+│                         │     └─ New record? → Create nonexistent packet   │    │
+│                         │                                                  │    │
+│                         │  2. Write to storage                             │    │
+│                         │     ├─ Allocate space                            │    │
+│                         │     ├─ Create LocationPacket                     │    │
+│                         │     └─ Write data & update index                 │    │
+│                         │                                                  │    │
+│                         │  3. Return preimage                              │    │
+│                         │     (for index operations)                       │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        │ SUCCESS                                │
+│                                        ▼                                        │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │   Client Call   │───▶│              PHASE 2: INDEXES                    │    │
+│  │  index_insert   │    │                                                  │    │
+│  └─────────────────┘    │  Decision: New Record vs Update?                 │    │
+│                         │                                                  │    │
+│                         │  ┌─ NEW RECORD (preimage.is_nonexistent()) ─────┐│    │
+│                         │  │  • meta_index.add()                          ││    │
+│                         │  │  • doc_index.add()                           ││    │
+│                         │  │  • vec_index.add()                           ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         │                                                  │    │
+│                         │  ┌─ EXISTING RECORD (update) ───────────────────┐│    │
+│                         │  │  • meta_index.update(old, new)               ││    │
+│                         │  │  • doc_index.update(old, new)                ││    │
+│                         │  │  • vec_index.delete(record_id)               ││    │
+│                         │  │  • vec_index.add(new_packet)                 ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+DELETE OPERATION FLOW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                DELETE WORKFLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │   Client Call   │───▶│              PHASE 1: STORAGE                    │    │
+│  │  storage_delete │    │                                                  │    │
+│  └─────────────────┘    │  1. Get old location & preimage                  │    │
+│                         │     ├─ Record exists? → Load preimage            │    │
+│                         │     └─ Not found? → Return nonexistent packet    │    │
+│                         │                                                  │    │
+│                         │  2. Mark deleted & remove from storage           │    │
+│                         │     ├─ storage.mark_deleted()                    │    │
+│                         │     └─ storage.delete_record()                   │    │
+│                         │                                                  │    │
+│                         │  3. Return preimage                              │    │
+│                         │     (for index cleanup)                          │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        │ SUCCESS                                │
+│                                        ▼                                        │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │   Client Call   │───▶│              PHASE 2: INDEXES                    │    │
+│  │  index_delete   │    │                                                  │    │
+│  └─────────────────┘    │  Check: Record existed?                          │    │
+│                         │                                                  │    │
+│                         │  ┌─ RECORD EXISTED ─────────────────────────────┐│    │
+│                         │  │  • meta_index.delete(preimage)               ││    │
+│                         │  │  • doc_index.delete(preimage)                ││    │
+│                         │  │  • vec_index.delete(record_id)               ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         │                                                  │    │
+│                         │  ┌─ RECORD DIDN'T EXIST ────────────────────────┐│    │
+│                         │  │  • Skip index operations                     ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+ROLLBACK MECHANISMS:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              ROLLBACK STRATEGIES                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  STORAGE ROLLBACK (Insert):                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  • Mark new location as deleted                                         │    │
+│  │  • Delete record from storage index                                     │    │
+│  │  • If old location existed, restore it                                  │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  STORAGE ROLLBACK (Delete):                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  • Restore record to storage index with old LocationPacket              │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  INDEX ROLLBACK (Insert):                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  • vec_index: delete new, add old (if existed)                          │    │
+│  │  • doc_index: delete new, add old (if existed)                          │    │
+│  │  • meta_index: delete new, add old (if existed)                         │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  INDEX ROLLBACK (Delete):                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  • Restore all indexes with preimage data                               │    │
+│  │  • Operations executed in reverse order                                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+ERROR HANDLING FLOW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                 │
+│  Exception in Phase 1 (Storage) ──┐                                             │
+│                                   │                                             │
+│                                   ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────┐                │
+│  │ 1. Log error with full stack trace                          │                │
+│  │ 2. Execute storage-specific rollback                        │                │
+│  │ 3. Re-raise exception (operation fails)                     │                │
+│  └─────────────────────────────────────────────────────────────┘                │
+│                                                                                 │
+│  Exception in Phase 2 (Indexes) ──┐                                             │
+│                                   │                                             │
+│                                   ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────┐                │
+│  │ 1. Log error with full stack trace                          │                │
+│  │ 2. Execute index-specific rollback                          │                │
+│  │ 3. Re-raise exception (storage remains, indexes restored)   │                │
+│  └─────────────────────────────────────────────────────────────┘                │
+│                                                                                 │
+│  Note: Storage and index operations are independent phases,                     │
+│        allowing for partial success scenarios                                   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+KEY DESIGN PRINCIPLES:
+• Two-phase operations enable fine-grained control and recovery
+• Preimage capture allows for proper rollback and update detection
+• Vector index uses delete-then-add for updates (safer than direct update)
+• Metadata and document indexes support direct updates
+• Each phase has independent rollback mechanisms
+• Operations are logged for debugging and monitoring
+"""
 from vecraft_data_model.data_packet import DataPacket
 from vecraft_data_model.index_packets import LocationPacket
 from vecraft_exception_model.exception import StorageFailureException
