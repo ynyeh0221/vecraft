@@ -1,3 +1,236 @@
+"""
+SearchManager Workflow Diagram
+==============================
+
+Hybrid Search System: Combining Vector Similarity with Traditional Filtering
+
+OVERALL SEARCH FLOW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              SEARCH PIPELINE                                    │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │   Client Call   │───▶│                STAGE 1: FILTERING                │    │
+│  │  search()       │    │                                                  │    │
+│  └─────────────────┘    │  Goal: Narrow down candidate set before          │    │
+│                         │        expensive vector operations               │    │
+│                         │                                                  │    │
+│                         │  Input: QueryPacket with optional filters        │    │
+│                         │  ├─ where (metadata filter)                      │    │
+│                         │  ├─ where_document (document filter)             │    │
+│                         │  ├─ query_vector (for similarity)                │    │
+│                         │  └─ k (number of results)                        │    │
+│                         │                                                  │    │
+│                         │  Output: Set of allowed record IDs               │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        ▼                                        │
+│                         ┌──────────────────────────────────────────────────┐    │
+│                         │              STAGE 2: VECTOR SEARCH              │    │
+│                         │                                                  │    │
+│                         │  Goal: Find similar vectors within allowed set   │    │
+│                         │                                                  │    │
+│                         │  Input: Query vector + allowed IDs               │    │
+│                         │  Process: vec_index.search()                     │    │
+│                         │  Output: List of (record_id, distance) tuples    │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        ▼                                        │
+│                         ┌──────────────────────────────────────────────────┐    │
+│                         │            STAGE 3: DATA FETCHING                │    │
+│                         │                                                  │    │
+│                         │  Goal: Retrieve complete record data             │    │
+│                         │                                                  │    │
+│                         │  Input: List of (record_id, distance)            │    │
+│                         │  Process: Fetch full records from storage        │    │
+│                         │  Output: List of SearchDataPacket objects        │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+DETAILED FILTERING STAGE:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              FILTER APPLICATION                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                     PROGRESSIVE FILTERING                               │    │
+│  │                                                                         │    │
+│  │  Initial State: allowed_ids = None (no restrictions)                    │    │
+│  │                                                                         │    │
+│  │  ┌─ METADATA FILTER (if query_packet.where exists) ─────────────────┐   │    │
+│  │  │                                                                  │   │    │
+│  │  │  1. Query metadata index: meta_index.get_matching_ids(where)     │   │    │
+│  │  │  2. Result: Set of record IDs matching metadata criteria         │   │    │
+│  │  │  3. Update allowed_ids = metadata_results                        │   │    │
+│  │  │                                                                  │   │    │
+│  │  │  ┌─ EARLY EXIT CHECK ─────────────────────────────────────────┐  │   │    │
+│  │  │  │ If allowed_ids is empty set → return [] immediately        │  │   │    │
+│  │  │  │ (No point in continuing if no records match metadata)      │  │   │    │
+│  │  │  └────────────────────────────────────────────────────────────┘  │   │    │
+│  │  └──────────────────────────────────────────────────────────────────┘   │    │
+│  │                                         │                               │    │
+│  │                                         ▼                               │    │
+│  │  ┌─ DOCUMENT FILTER (if query_packet.where_document exists) ─────────┐  │    │
+│  │  │                                                                   │  │    │
+│  │  │  1. Query document index: doc_index.get_matching_ids()            │  │    │
+│  │  │     ├─ Pass current allowed_ids to intersect results              │  │    │
+│  │  │     └─ Apply where_document criteria                              │  │    │
+│  │  │  2. Result: Set of IDs matching both metadata AND document        │  │    │
+│  │  │  3. Update allowed_ids = intersection_results                     │  │    │
+│  │  │                                                                   │  │    │
+│  │  │  ┌─ EARLY EXIT CHECK ─────────────────────────────────────────┐   │  │    │
+│  │  │  │ If allowed_ids is empty set → return [] immediately        │   │  │    │
+│  │  │  │ (No records match both filters)                            │   │  │    │
+│  │  │  └────────────────────────────────────────────────────────────┘   │  │    │
+│  │  └───────────────────────────────────────────────────────────────────┘  │    │
+│  │                                                                         │    │
+│  │  Final State: allowed_ids = Set of IDs passing all filters              │    │
+│  │               OR None if no filters were applied                        │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+SEARCH EXECUTION PATHS:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              EXECUTION SCENARIOS                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  SCENARIO 1: No Filters Applied                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  query_packet.where = None                                              │    │
+│  │  query_packet.where_document = None                                     │    │
+│  │                                                                         │    │
+│  │  Flow: allowed_ids = None → Vector search on entire index               │    │
+│  │        → Return top k most similar vectors                              │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  SCENARIO 2: Metadata Filter Only                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  query_packet.where = {...}                                             │    │
+│  │  query_packet.where_document = None                                     │    │
+│  │                                                                         │    │
+│  │  Flow: Filter by metadata → allowed_ids = {id1, id2, ...}               │    │
+│  │        → Vector search only on allowed_ids                              │    │
+│  │        → Return top k from filtered set                                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  SCENARIO 3: Both Filters Applied                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  query_packet.where = {...}                                             │    │
+│  │  query_packet.where_document = {...}                                    │    │
+│  │                                                                         │    │
+│  │  Flow: Filter by metadata → temp_ids = {id1, id2, id3, id4}             │    │
+│  │        → Filter by document → allowed_ids = {id2, id4}                  │    │
+│  │        → Vector search only on allowed_ids                              │    │
+│  │        → Return top k from doubly-filtered set                          │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  SCENARIO 4: Filter Returns Empty Set                                           │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  query_packet.where = {...}  (matches no records)                       │    │
+│  │                                                                         │    │
+│  │  Flow: Filter by metadata → allowed_ids = {}                            │    │
+│  │        → Short-circuit: return [] immediately                           │    │
+│  │        → Skip vector search entirely (performance optimization)         │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+VECTOR SEARCH DETAILS:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              VECTOR SEARCH STAGE                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                     SIMILARITY COMPUTATION                              │    │
+│  │                                                                         │    │
+│  │  Input Parameters:                                                      │    │
+│  │  ├─ query_vector: The vector to find similar vectors for                │    │
+│  │  ├─ k: Maximum number of results to return                              │    │
+│  │  └─ allowed_ids: Optional set to restrict search space                  │    │
+│  │                                                                         │    │
+│  │  Process:                                                               │    │
+│  │  1. vec_index.search(query_vector, k, allowed_ids)                      │    │
+│  │  2. Compute similarity/distance metrics                                 │    │
+│  │  3. Sort by similarity (closest matches first)                          │    │
+│  │  4. Return top k results                                                │    │
+│  │                                                                         │    │
+│  │  Output: List[(record_id, distance)]                                    │    │
+│  │  ├─ record_id: String identifier for the matching record                │    │
+│  │  └─ distance: Float similarity metric (lower = more similar)            │    │
+│  │                                                                         │    │
+│  │  Performance Note:                                                      │    │
+│  │  • Search time is logged for monitoring                                 │    │
+│  │  • Filtering reduces search space, improving performance                │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+DATA FETCHING & RESULT PACKAGING:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              RESULT CONSTRUCTION                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                     FETCH COMPLETE RECORDS                              │    │
+│  │                                                                         │    │
+│  │  Input: List[(record_id, distance)] from vector search                  │    │
+│  │                                                                         │    │
+│  │  For each (record_id, distance) pair:                                   │    │
+│  │                                                                         │    │
+│  │  1. Fetch Complete Record                                               │    │
+│  │     └─ record = get_record_func(version, record_id)                     │    │
+│  │                                                                         │    │
+│  │  2. Handle Missing Records                                              │    │
+│  │     ├─ If record not found in storage:                                  │    │
+│  │     │   ├─ Log warning (index/storage inconsistency)                    │    │
+│  │     │   └─ Skip this result                                             │    │
+│  │     └─ If record found: continue processing                             │    │
+│  │                                                                         │    │
+│  │  3. Package Result                                                      │    │
+│  │     └─ Create SearchDataPacket(data_packet=record, distance=distance)   │    │
+│  │                                                                         │    │
+│  │  Output: List[SearchDataPacket]                                         │    │
+│  │  ├─ Each packet contains complete record data + similarity score        │    │
+│  │  ├─ Results ordered by similarity (closest first)                       │    │
+│  │  └─ Missing records excluded from final results                         │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+PERFORMANCE OPTIMIZATIONS:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              OPTIMIZATION STRATEGIES                            │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  1. SHORT-CIRCUIT EVALUATION                                                    │
+│     • If any filter returns empty set, skip remaining operations                │
+│     • Avoids expensive vector computations when no results possible             │
+│                                                                                 │
+│  2. PROGRESSIVE FILTERING                                                       │
+│     • Apply cheapest filters first (metadata, then document)                    │
+│     • Each filter narrows the candidate set for subsequent operations           │
+│                                                                                 │
+│  3. LAZY EVALUATION                                                             │
+│     • Vector search only performed on filtered candidate set                    │
+│     • Complete record data fetched only for final results                       │
+│                                                                                 │
+│  4. MONITORING & LOGGING                                                        │
+│     • Search timing logged for performance analysis                             │
+│     • Filter result counts logged for debugging                                 │
+│     • Missing record inconsistencies logged as warnings                         │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+KEY DESIGN PRINCIPLES:
+• Funnel-style search: progressively narrow candidates before expensive operations
+• Early termination: short-circuit when no results are possible
+• Separation of concerns: filtering → similarity → data fetching
+• Graceful degradation: handle missing records without failing entire search
+• Performance monitoring: log timing and result counts for optimization
+• Hybrid approach: combine traditional filtering with modern vector similarity
+"""
 import logging
 import time
 from typing import Any, List, Optional, Set, Callable, Tuple
