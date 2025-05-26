@@ -1,3 +1,273 @@
+"""
+InvertedIndexMetadataIndex Workflow Diagram
+===========================================
+
+Dual-Index System: Supporting Both Equality and Range Queries on Metadata
+
+DATA STRUCTURES OVERVIEW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              INDEX ARCHITECTURE                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                        EQUALITY INDEX                                   │    │
+│  │                  _eq_index: Dict[str, Dict[Any, Set[str]]]              │    │
+│  │                                                                         │    │
+│  │  Structure: field_name -> value -> set_of_record_ids                    │    │
+│  │                                                                         │    │
+│  │  Example:                                                               │    │
+│  │  {                                                                      │    │
+│  │    "category": {                                                        │    │
+│  │      "electronics": {"rec1", "rec5", "rec9"},                           │    │
+│  │      "books": {"rec2", "rec7"},                                         │    │
+│  │      "clothing": {"rec3", "rec8"}                                       │    │
+│  │    },                                                                   │    │
+│  │    "brand": {                                                           │    │
+│  │      "apple": {"rec1", "rec4"},                                         │    │
+│  │      "nike": {"rec3", "rec8"}                                           │    │
+│  │    }                                                                    │    │
+│  │  }                                                                      │    │
+│  │                                                                         │    │
+│  │  Optimized for: O(1) equality lookups, $in queries                      │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                         RANGE INDEX                                     │    │
+│  │                _range_index: Dict[str, List[Tuple[Any, str]]]           │    │
+│  │                                                                         │    │
+│  │  Structure: field_name -> sorted_list_of_(value, record_id)_tuples      │    │
+│  │                                                                         │    │
+│  │  Example:                                                               │    │
+│  │  {                                                                      │    │
+│  │    "price": [                                                           │    │
+│  │      (10.99, "rec2"), (15.50, "rec7"), (25.00, "rec1"),                 │    │
+│  │      (89.99, "rec5"), (120.00, "rec9")                                  │    │
+│  │    ],                                                                   │    │
+│  │    "rating": [                                                          │    │
+│  │      (3.2, "rec8"), (4.1, "rec3"), (4.5, "rec1"),                       │    │
+│  │      (4.8, "rec7"), (5.0, "rec2")                                       │    │
+│  │    ]                                                                    │    │
+│  │  }                                                                      │    │
+│  │                                                                         │    │
+│  │  Optimized for: O(log n) range queries, sorted iteration                │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+INDEXING WORKFLOW (ADD OPERATION):
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              RECORD INDEXING PROCESS                            │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │ MetadataPacket  │───▶│                VALIDATION                        │    │
+│  │ record_id: "r1" │    │                                                  │    │
+│  │ metadata: {     │    │  • Validate checksum                             │    │
+│  │   "category":   │    │  • Extract record_id and metadata                │    │
+│  │    "electronics"│    └──────────────────────────────────────────────────┘    │
+│  │   "price": 25.0 │                           │                                │
+│  │   "tags": ["new"│                           ▼                                │
+│  │           "hot"]│    ┌──────────────────────────────────────────────────┐    │
+│  │ }               │    │           FIELD PROCESSING                       │    │
+│  └─────────────────┘    │                                                  │    │
+│                         │  For each field, value pair in metadata:         │    │
+│                         │                                                  │    │
+│                         │  1. Normalize values to iterable:                │    │
+│                         │     • Single value → (value,)                    │    │
+│                         │     • List/set/tuple → iterate all values        │    │
+│                         │                                                  │    │
+│                         │  2. Process each normalized value:               │    │
+│                         │     ├─ Add to equality index                     │    │
+│                         │     └─ Try to add to range index (if sortable)   │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                │                                │
+│                                                ▼                                │
+│                         ┌──────────────────────────────────────────────────┐    │
+│                         │         DUAL INDEX UPDATES                       │    │
+│                         │                                                  │    │
+│                         │  EQUALITY INDEX UPDATE:                          │    │
+│                         │  ┌─────────────────────────────────────────────┐ │    │
+│                         │  │ _eq_index[field][value].add(record_id)      │ │    │
+│                         │  │                                             │ │    │
+│                         │  │ Example:                                    │ │    │
+│                         │  │ _eq_index["category"]["electronics"]        │ │    │
+│                         │  │   .add("r1")                                │ │    │
+│                         │  │ _eq_index["tags"]["new"].add("r1")          │ │    │
+│                         │  │ _eq_index["tags"]["hot"].add("r1")          │ │    │
+│                         │  └─────────────────────────────────────────────┘ │    │
+│                         │                                                  │    │
+│                         │  RANGE INDEX UPDATE:                             │    │
+│                         │  ┌─────────────────────────────────────────────┐ │    │
+│                         │  │ try:                                        │ │    │
+│                         │  │   insort(_range_index[field],               │ │    │
+│                         │  │          (value, record_id))                │ │    │
+│                         │  │ except TypeError:                           │ │    │
+│                         │  │   # Skip non-sortable types                 │ │    │
+│                         │  │                                             │ │    │
+│                         │  │ Example:                                    │ │    │
+│                         │  │ insort(_range_index["price"],               │ │    │
+│                         │  │        (25.0, "r1"))                        │ │    │
+│                         │  └─────────────────────────────────────────────┘ │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+QUERYING WORKFLOW:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              QUERY PROCESSING PIPELINE                          │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────────────────────┐    │
+│  │ Query Filter:   │───▶│              QUERY PARSING                       │    │
+│  │ {               │    │                                                  │    │
+│  │  "category":    │    │  Input: where = Dict[str, Any]                   │    │
+│  │    "electronics"│    │                                                  │    │
+│  │  "price": {     │    │  For each field, condition pair:                 │    │
+│  │    "$gte": 20,  │    │  └─ Determine query type and dispatch            │    │
+│  │    "$lt": 100   │    └──────────────────────────────────────────────────┘    │
+│  │  }              │                           │                                │
+│  │ }               │                           ▼                                │
+│  └─────────────────┘    ┌──────────────────────────────────────────────────┐    │
+│                         │         CONDITION PROCESSING                     │    │
+│                         │                                                  │    │
+│                         │  ┌─ EQUALITY QUERY ─────────────────────────────┐│    │
+│                         │  │  Pattern: field: value                       ││    │
+│                         │  │  Example: "category": "electronics"          ││    │
+│                         │  │                                              ││    │
+│                         │  │  Process:                                    ││    │
+│                         │  │  └─ return _eq_index[field].get(value, set())││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         │                                                  │    │
+│                         │  ┌─ $IN QUERY ──────────────────────────────────┐│    │
+│                         │  │  Pattern: field: {"$in": [v1, v2, v3]}       ││    │
+│                         │  │  Example: "category": {"$in": ["books",      ││    │
+│                         │  │                               "electronics"]}││    │
+│                         │  │                                              ││    │
+│                         │  │  Process:                                    ││    │
+│                         │  │  └─ Union all _eq_index[field][vi] sets      ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         │                                                  │    │
+│                         │  ┌─ RANGE QUERY ────────────────────────────────┐│    │
+│                         │  │  Pattern: field: {"$gte": X, "$lt": Y, ...}  ││    │
+│                         │  │  Operators: $gte, $gt, $lte, $lt             ││    │
+│                         │  │                                              ││    │
+│                         │  │  Process: (See detailed flow below)          ││    │
+│                         │  └──────────────────────────────────────────────┘│    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                 │                               │
+│                                                 ▼                               │
+│                         ┌──────────────────────────────────────────────────┐    │
+│                         │           RESULT INTERSECTION                    │    │
+│                         │                                                  │    │
+│                         │  Logic: AND all conditions together              │    │
+│                         │                                                  │    │
+│                         │  result_ids = None                               │    │
+│                         │  for each condition:                             │    │
+│                         │    condition_ids = process_condition()           │    │
+│                         │    if condition_ids is empty:                    │    │
+│                         │      return empty_set()  # Short-circuit         │    │
+│                         │    if result_ids is None:                        │    │
+│                         │      result_ids = condition_ids                  │    │
+│                         │    else:                                         │    │
+│                         │      result_ids = result_ids ∩ condition_ids     │    │
+│                         │      if result_ids is empty:                     │    │
+│                         │        return empty_set()  # Short-circuit       │    │
+│                         │                                                  │    │
+│                         │  return result_ids                               │    │
+│                         └──────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+RANGE QUERY DETAILED PROCESSING:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            RANGE QUERY ALGORITHM                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  Input: field: {"$gte": 20, "$lt": 100}                                         │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    STEP 1: BOUND COMPUTATION                            │    │
+│  │                                                                         │    │
+│  │  Determine search bounds for binary search:                             │    │
+│  │  • low = cond.get("$gte", cond.get("$gt"))                              │    │
+│  │  • high = cond.get("$lte", cond.get("$lt"))                             │    │
+│  │                                                                         │    │
+│  │  Example: low = 20, high = 100                                          │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    STEP 2: BINARY SEARCH SLICE                          │    │
+│  │                                                                         │    │
+│  │  Given sorted list: [(10, "r2"), (25, "r1"), (89, "r5"), (120, "r9")]   │    │
+│  │                                                                         │    │
+│  │  start = bisect_left(lst, (20, ""))     # Find insertion point ≥ 20     │    │
+│  │  end = bisect_right(lst, (100, chr(255))) # Find insertion point > 100  │    │
+│  │                                                                         │    │
+│  │  Result slice: [(25, "r1"), (89, "r5")]                                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                        │                                        │
+│                                        ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                  STEP 3: STRICT BOUND FILTERING                         │    │
+│  │                                                                         │    │
+│  │  For each (value, record_id) in slice:                                  │    │
+│  │    Check strict inequalities that bisect can't handle:                  │    │
+│  │                                                                         │    │
+│  │    if "$gt" in cond and value <= cond["$gt"]:                           │    │
+│  │      continue  # Skip this record                                       │    │
+│  │    if "$lt" in cond and value >= cond["$lt"]:                           │    │
+│  │      continue  # Skip this record                                       │    │
+│  │                                                                         │    │
+│  │    results.add(record_id)  # Record passes all conditions               │    │
+│  │                                                                         │    │
+│  │  Example with "$gte": 20, "$lt": 100:                                   │    │
+│  │  • (25, "r1"): 25 >= 20 ✓, 25 < 100 ✓ → Include "r1"                    │    │
+│  │  • (89, "r5"): 89 >= 20 ✓, 89 < 100 ✓ → Include "r5"                    │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+UPDATE AND DELETE OPERATIONS:
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           MODIFICATION OPERATIONS                               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  UPDATE OPERATION:                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  def update(old_item, new_item):                                        │    │
+│  │    1. Validate both items                                               │    │
+│  │    2. delete(old_item)    # Remove old metadata                         │    │
+│  │    3. add(new_item)       # Add new metadata                            │    │
+│  │                                                                         │    │
+│  │  Two-phase approach ensures atomic update                               │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  DELETE OPERATION:                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │  For each field, value in metadata:                                     │    │
+│  │                                                                         │    │
+│  │  EQUALITY INDEX CLEANUP:                                                │    │
+│  │  └─ _eq_index[field][value].discard(record_id)                          │    │
+│  │                                                                         │    │
+│  │  RANGE INDEX CLEANUP:                                                   │    │
+│  │  1. Find position range: bisect_left/right((value, record_id))          │    │
+│  │  2. Search within range for exact (value, record_id) match              │    │
+│  │  3. Remove the matching tuple from sorted list                          │    │
+│  │                                                                         │    │
+│  │  Note: Range deletion is O(n) in worst case due to list.pop()           │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+KEY DESIGN PRINCIPLES:
+• Dual indexing: Optimized for both equality (O(1)) and range (O(log n)) queries
+• Multi-value support: Handles list/set/tuple metadata values naturally
+• Early termination: Short-circuits when any condition yields empty results
+• Type safety: Gracefully handles non-sortable types in range index
+• Memory efficiency: Shared record IDs across multiple index entries
+• Query flexibility: Supports complex combinations of equality, IN, and range conditions
+"""
 import pickle
 from bisect import bisect_left, bisect_right, insort
 from collections import defaultdict
