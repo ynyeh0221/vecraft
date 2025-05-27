@@ -102,7 +102,7 @@
     │                 └─ Returns: True if ANY sub-condition matches                   │
     │                                                                                 │
     └─────────────────────────────────────────────────────────────────────────────────┘
-    """
+"""
 from typing import Dict, Any, Callable, Tuple
 
 

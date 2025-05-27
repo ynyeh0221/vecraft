@@ -1,3 +1,277 @@
+"""
+    A document index implementation using inverted indices for efficient document filtering.
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   ARCHITECTURE OVERVIEW                                             │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   DATA STRUCTURES                                                   │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                     │
+    │  1. DOCUMENT STORAGE                                                                                │
+    │     _doc_index: Dict[record_id -> document]                                                         │
+    │     ┌─────────────────────────────────────────────────────────────────────┐                         │
+    │     │  "doc1" -> {"name": "John", "age": 30, "city": "NYC"}               │                         │
+    │     │  "doc2" -> {"name": "Jane", "age": 25, "city": "LA"}                │                         │
+    │     │  "doc3" -> "Plain text document about programming"                  │                         │
+    │     └─────────────────────────────────────────────────────────────────────┘                         │
+    │                                                                                                     │
+    │  2. FIELD-VALUE INVERTED INDEX                                                                      │
+    │     _field_index: Dict[field -> Dict[value -> Set[record_ids]]]                                     │
+    │     ┌─────────────────────────────────────────────────────────────────────┐                         │
+    │     │  "name" -> {                                                        │                         │
+    │     │    "John" -> {"doc1"},                                              │                         │
+    │     │    "Jane" -> {"doc2"}                                               │                         │
+    │     │  }                                                                  │                         │
+    │     │  "city" -> {                                                        │                         │
+    │     │    "NYC" -> {"doc1"},                                               │                         │
+    │     │    "LA" -> {"doc2"}                                                 │                         │
+    │     │  }                                                                  │                         │
+    │     └─────────────────────────────────────────────────────────────────────┘                         │
+    │                                                                                                     │
+    │  3. TERM INVERTED INDEX                                                                             │
+    │     _term_index: Dict[term -> Set[record_ids]]                                                      │
+    │     ┌─────────────────────────────────────────────────────────────────────┐                         │
+    │     │  "john" -> {"doc1"}                                                 │                         │
+    │     │  "jane" -> {"doc2"}                                                 │                         │
+    │     │  "programming" -> {"doc3"}                                          │                         │
+    │     │  "age" -> {"doc1", "doc2"}                                          │                         │
+    │     └─────────────────────────────────────────────────────────────────────┘                         │
+    │                                                                                                     │
+    │  4. DOCUMENT TRACKING (for cleanup)                                                                 │
+    │     _doc_fields: Dict[record_id -> Dict[field -> value]]                                            │
+    │     _doc_terms: Dict[record_id -> Set[terms]]                                                       │
+    │     ┌─────────────────────────────────────────────────────────────────────┐                         │
+    │     │  "doc1" -> {"name": "John", "age": "30", "city": "NYC"}             │                         │
+    │     │  "doc1" -> {"john", "age", "30", "city", "nyc", ...}                │                         │
+    │     └─────────────────────────────────────────────────────────────────────┘                         │
+    │                                                                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   DOCUMENT LIFECYCLE                                                │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ADD DOCUMENT WORKFLOW:
+
+    DocumentPacket
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │     validate_checksum()             │ ◄─── Integrity check
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Store in _doc_index                │ ◄─── _doc_index[record_id] = document
+    │  [record_id] -> document            │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │    _get_content(document)           │ ◄─── Normalize content to string
+    │  • str -> return as-is              │      • JSON -> json.dumps(sort_keys=True)
+    │  • dict/list -> JSON serialize      │      • other -> str(document)
+    │  • other -> str()                   │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │    _index_document(id, content)     │ ◄─── Dual indexing process
+    └─────────────────────────────────────┘
+           │
+           ├─────────────────────────────────────┬─────────────────────────────────────┐
+           ▼                                     ▼                                     ▼
+    ┌─────────────────────────────┐   ┌─────────────────────────────┐   ┌─────────────────────────────┐
+    │   Try JSON parsing          │   │    Extract terms            │   │   Update tracking           │
+    │   json.loads(content)       │   │    _extract_terms()         │   │   _doc_fields[id] = {...}   │
+    │                             │   │                             │   │   _doc_terms[id] = {...}    │
+    │   If successful:            │   │   Regex: r'\w+'             │   │                             │
+    │   └─► _index_fields_        │   │   Convert to lowercase      │   │                             │
+    │       recursive()           │   │   Return set of terms       │   │                             │
+    │                             │   │                             │   │                             │
+    │   If fails:                 │   │   For each term:            │   │                             │
+    │   └─► Skip field indexing   │   │   _term_index[term].add(id) │   │                             │
+    └─────────────────────────────┘   └─────────────────────────────┘   └─────────────────────────────┘
+
+    FIELD INDEXING (Recursive):
+
+    ┌─────────────────────────────────────┐
+    │  _index_fields_recursive()          │
+    │  (record_id, data, prefix="")       │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  For each field, value in data:     │
+    │  field_path = prefix + field        │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐     ┌────────────────────────────────────┐
+    │  Is value a dict?                   │────►│  YES: Recurse deeper               │
+    │  isinstance(value, dict)            │     │  _index_fields_recursive(          │
+    └─────────────────────────────────────┘     │    record_id, value,               │
+           │                                    │    f"{field_path}."                │
+           │ NO                                 │  )                                 │
+           ▼                                    │  Also index dict as JSON string    │
+    ┌─────────────────────────────────────┐     └────────────────────────────────────┘
+    │  _index_field(record_id,            │
+    │               field_path, value)    │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐     ┌────────────────────────────────────┐
+    │  Is value a collection?             │────►│  YES: Index each item separately   │
+    │  (list, tuple, set)                 │     │  For item in value:                │
+    └─────────────────────────────────────┘     │    _field_index[field][str(item)]  │
+           │                                    │      .add(record_id)               │
+           │ NO                                 │    _doc_fields[record_id][field]   │
+           ▼                                    │      .add(str(item))               │
+    ┌─────────────────────────────────────┐     └────────────────────────────────────┘
+    │  Index scalar value:                │
+    │  _field_index[field][str(value)]    │
+    │    .add(record_id)                  │
+    │  _doc_fields[record_id][field]      │
+    │    = str(value)                     │
+    └─────────────────────────────────────┘
+
+    DELETE DOCUMENT WORKFLOW:
+
+    DocumentPacket
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │     validate_checksum()             │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Check if record exists             │
+    │  record_id in _doc_index            │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Remove from document store         │
+    │  _doc_index.pop(record_id)          │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │    _remove_from_indices()           │
+    └─────────────────────────────────────┘
+           │
+           ├─────────────────────────────────────┬─────────────────────────────────────┐
+           ▼                                     ▼                                     ▼
+    ┌─────────────────────────────┐   ┌─────────────────────────────┐   ┌─────────────────────────────┐
+    │  _remove_doc_fields()       │   │  _remove_doc_terms()        │   │  Cleanup empty buckets      │
+    │                             │   │                             │   │                             │
+    │  For each field, value:     │   │  For each term:             │   │  Remove empty:              │
+    │  └─► Remove from            │   │  └─► Remove from            │   │  • field[value] sets        │
+    │      _field_index           │   │      _term_index            │   │  • field dictionaries       │
+    │                             │   │                             │   │  • term sets                │
+    │  Delete _doc_fields[id]     │   │  Delete _doc_terms[id]      │   │                             │
+    └─────────────────────────────┘   └─────────────────────────────┘   └─────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   SEARCH WORKFLOW                                                   │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    get_matching_ids(allowed_ids=None, where_document=None)
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Initialize result set              │
+    │  allowed_ids or all doc IDs         │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐     ┌─────────────────────────────────────┐
+    │  Any filter conditions?             │────►│  NO: Return current result set      │
+    │  where_document is not None         │     │  (no filtering needed)              │
+    └─────────────────────────────────────┘     └─────────────────────────────────────┘
+           │
+           │ YES
+           ▼
+    ┌─────────────────────────────────────┐
+    │  _filter_by_document()              │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Create DocumentFilterEvaluator     │
+    │  evaluator = DocumentFilterEvaluator()
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  For each candidate document ID:    │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  1. Get document from _doc_index    │
+    │  2. Convert to string via           │
+    │     _get_content()                  │
+    │  3. Apply filter via evaluator      │
+    │     evaluator.matches(content,      │
+    │                      filter_cond)   │
+    │  4. Add to result if matches        │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Return set of matching IDs         │
+    └─────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   SERIALIZATION                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    SERIALIZE (for persistence):
+
+    ┌─────────────────────────────────────┐
+    │  Convert internal data structures   │
+    │  to serializable format:            │
+    │                                     │
+    │  • _doc_index -> dict               │
+    │  • _field_index -> convert sets     │
+    │    to lists                         │
+    │  • _term_index -> convert sets      │
+    │    to lists                         │
+    │  • _doc_fields -> dict              │
+    │  • _doc_terms -> convert sets       │
+    │    to lists                         │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  pickle.dumps(state)                │ ◄─── Return bytes for storage
+    └─────────────────────────────────────┘
+
+    DESERIALIZE (restore from persistence):
+
+    ┌─────────────────────────────────────┐
+    │  pickle.loads(data)                 │ ◄─── Load state from bytes
+    └─────────────────────────────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │  Restore internal data structures   │
+    │  from serializable format:          │
+    │                                     │
+    │  • _doc_index <- dict               │
+    │  • _field_index <- convert lists    │
+    │    back to sets                     │
+    │  • _term_index <- convert lists     │
+    │    back to sets                     │
+    │  • _doc_fields <- dict              │
+    │  • _doc_terms <- convert lists      │
+    │    back to sets                     │
+    └─────────────────────────────────────┘
+"""
 import json
 import pickle
 import re
@@ -76,9 +350,9 @@ class InvertedIndexDocIndex(DocIndexInterface):
             self._term_index[term].add(record_id)
 
     def _index_fields_recursive(self, record_id, data, prefix=''):
-        """Recursively index fields in nested dictionaries with optional prefix path"""
+        """Recursively index fields in nested dictionaries with an optional prefix path"""
         for field, value in data.items():
-            # Create field path for nested structures
+            # Create a field path for nested structures
             field_path = f"{prefix}{field}" if prefix else field
 
             if isinstance(value, dict):
