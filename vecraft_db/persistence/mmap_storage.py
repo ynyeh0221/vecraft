@@ -15,7 +15,6 @@ from vecraft_db.core.interface.storage_engine_interface import StorageEngine
 STATUS_UNCOMMITTED = 0
 STATUS_COMMITTED = 1
 
-
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
@@ -23,57 +22,293 @@ class MMapStorage(StorageEngine):
     """
     Append-only memory-mapped file storage with durability guarantees.
 
-    Uses a leading status byte per record to track commit state,
-    file locks for concurrency, and automatic file expansion.
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   ARCHITECTURE OVERVIEW                                             │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Read/Write Workflow Diagram:
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   MEMORY LAYOUT                                                     │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                     │
+    │  FILE STRUCTURE (Append-only with status tracking):                                                 │
+    │                                                                                                     │
+    │  ┌─────┬─────────────────┬─────┬─────────────────┬─────┬─────────────────┬─────────────┐            │
+    │  │  S  │      DATA       │  S  │      DATA       │  S  │      DATA       │             │            │
+    │  │  T  │   (Record 1)    │  T  │   (Record 2)    │  T  │   (Record 3)    │   Free      │            │
+    │  │  A  │                 │  A  │                 │  A  │                 │   Space     │            │
+    │  │  T  │                 │  T  │                 │  T  │                 │             │            │
+    │  │  U  │                 │  U  │                 │  U  │                 │             │            │
+    │  │  S  │                 │  S  │                 │  S  │                 │             │            │
+    │  └─────┴─────────────────┴─────┴─────────────────┴─────┴─────────────────┴─────────────┘            │
+    │    1B      Variable         1B      Variable         1B      Variable                               │
+    │                                                                                                     │
+    │  STATUS BYTE VALUES:                                                                                │
+    │  • 0x00 = STATUS_UNCOMMITTED (record written but not committed)                                     │
+    │  • 0x01 = STATUS_COMMITTED (record fully committed and visible)                                     │
+    │  • 0x?? = DELETED/INVALID (any other value indicates deleted/corrupted record)                      │
+    │                                                                                                     │
+    │  RECORD STRUCTURE:                                                                                  │
+    │  ┌─────────────────────────────────────────────────────────────────────────────────────────┐        │
+    │  │ [STATUS_BYTE][SERIALIZED_DATA_PACKET]                                                   │        │
+    │  │      1 byte        Variable length                                                      │        │
+    │  │                                                                                         │        │
+    │  │ LocationPacket tracks:                                                                  │        │
+    │  │ • offset: Points to STATUS_BYTE position                                                │        │
+    │  │ • size: Length of SERIALIZED_DATA_PACKET only (excludes status byte)                    │        │
+    │  └─────────────────────────────────────────────────────────────────────────────────────────┘        │
+    │                                                                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-        Write path:
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   CONCURRENCY & DURABILITY                                          │
+    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │                                                                                                     │
+    │  THREAD SAFETY:                                                                                     │
+    │  • threading.Lock() protects allocation operations                                                  │
+    │  • _next_offset tracking prevents overlapping writes                                                │
+    │  • File locks (fcntl.flock) prevent inter-process conflicts                                         │
+    │                                                                                                     │
+    │  DURABILITY GUARANTEES:                                                                             │
+    │  1. mmap.flush() - Ensures data is written to OS buffer                                             │
+    │  2. file.flush() - Flushes Python file buffer                                                       │
+    │  3. os.fsync() - Forces OS to write to physical storage                                             │
+    │                                                                                                     │
+    │  TWO-PHASE COMMIT:                                                                                  │
+    │  Phase 1: Write data with STATUS_UNCOMMITTED                                                        │
+    │  Phase 2: Update status to STATUS_COMMITTED                                                         │
+    │  → This ensures atomicity and crash recovery                                                        │
+    │                                                                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-            +----------------+        +----------------------+        +-----------+
-            | Application    |        | MMapStorage (self)   |        | File mmap |
-            +----------------+        +----------------------+        +-----------+
-            | write(data)   |        |                      |        |           |
-            |--------------->| allocate(size)         |        |           |
-            |                |------------------------->|        |           |
-            |                |    offset = next free   |        |           |
-            |                |    mmap[offset] = 0x00 (UNCOMMITTED)
-            |                |    mmap[offset+1:]=data |
-            |                |    mmap.flush(); fsync  |        |           |
-            |                |------------------------->| write to   |
-            |                |<-------------------------| file mmap  |
-            |                |   return offset         |        |           |
-            |<---------------|                          |        |           |
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   WRITE WORKFLOW                                                    │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-        Commit path:
+    Application Thread                  MMapStorage                     File System
+    ┌─────────────────┐               ┌─────────────────┐               ┌─────────────────┐
+    │                 │               │                 │               │                 │
+    │ 1. write(data)  │──────────────►│                 │               │                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 2. allocate()   │               │                 │
+    │                 │               │   └─ LOCK       │               │                 │
+    │                 │               │   └─ offset =   │               │                 │
+    │                 │               │      next_free  │               │                 │
+    │                 │               │   └─ next_free  │               │                 │
+    │                 │               │      += size+1  │               │                 │
+    │                 │               │   └─ UNLOCK     │               │                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 3. Check file   │               │                 │
+    │                 │               │    size & grow  │──────────────►│ 4. truncate()   │
+    │                 │               │    if needed    │               │    fsync()      │
+    │                 │               │                 │◄──────────────│                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 5. Write to mmap│               │                 │
+    │                 │               │   mmap[offset] =│               │                 │
+    │                 │               │   UNCOMMITTED   │               │                 │
+    │                 │               │   mmap[offset+1:│               │                 │
+    │                 │               │   offset+1+len] │               │                 │
+    │                 │               │   = data        │               │                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 6. Ensure       │               │                 │
+    │                 │               │    durability   │──────────────►│ 7. mmap.flush() │
+    │                 │               │                 │               │    file.flush() │
+    │                 │               │                 │               │    os.fsync()   │
+    │                 │               │                 │◄──────────────│                 │
+    │                 │◄──────────────│ 8. return       │               │                 │
+    │                 │               │    offset       │               │                 │
+    │                 │               │                 │               │                 │
+    └─────────────────┘               └─────────────────┘               └─────────────────┘
 
-            | commit_record(offset)      |                      |           |
-            |---------------------------->|                      |           |
-            |                            | mmap[offset] = 0x01  |           |
-            |                            | flush(); fsync       |           |
-            |                            |--------------------->| update byte|
-            |<---------------------------| ack commit            |           |
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   COMMIT WORKFLOW                                                   │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-        Read path:
+    Application Thread                  MMapStorage                     File System
+    ┌─────────────────┐               ┌─────────────────┐               ┌─────────────────┐
+    │                 │               │                 │               │                 │
+    │ 1. mark_        │──────────────►│                 │               │                 │
+    │    committed()  │               │                 │               │                 │
+    │                 │               │ 2. Update status│               │                 │
+    │                 │               │   mmap[offset] =│               │                 │
+    │                 │               │   STATUS_       │               │                 │
+    │                 │               │   COMMITTED     │               │                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 3. Ensure       │               │                 │
+    │                 │               │    durability   │──────────────►│ 4. mmap.flush() │
+    │                 │               │                 │               │    file.flush() │
+    │                 │               │                 │               │    os.fsync()   │
+    │                 │               │                 │◄──────────────│                 │
+    │                 │◄──────────────│ 5. ack complete │               │                 │
+    │                 │               │                 │               │                 │
+    └─────────────────┘               └─────────────────┘               └─────────────────┘
 
-            +----------------+        +----------------------+        +-----------+
-            | Application    |        | MMapStorage (self)   |        | File mmap |
-            +----------------+        +----------------------+        +-----------+
-            | get_record(loc)|        |                      |        |           |
-            |--------------->|        |                      |        |           |
-            |                | loc = LocationPacket    |        |           |
-            | read(loc)      |        |                      |        |           |
-            |--------------->| read status = mmap[offset]
-            |                | if status != COMMITTED: return None
-            |                | data = mmap[offset+1:offset+1+size]
-            |                | return data           |        |           |
-            |<---------------|                          |        |           |
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   READ WORKFLOW                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
-    Args:
-        path (str): Filesystem path to the data file.
-        page_size (int): Block size for file growth.
-        initial_size (int): Minimum size on first open.
-        read_only (bool): If True, open mmap in read-only mode.
+    Application Thread                  MMapStorage                     Memory Map
+    ┌─────────────────┐               ┌─────────────────┐               ┌─────────────────┐
+    │                 │               │                 │               │                 │
+    │ 1. read(        │──────────────►│                 │               │                 │
+    │    location)    │               │                 │               │                 │
+    │                 │               │ 2. Validate     │               │                 │
+    │                 │               │    bounds check │               │                 │
+    │                 │               │    offset + size│               │                 │
+    │                 │               │    <= mmap_len  │               │                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 3. Check status │               │                 │
+    │                 │               │    byte (not    │──────────────►│ 4. Read from    │
+    │                 │               │    implemented  │               │    mmap[offset] │
+    │                 │               │    in this read │               │                 │
+    │                 │               │    method)      │◄──────────────│                 │
+    │                 │               │                 │               │                 │
+    │                 │               │ 5. Read data    │               │                 │
+    │                 │               │    mmap[offset+ │──────────────►│ 6. Read data    │
+    │                 │               │    1:offset+1+  │               │    bytes        │
+    │                 │               │    size]        │◄──────────────│                 │
+    │                 │               │                 │               │                 │
+    │                 │◄──────────────│ 7. return data  │               │                 │
+    │                 │               │                 │               │                 │
+    └─────────────────┘               └─────────────────┘               └─────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   SCAN WORKFLOW                                                     │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    scan_all_records() Process:
+
+    ┌─────────────────────────────────────┐
+    │  Initialize: offset = 0             │
+    │  all_records = {}                   │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  While offset < file_length:        │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐     ┌─────────────────────────────────────┐
+    │  Read status = mmap[offset]         │────►│  Status not 0 or 1?                 │
+    └─────────────────────────────────────┘     │  offset += 1; continue              │
+                   │                            └─────────────────────────────────────┘
+                   ▼                                              │
+    ┌─────────────────────────────────────┐                       │
+    │  is_committed = (status == 1)       │                       │
+    └─────────────────────────────────────┘                       │
+                   │                                              │
+                   ▼                                              │
+    ┌─────────────────────────────────────┐     ┌─────────────────────────────────────┐
+    │  Try to parse DataPacket from       │────►│  Parse failed?                      │
+    │  mmap[offset + 1:]                  │     │  offset += 1; continue              │
+    └─────────────────────────────────────┘     └─────────────────────────────────────┘
+                   │                                              │
+                   ▼                                              │
+    ┌─────────────────────────────────────┐                       │
+    │  Create LocationPacket              │                       │
+    │  record_id = packet.record_id       │                       │    ┌───────────────────────────────────┐
+    │  offset = current_offset            │                       │    │          SKIP TO NEXT             │
+    │  size = packet_size                 │                       │    │     (Invalid/corrupted data)      │
+    └─────────────────────────────────────┘                       │    │                                   │
+                   │                                              │    │  ┌─────────────────────────────┐  │
+                   ▼                                              │    │  │      offset += 1            │  │
+    ┌─────────────────────────────────────┐                       │    │  │      continue               │  │
+    │  all_records[record_id] =           │                       │    │  └─────────────────────────────┘  │
+    │    (LocationPacket, is_committed)   │                       │    └───────────────────────────────────┘
+    └─────────────────────────────────────┘                       │                  │
+                   │                                              │                  │
+                   ▼                                              │                  │
+    ┌─────────────────────────────────────┐                       │                  │
+    │  offset += 1 + packet_size          │◄──────────────────────┘──────────────────┘
+    │  (Move to next record)              │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  Return all_records                 │
+    └─────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   FILE MANAGEMENT                                                   │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    File Growth Strategy:
+
+    ┌─────────────────────────────────────┐
+    │  Need more space?                   │
+    │  required_size > current_size       │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  Calculate new size:                │
+    │  new_size = ((required_size +       │
+    │               page_size - 1) //     │
+    │               page_size) *          │
+    │               page_size             │
+    │  (Round up to page boundary)        │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  file.truncate(new_size)            │
+    │  file.flush()                       │
+    │  os.fsync(file.fileno())            │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  Close old mmap                     │
+    │  Create new mmap with new size      │
+    └─────────────────────────────────────┘
+
+    Concurrency Control:
+
+    ┌─────────────────────────────────────┐
+    │  File Locking (fcntl.flock):        │
+    │  • Read-only mode: LOCK_SH          │
+    │  • Read-write mode: LOCK_EX         │
+    │  • Non-blocking: LOCK_NB            │
+    │  • Prevents inter-process conflicts │
+    └─────────────────────────────────────┘
+                   │
+                   ▼
+    ┌─────────────────────────────────────┐
+    │  Thread Locking (threading.Lock):   │
+    │  • Protects _next_offset updates    │
+    │  • Ensures atomic allocation        │
+    │  • Prevents intra-process races     │
+    └─────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                   ERROR RECOVERY                                                    │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    Crash Recovery Scenarios:
+
+    1. CRASH DURING WRITE (before commit):
+       ┌─────────────────────────────────────┐
+       │  Status = STATUS_UNCOMMITTED        │
+       │  Data may be partially written      │
+       │  → Record is invisible during scan  │
+       │  → Space can be reclaimed           │
+       └─────────────────────────────────────┘
+
+    2. CRASH DURING COMMIT:
+       ┌─────────────────────────────────────┐
+       │  Status may be 0 or 1               │
+       │  Data is fully written              │
+       │  → If status=1: Record is visible   │
+       │  → If status=0: Record is invisible │
+       └─────────────────────────────────────┘
+
+    3. CRASH AFTER COMMIT:
+       ┌─────────────────────────────────────┐
+       │  Status = STATUS_COMMITTED          │
+       │  Data is fully written              │
+       │  → Record is fully visible          │
+       │  → No recovery needed               │
+       └─────────────────────────────────────┘
     """
     def __init__(self, path: str, page_size: int = 4096, initial_size: int = 4096, read_only: bool = False):
         self._path = Path(path)
@@ -104,7 +339,7 @@ class MMapStorage(StorageEngine):
         except BlockingIOError:
             logger.warning(
                 f"Could not acquire {'shared' if self._read_only else 'exclusive'} lock on {self._path}, proceeding without lock")
-        # Ensure file pointer is at start for mmap
+        # Ensure the file pointer is at start point for mmap
         if not self._read_only:
             f.seek(0)
         return f
@@ -126,7 +361,7 @@ class MMapStorage(StorageEngine):
             offset = self._next_offset
             # Add 1 byte for status marker
             self._next_offset += size + 1
-            # Ensure file is large enough
+            # Ensure the file is large enough
             required_size = self._next_offset
             current_size = self._file.seek(0, os.SEEK_END)
             if current_size < required_size:
@@ -137,7 +372,7 @@ class MMapStorage(StorageEngine):
         """Write with proper fsync for durability."""
         location_item.validate_checksum()
 
-        # Ensure file is large enough (including status byte)
+        # Ensure the file is large enough (including status byte)
         required_size = location_item.offset + len(data) + 1
         current_size = self._file.seek(0, os.SEEK_END)
         if current_size < required_size:
