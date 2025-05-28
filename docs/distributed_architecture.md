@@ -264,21 +264,21 @@ Client ──[1]──► API-Gateway ──[2]──► Query-Processor ──[
 │• Eventual   │                        │
 │• Bounded    │          ┌─────────────┼─────────────┐
 │• Read-Write │          ▼             ▼             ▼
-│• Strong     │    ┌─────────┐   ┌─────────┐   ┌─────────┐
-└─────────────┘    │Direct   │   │Sync     │   │Always   │
-                   │Read     │   │If Stale │   │Sync     │
-                   └─────────┘   └─────────┘   └─────────┘
-                        │             │             │
-                        └─────────────┼─────────────┘
+│• Strong     │    ┌─────────┐    ┌─────────┐   ┌─────────┐
+└─────────────┘    │Direct   │    │Sync     │   │Always   │
+                   │Read     │    │If Stale │   │Sync     │
+                   └─────────┘    └─────────┘   └─────────┘
+                         │             │             │
+                         └─────────────┼─────────────┘
+                                       ▼
+                               ┌─────────────┐
+                               │ Execute     │
+                               │ Vector      │
+                               │ Search      │
+                               └──────┬──────┘
+                                      │
                                       ▼
-                              ┌─────────────┐
-                              │ Execute     │
-                              │ Vector      │
-                              │ Search      │
-                              └──────┬──────┘
-                                     │
-                                     ▼
-               Ranked Results ◄──────┘
+               Ranked Results ◄───────┘
 ```
 
 ## 3. Migration Strategy
