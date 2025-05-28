@@ -1,8 +1,5 @@
 # VecraftDB Architecture
 
-*Revision: 2025‑05‑22*
-
-
 
 ## 1  Goals & Design Tenets
 
