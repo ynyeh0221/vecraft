@@ -231,4 +231,54 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 
 ### 2.2 Service Interaction Flow with Global Ordering
 
+```
+Write Operation Flow with Journal:
+────────────────────────────────────
 
+Client ──[1]──► API-Gateway ──[2]──► Journal-Service ──[3]──► Storage-Nodes
+                     │                    │ (HLC+Seq)           │
+                     │                    │                     │
+                     │              ┌─────▼─────┐               │
+                     │              │ Global    │               │
+                     │              │ WAL Log   │               │
+                     │              └─────┬─────┘               │
+                     │                    │                     │
+                     │              ┌─────▼─────┐               │
+                     │              │ Distribute│               │
+                     │              │ to Shards │               │
+                     │              └─────┬─────┘               │
+                     │                    │                     │
+                     ▼◄────[4]────────────┘                     │
+               Success Response                                 │
+                                                                │
+Vector Search with Consistency Levels:                          │
+─────────────────────────────────────                           │
+                                                                │
+Client ──[1]──► API-Gateway ──[2]──► Query-Processor ──[3]──────┘
+     │ +consistency_level              │ (Consistency-aware)
+     │                                 │
+     ▼                           ┌─────▼─────┐
+┌─────────────┐                  │ Decision  │
+│Consistency  │                  │ Logic     │
+│Level:       │                  └─────┬─────┘
+│• Eventual   │                        │
+│• Bounded    │          ┌─────────────┼─────────────┐
+│• Read-Write │          ▼             ▼             ▼
+│• Strong     │    ┌─────────┐   ┌─────────┐   ┌─────────┐
+└─────────────┘    │Direct   │   │Sync     │   │Always   │
+                   │Read     │   │If Stale │   │Sync     │
+                   └─────────┘   └─────────┘   └─────────┘
+                        │             │             │
+                        └─────────────┼─────────────┘
+                                      ▼
+                              ┌─────────────┐
+                              │ Execute     │
+                              │ Vector      │
+                              │ Search      │
+                              └──────┬──────┘
+                                     │
+                                     ▼
+               Ranked Results ◄──────┘
+```
+
+## 3. Migration Strategy
