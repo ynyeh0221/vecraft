@@ -179,3 +179,187 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 | **Metrics-Exporter** | Observability | 1 per node | Prometheus metrics, health probes, request tracing, consistency monitoring | /metrics, /healthz |
 
 > **Note:** Journal services are partitioned for scalability while maintaining global ordering through Hybrid Logical Clocks (HLC). Storage nodes implement pull-before-read for configurable consistency guarantees.
+
+# Vecraft DB - Distributed Architecture Design Document
+
+## Executive Summary
+
+This document outlines the service decomposition and migration plan for Vecraft DB, transforming it from a monolithic vector database into a horizontally scalable, fault-tolerant distributed system. The new architecture introduces a **journal-based approach** with partitioned services across multiple layers, enabling high availability and elastic scaling while preserving over 80% of existing proven code and providing superior request tracking capabilities for ML/AI workloads.
+
+## 1. Architecture Overview
+
+### 1.1 Design Philosophy and Approach Selection
+
+After comprehensive analysis of distributed database architectures, we evaluated two primary approaches for implementing Vecraft DB's distributed system:
+
+**Approach A: Raft-based Per-Shard Consensus**
+- Each shard maintains its own Raft cluster with 2f+1 storage nodes
+- Write operations go through Raft consensus within each shard
+- Cross-shard operations require additional coordination (2PC)
+
+**Approach B: Centralized Journal Database**
+- All write operations flow through a centralized, distributed journal service
+- Storage nodes receive WAL deltas from the journal and apply them locally
+- Natural global ordering across all operations
+
+### 1.2 Why Journal Database Approach Was Chosen
+
+For Vecraft DB's use case as a vector database serving ML/AI applications, the **Journal Database approach** provides superior benefits:
+
+#### **Request and Operation Tracking Excellence**
+```
+Operation Tracking Comparison:
+
+Raft Approach:
+Client → [Shard-1: Op1] [Shard-2: Op2] [Shard-3: Op3]
+         ↓ (scattered)  ↓ (scattered)  ↓ (scattered)  
+      [Local WAL]    [Local WAL]    [Local WAL]
+      
+Reconstruction: Complex, requires clock synchronization
+
+Journal Approach:  
+Client → Journal DB → [Seq#1001: Op1→Shard-1]
+                     [Seq#1002: Op2→Shard-2] 
+                     [Seq#1003: Op3→Shard-3]
+                     
+Reconstruction: Direct, perfect temporal ordering
+```
+
+#### **Key Advantages for ML/AI Workloads:**
+
+1. **Data Lineage Tracking**: ML applications require complete data lineage for model training and compliance
+2. **Cross-Shard Vector Queries**: Natural global consistency for similarity searches spanning multiple shards
+3. **Audit Compliance**: Financial and healthcare ML applications need complete operation history
+4. **Debugging Simplicity**: Easy fault diagnosis with global operation sequence
+5. **Performance Analytics**: End-to-end request tracking for optimization
+
+#### **Addressing Scalability Through Journal Partitioning**
+
+To overcome the traditional "single point of failure" concern with centralized journals, we implement **partitioned journal architecture**:
+
+```
+Partitioned Journal Design:
+                    ┌─────────────┐
+                    │Smart Router │
+                    │(Hybrid Logic│
+                    │   Clock)    │
+                    └──────┬──────┘
+                           │
+      ┌────────────────────┼────────────────────┐
+      ▼                    ▼                    ▼
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│ Journal-1   │      │ Journal-2   │      │ Journal-3   │
+│Single-tenant│      │Cross-shard  │      │System ops   │
+│High-freq ops│      │ACID txns    │      │Metadata     │
+└─────────────┘      └─────────────┘      └─────────────┘
+```
+
+This hybrid approach provides:
+- **Linear write scalability** through partitioning
+- **Global ordering** via Hybrid Logical Clocks (HLC)
+- **Fault isolation** between different operation types
+- **Optimized routing** based on operation characteristics
+
+### 1.3 Service Layers
+
+The Vecraft DB distributed architecture is organized into five distinct layers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        EDGE LAYER                               │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │              API-Gateway                                │    │
+│  │  • TLS Termination    • Rate Limiting                  │    │
+│  │  • Authentication     • Smart Routing                  │    │
+│  │  • Request Tracking   • Journal Partitioning           │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     CONTROL PLANE                              │
+│  ┌─────────────────────┐      ┌─────────────────────────────┐   │
+│  │   Meta-Manager      │      │   Fail-over-Manager        │   │
+│  │  • Cluster Metadata │      │  • Node Liveness           │   │
+│  │  • Shard Mapping    │      │  • Auto-healing            │   │
+│  │  • Collection DDL   │      │  • HLC Synchronization     │   │
+│  └─────────────────────┘      └─────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   JOURNAL LAYER (NEW)                          │
+│              ┌─────────────────────────────────┐                │
+│              │         Journal Services        │                │
+│              │  • Global Write Ordering        │                │
+│              │  • WAL Delta Distribution       │                │
+│              │  • Cross-Shard Consistency      │                │
+│              │  • Operation Tracking           │                │
+│              └─────────────────────────────────┘                │
+└─────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      DATA PLANE                                │
+│              ┌─────────────────────────────────┐                │
+│              │         Query Processors        │                │
+│              │  • Vector Similarity Search     │                │
+│              │  • Fan-out Query Coordination   │                │
+│              │  • Result Aggregation           │                │
+│              │  • Read Replica Management      │                │
+│              └─────────────────────────────────┘                │
+│                               │                                 │
+│     ┌─────────────────────────┼─────────────────────────┐       │
+│     ▼                         ▼                         ▼       │
+│ ┌───────────┐           ┌───────────┐           ┌───────────┐   │
+│ │Storage-   │           │Storage-   │           │Storage-   │   │
+│ │Node A     │           │Node B     │           │Node C     │   │
+│ │• Journal  │◄─────────►│• Journal  │◄─────────►│• Journal  │   │
+│ │  Replay   │   Sync    │  Replay   │   Sync    │  Replay   │   │
+│ │• HNSW     │ (Optional)│• HNSW     │ (Optional)│• HNSW     │   │
+│ │• Indexes  │           │• Indexes  │           │• Indexes  │   │
+│ └───────────┘           └───────────┘           └───────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   BACKGROUND SERVICES                          │
+│  ┌─────────────────────┐      ┌─────────────────────────────┐   │
+│  │  Snapshot-Service   │      │       Compactor             │   │
+│  │  • Journal Backup   │      │  • Journal Log Compaction   │   │
+│  │  • Object Store     │      │  • Tombstone GC             │   │
+│  │  • Point-in-time    │      │  • Index Optimization       │   │
+│  │    Recovery         │      │                             │   │
+│  └─────────────────────┘      └─────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   OBSERVABILITY                                │
+│              ┌─────────────────────────────────┐                │
+│              │      Metrics-Exporter           │                │
+│              │  • Prometheus Metrics           │                │
+│              │  • Health Probes                │                │
+│              │  • Request Tracing              │                │
+│              │  • Performance Monitoring       │                │
+│              └─────────────────────────────────┘                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1.4 Service Specifications
+
+| Service | Layer | Cardinality | Key Responsibilities | External API |
+|---------|-------|-------------|---------------------|--------------|
+| **API-Gateway** | Edge | 2-N (stateless) | TLS termination, authentication, rate limiting, smart routing to journal partitions, consistency level routing | HTTPS/gRPC |
+| **Meta-Manager** | Control-Plane | 3 (etcd cluster) | Cluster metadata, shard mapping, lease management, HLC coordination | gRPC + watch streams |
+| **Fail-over-Manager** | Control-Plane | 1-3 | Node liveness monitoring, journal failover, auto-healing, clock synchronization | gRPC |
+| **Journal-Service** | Journal Layer | 3-N per partition | Global write ordering, WAL delta distribution, cross-shard ACID transactions, offset tracking | gRPC + streaming |
+| **Query-Processor** | Data-Plane | 1-N per shard | Vector similarity search, fan-out coordination, result aggregation, consistency enforcement | gRPC from Gateway |
+| **Storage-Node** | Data-Plane | 2-N per shard | Journal replay, pull-before-read sync, local indexes (HNSW), query execution | Streaming from Journal |
+| **Snapshot-Service** | Background | 1-N | Journal backup, point-in-time recovery, object store integration | CLI/Cron |
+| **Compactor** | Background | 1 per journal partition | Journal log compaction, index optimization, tombstone GC | Internal RPC |
+| **Metrics-Exporter** | Observability | 1 per node | Prometheus metrics, health probes, request tracing, consistency monitoring | /metrics, /healthz |
+
+> **Note:** Journal services are partitioned for scalability while maintaining global ordering through Hybrid Logical Clocks (HLC). Storage nodes implement pull-before-read for configurable consistency guarantees.
+
+## 2. Detailed Service Architecture
