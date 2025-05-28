@@ -231,10 +231,8 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 
 ### 2.2 Service Interaction Flow with Global Ordering
 
-```
 Write Operation Flow with Journal:
-────────────────────────────────────
-
+```
 Client ──[1]──► API-Gateway ──[2]──► Journal-Service ──[3]──► Storage-Nodes
                      │                    │ (HLC+Seq)           │
                      │                    │                     │
