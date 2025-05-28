@@ -181,3 +181,54 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 > **Note:** Journal services are partitioned for scalability while maintaining global ordering through Hybrid Logical Clocks (HLC). Storage nodes implement pull-before-read for configurable consistency guarantees.
 
 ## 2. Detailed Service Architecture
+
+### 2.1 Journal-Based Multi-Shard Deployment Topology
+
+```
+                          Client Applications
+                                   │
+                                   ▼
+                         ┌─────────────────┐
+                         │  API-Gateway    │
+                         │  (Load Balanced)│
+                         └─────────┬───────┘
+                                   │ Smart Routing
+                                   │ (HLC-aware)
+                 ┌─────────────────┼─────────────────┐
+                 ▼                 ▼                 ▼
+        ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+        │ Journal-1   │    │ Journal-2   │    │ Journal-3   │
+        │Single-tenant│    │Cross-shard  │    │System ops   │
+        │operations   │    │ACID txns    │    │metadata     │
+        └─────┬───────┘    └─────┬───────┘    └──────┬──────┘
+              │ WAL Stream       │ WAL Stream        │ WAL Stream
+    ┌─────────┼─────────┐        │         ┌─────────┼─────────┐
+    ▼         ▼         ▼        │         ▼         ▼         ▼
+┌─────────┐┌─────────┐┌─────────┐│     ┌─────────┐┌─────────┐┌─────────┐
+│Storage-A││Storage-B││Storage-C││     │Storage-A││Storage-B││Storage-C│
+│(Shard 1)││(Shard 1)││(Shard 1)││ ... │(Shard N)││(Shard N)││(Shard N)│
+│[Replica]││[Replica]││[Replica]││     │[Replica]││[Replica]││[Replica]│
+└─────────┘└─────────┘└─────────┘│     └─────────┘└─────────┘└─────────┘
+                                 │
+       ┌─────────────────────────┼─────────────────────────┐
+       ▼                         ▼                         ▼
+┌─────────────┐            ┌─────────────┐            ┌─────────────┐
+│Query-Proc-1 │            │Query-Proc-2 │            │Query-Proc-N │
+│(Shard 1)    │            │(Shard 2)    │            │(Shard N)    │
+│Vector Search│            │Vector Search│            │Vector Search│
+└─────────────┘            └─────────────┘            └─────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │    Control Plane        │
+                    │ ┌─────────┐ ┌─────────┐ │
+                    │ │Meta-Mgr │ │Failover │ │
+                    │ │ (etcd)  │ │Manager  │ │
+                    │ │  x3     │ │+ HLC    │ │
+                    │ └─────────┘ └─────────┘ │
+                    └─────────────────────────┘
+```
+
+### 2.2 Service Interaction Flow with Global Ordering
+
+
