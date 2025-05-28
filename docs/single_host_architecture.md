@@ -17,11 +17,11 @@
 ┌─────────────┐     HTTP / gRPC     ┌──────────────────┐
 │   Clients   │ ─────────────────▶  │  REST / Gateway  │
 └─────────────┘                     └─────────┬────────┘
-                                            ▼
-                                        Planner
-                                            ▼
-                                        Executor
-                                            ▼
+                                              ▼
+                                           Planner
+                                              ▼
+                                           Executor
+                                              ▼
                                    ┌──────────────────┐
                                    │ CollectionService│
                                    └─────────┬────────┘
