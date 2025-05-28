@@ -95,7 +95,7 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     CONTROL PLANE                               │
+│                        CONTROL PLANE                            │
 │  ┌─────────────────────┐      ┌─────────────────────────────┐   │
 │  │   Meta-Manager      │      │   Fail-over-Manager         │   │
 │  │  • Cluster Metadata │      │  • Node Liveness            │   │
@@ -106,7 +106,7 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   JOURNAL LAYER (NEW)                           │
+│                        JOURNAL LAYER                            │
 │              ┌─────────────────────────────────┐                │
 │              │         Journal Services        │                │
 │              │  • Global Write Ordering        │                │
@@ -118,7 +118,7 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      DATA PLANE                                 │
+│                         DATA PLANE                              │
 │              ┌─────────────────────────────────┐                │
 │              │         Query Processors        │                │
 │              │  • Vector Similarity Search     │                │
