@@ -1,3 +1,124 @@
+"""
+MVCC (Multi-Version Concurrency Control) overlay for the physical storage engine.
+
+This wrapper provides transaction isolation by maintaining an in-memory overlay
+of changes that haven't been committed yet. It routes operations through a
+version-specific view of the data, allowing multiple concurrent transactions
+without blocking each other.
+
+ARCHITECTURE & FLOW:
+═══════════════════════════════════════════════════════════════════════════════
+
+                                ┌─────────────────┐
+                                │  Client Request │
+                                └─────────┬───────┘
+                                          │
+                                ┌─────────▼───────┐
+                                │ StorageWrapper  │
+                                │   (This Class)  │
+                                └─────────┬───────┘
+                                          │
+                          ┌───────────────┼───────────────┐
+                          │               │               │
+                ┌─────────▼───────┐       │     ┌─────────▼──────┐
+                │  READ OPERATION │       │     │ WRITE OPERATION│
+                └─────────┬───────┘       │     └─────────┬──────┘
+                          │               │               │
+                          │               │               ▼
+          ┌───────────────▼──────────┐    │    ┌─────────────────┐
+          │   Version Overlay Check  │    │    │  Store in       │
+          │                          │    │    │  Version        │
+          │ 1. Check deleted_records │    │    │  Overlay        │
+          │ 2. Check storage_overlay │    │    │  (Memory)       │
+          │ 3. Fallback to base      │    │    └─────────────────┘
+          └──────────────────────────┘    │
+                                          │
+                                ┌─────────▼───────┐
+                                │   DELETE        │
+                                │   OPERATION     │
+                                │                 │
+                                │ Mark in         │
+                                │ deleted_records │
+                                │ set             │
+                                └─────────────────┘
+
+READ FLOW DETAIL:
+──────────────────
+get_record_location(record_id) / read(location):
+
+1. [LOCK] Acquire lock
+2. [CHECK] Is record_id in deleted_records?
+   → YES: Return None
+   → NO: Continue
+3. [CHECK] Is record_id in storage_overlay?
+   → YES: Return overlay data
+   → NO: Continue
+4. [FALLBACK] Query base_storage
+5. [UNLOCK] Release lock
+
+WRITE FLOW DETAIL:
+───────────────────
+write_and_index(data, location):
+
+1. [LOCK] Acquire lock
+2. [STORE] Store in version.storage_overlay[record_id] = {
+      'location': location,
+      'data': data
+   }
+3. [QUEUE] Add to version.pending_writes (for commit)
+4. [UNLOCK] Release lock
+
+DELETE FLOW DETAIL:
+────────────────────
+mark_deleted(record_id):
+
+1. [LOCK] Acquire lock
+2. [MARK] Add record_id to version.deleted_records
+3. [REMOVE] Remove from storage_overlay (if present)
+4. [QUEUE] Add delete operation to pending_writes
+5. [UNLOCK] Release lock
+
+VERSION ISOLATION:
+═══════════════════
+Each transaction gets its own CollectionVersion containing:
+
+• storage_overlay: Dict[str, Dict] - Uncommitted writes in memory
+• deleted_records: Set[str] - Records marked for deletion
+• pending_writes: List[WriteOperation] - Operations to apply on commit
+• version_id: int - Unique version identifier
+
+This creates a "virtual view" where:
+- Reads see: (base_storage - deleted_records) + storage_overlay
+- Writes go to: storage_overlay (not persisted until commit)
+- Deletes mark in: deleted_records (actual deletion on commit)
+
+COMMIT BEHAVIOR (handled elsewhere):
+─────────────────────────────────────
+When version.commit() is called:
+1. Apply all pending_writes to base_storage
+2. Physically delete records in deleted_records
+3. Clear overlay and pending operations
+4. Update version state
+
+ROLLBACK BEHAVIOR (handled elsewhere):
+──────────────────────────────────────
+When version.rollback() is called:
+1. Clear storage_overlay
+2. Clear deleted_records
+3. Clear pending_writes
+4. Revert to base_storage state
+
+THREAD SAFETY:
+══════════════
+Uses threading.RLock() to ensure:
+- Atomic overlay operations
+- Consistent view during reads
+- Safe concurrent access to version state
+
+Args:
+    base_storage (StorageIndexEngine): The real on-disk engine.
+    version (CollectionVersion): Snapshot context.
+"""
 import threading
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
