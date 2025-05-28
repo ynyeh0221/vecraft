@@ -1,4 +1,4 @@
-# Vecraft vector DB - Distributed Architecture Design Document
+# Vecraft vector DB - Distributed Architecture Document
 
 ## Executive Summary
 
