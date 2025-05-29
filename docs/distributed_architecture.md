@@ -304,44 +304,44 @@ vecraft-db/
 │   │   ├── main.py
 │   │   ├── handlers/
 │   │   ├── middleware/
-│   │   └── journal_router/     # NEW: Smart routing logic
-│   ├── journal-service/        # NEW: Replaces shard-router
+│   │   └── journal_router/     # Smart routing logic
+│   ├── journal-service/        # Replaces shard-router
 │   │   ├── main.py
 │   │   ├── hlc/                # Hybrid Logical Clock
 │   │   ├── partitioning/       # Journal partitioning
 │   │   ├── wal/                # Global WAL management
 │   │   └── distribution/       # Delta distribution
-│   ├── query-processor/        # NEW: Separated from storage
+│   ├── query-processor/        # Separated from storage
 │   │   ├── main.py
 │   │   ├── vector_search/
 │   │   ├── aggregation/
 │   │   └── cache/
 │   ├── storage-node/
 │   │   ├── main.py
-│   │   ├── journal_replay/     # NEW: Journal replay logic
+│   │   ├── journal_replay/     # Journal replay logic
 │   │   ├── indexes/            # HNSW, inverted indexes
 │   │   └── mmap/               # Memory-mapped storage
 │   ├── meta-manager/
 │   │   ├── main.py
 │   │   ├── etcd/
-│   │   ├── hlc_sync/           # NEW: HLC coordination
+│   │   ├── hlc_sync/           # HLC coordination
 │   │   └── schema/
 │   ├── fail-over-manager/
 │   │   ├── main.py
 │   │   ├── monitoring/
-│   │   └── journal_failover/   # NEW: Journal-specific failover
+│   │   └── journal_failover/   # Journal-specific failover
 │   ├── snapshot-service/
 │   │   ├── main.py
-│   │   ├── journal_backup/     # NEW: Journal backup logic
+│   │   ├── journal_backup/     # Journal backup logic
 │   │   └── recovery/
 │   └── compactor/
 │       ├── main.py
-│       ├── journal_gc/         # NEW: Journal log compaction
+│       ├── journal_gc/         # Journal log compaction
 │       └── index_optimization/
 ├── shared/
 │   ├── model/             # vecraft_data_model
 │   ├── rpc/               # Generated gRPC stubs
-│   ├── hlc/               # NEW: Hybrid Logical Clock library
+│   ├── hlc/               # Hybrid Logical Clock library
 │   ├── index/             # HNSW, InvertedIndex
 │   └── common/            # Utilities
 └── deployment/
