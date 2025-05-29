@@ -459,7 +459,41 @@ Configurable Consistency (Reads):
 
 #### **Pull-Before-Read Implementation**
 
+```
+Consistency-Aware Read Flow:
+──────────────────────────
 
+┌────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ Client │    │    Query    │    │  Storage    │    │  Journal    │
+│        │    │ Processor   │    │   Node      │    │  Service    │
+└───┬────┘    └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+    │                │                  │                  │
+    │──[SEARCH]─────►│                  │                  │
+    │ +consistency   │                  │                  │
+    │  level         │                  │                  │
+    │                │──[CHECK_SYNC]───►│                  │
+    │                │  (conditional)   │                  │
+    │                │                  │──[GET_OFFSET]───►│
+    │                │                  │◄─[LATEST_OFFSET]─│
+    │                │                  │                  │
+    │                │                  │──[PULL_WAL]─────►│
+    │                │                  │◄─[WAL_ENTRIES]───│
+    │                │                  │  (if needed)     │
+    │                │                  │                  │
+    │                │◄─[READY]─────────│                  │
+    │                │                  │                  │
+    │                │──[EXECUTE]──────►│                  │
+    │                │◄─[RESULTS]───────│                  │
+    │◄─[RESULTS]─────│                  │                  │
+
+Decision Logic:
+• Eventual: Skip sync, read directly from storage
+• Bounded Staleness: Sync only if staleness > threshold
+• Read-Your-Writes: Sync if client recently wrote
+• Strong: Always sync to latest before read
+```
+
+#### **Consistency Level Specifications**
 
 ## 5. Fault Tolerance and High Availability
 
