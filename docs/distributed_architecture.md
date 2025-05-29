@@ -420,7 +420,46 @@ Multi-Shard Vector Search Flow:
     │              │             │       │       │       │
 ```
 
-### 4.3
+### 4.3 Consistency Guarantees with Pull-Before-Read
+
+```
+Enhanced Consistency Model with Journal Sync:
+───────────────────────────────────────────
+
+Strong Consistency (Writes):
+┌─────────────────────────────────────────────────────────────┐
+│  All writes go through Journal with global ordering         │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                  │
+│  │ Write   │───►│ Journal │───►│ Global  │                  │
+│  │ Request │    │ HLC+Seq │    │ Ordering│                  │
+│  └─────────┘    └─────────┘    └─────────┘                  │
+│                                                             │
+│  Guarantees:                                                │
+│  • Global linearizability across all shards                 │
+│  • Durability after journal acknowledgment                  │
+│  • Atomicity per operation and cross-shard transactions     │
+│  • Perfect audit trail and operation tracking               │
+└─────────────────────────────────────────────────────────────┘
+
+Configurable Consistency (Reads):
+┌─────────────────────────────────────────────────────────────┐
+│  Vector queries with configurable consistency levels        │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                  │
+│  │ Search  │───►│ Journal │───►│ Fresh   │                  │
+│  │ Request │    │ Sync    │    │ Results │                  │
+│  └─────────┘    └─────────┘    └─────────┘                  │
+│                                                             │
+│  Consistency Levels:                                        │
+│  • Eventual: Fast reads, possible staleness                 │
+│  • Bounded Staleness: Limited staleness (1-2 seconds)       │
+│  • Read-Your-Writes: See your own changes immediately       │
+│  • Strong: Always pull latest before read                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### **Pull-Before-Read Implementation**
+
+
 
 ## 5. Fault Tolerance and High Availability
 
