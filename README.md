@@ -100,7 +100,7 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 * **Storage** is an append‑only mmap file; offsets are tracked in SQLite for O(1) lookup.
 * **HNSW** powers ANN search; Ids are mapped transparently via `IdMapper`.
 
-For an in‑depth journey, check the [architecture docs](./docs/architecture.md) and [distributed architecture doc (WIP)](./docs/distributed_architecture.md).
+For an in‑depth journey, check the [single-host architecture doc](./docs/single_host_architecture.md) and [distributed architecture doc (WIP)](./docs/distributed_architecture.md).
 
 
 ## Concepts
