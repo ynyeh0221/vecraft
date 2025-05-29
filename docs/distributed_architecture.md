@@ -304,8 +304,8 @@ vecraft-db/
 │   │   ├── main.py
 │   │   ├── handlers/
 │   │   ├── middleware/
-│   │   └── journal_router/      # NEW: Smart routing logic
-│   ├── journal-service/         # NEW: Replaces shard-router
+│   │   └── journal_router/     # NEW: Smart routing logic
+│   ├── journal-service/        # NEW: Replaces shard-router
 │   │   ├── main.py
 │   │   ├── hlc/                # Hybrid Logical Clock
 │   │   ├── partitioning/       # Journal partitioning
@@ -354,6 +354,73 @@ vecraft-db/
 
 ### 4.1 Write Path Sequence with Global Ordering
 
+```
+Write Operation Detailed Sequence with HLC:
+──────────────────────────────────────────
+
+┌────────┐    ┌─────────┐    ┌─────────────┐    ┌─────────────────────┐
+│ Client │    │   API   │    │   Journal   │    │    Storage Nodes    │
+│  SDK   │    │Gateway  │    │  Service    │    │  A  │ │  B  │ │  C  │
+└───┬────┘    └────┬────┘    └──────┬──────┘    └──┬──┘ └──┬──┘ └──┬──┘
+    │              │                │              │       │       │
+    │──[INSERT]───►│                │              │       │       │
+    │              │──[gRPC]───────►│              │       │       │
+    │              │                │──[HLC+Seq]──►│       │       │
+    │              │                │──[WAL Delta]────────►│       │
+    │              │                │──[WAL Delta]────────────────►│
+    │              │                │              │       │       │
+    │              │                │◄──[ACK]──────│       │       │
+    │              │                │◄──[ACK]──────────────│       │
+    │              │                │◄──[ACK]──────────────────────│
+    │              │                │              │       │       │
+    │              │◄──[SUCCESS]────│              │       │       │
+    │◄──[201]──────│                │              │       │       │
+    │              │                │              │       │       │
+
+Timeline:
+T1: Client sends insert request with vector data
+T2: Gateway routes to appropriate journal partition
+T3: Journal assigns HLC timestamp and global sequence number
+T4: WAL delta distributed to all relevant storage nodes
+T5: Storage nodes acknowledge delta application
+T6: Success response propagated back to client
+
+HLC ensures global ordering: HLC = (physical_time, logical_counter)
+```
+
 ### 4.2 Vector Search Path with Fan-out
 
+```
+Multi-Shard Vector Search Flow:
+──────────────────────────────
+
+┌────────┐    ┌─────────┐    ┌───────────────────────────────┐
+│ Client │    │   API   │    │      Query Processors         │
+│  SDK   │    │ Gateway │    │  Q1   │  Q2   │  Q3   │   QN  │
+└───┬────┘    └────┬────┘    └───┬───┘ ──┬───┘ ──┬───┘ ──┬───┘
+    │              │             │       │       │       │
+    │──[SEARCH]───►│             │       │       │       │
+    │  vector=[..] │             │       │       │       │
+    │              ├─[Fan-out]──►│       │       │       │
+    │              ├─[Fan-out]──────────►│       │       │
+    │              ├─[Fan-out]──────────────────►│       │
+    │              ├─[Fan-out]──────────────────────────►│
+    │              │             │       │       │       │
+    │              │◄─[Top-K]────│       │       │       │
+    │              │  similarity │       │       │       │
+    │              │◄─[Top-K]────────────│       │       │
+    │              │◄─[Top-K]────────────────────│       │
+    │              │◄─[Top-K]────────────────────────────│
+    │              │             │       │       │       │
+    │              │ (Merge and  │       │       │       │
+    │              │  Rank by    │       │       │       │
+    │              │  Distance)  │       │       │       │
+    │              │             │       │       │       │
+    │◄──[Results]──│             │       │       │       │
+    │              │             │       │       │       │
+```
+
+### 4.3
+
+## 5. Fault Tolerance and High Availability
 
