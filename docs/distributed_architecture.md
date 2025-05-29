@@ -349,3 +349,11 @@ vecraft-db/
     ├── docker/
     └── helm/
 ```
+
+## 4. Data Flow and Consistency
+
+### 4.1 Write Path Sequence with Global Ordering
+
+### 4.2 Vector Search Path with Fan-out
+
+
