@@ -504,3 +504,4 @@ Decision Logic:
 
 ## 5. Fault Tolerance and High Availability
 
+## 6. Scaling and Performance
