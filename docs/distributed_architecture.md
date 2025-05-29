@@ -495,5 +495,12 @@ Decision Logic:
 
 #### **Consistency Level Specifications**
 
+| Consistency Level | Sync Behavior | Use Case | Latency Impact |
+|------------------|---------------|----------|----------------|
+| Eventual | No sync required | Analytics, bulk operations, non-critical reads | None |
+| Bounded Staleness | Sync if staleness > 1-2 seconds | Real-time dashboards, monitoring | Low |
+| Read-Your-Writes | Sync for recent writers only | User-facing applications | Medium |
+| Strong/Linearizable | Always sync to latest offset | Financial transactions, critical operations | High |
+
 ## 5. Fault Tolerance and High Availability
 
