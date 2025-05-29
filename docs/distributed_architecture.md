@@ -287,13 +287,13 @@ Client ──[1]──► API-Gateway ──[2]──► Query-Processor ──[
 
 | Existing Component | Target Service | Migration Strategy |
 |-------------------|---------------|-------------------|
-| `VecraftRestAPI` | **API-Gateway** | Remove business logic; HTTP↔gRPC marshalling + smart journal routing |
-| `Planner/Executor` | **Query-Processor** | Preserve intact; handle vector similarity queries and result aggregation |
-| `VectorDB` facade | **Journal-Service** | Replace with journal append operations and global sequencing |
-| `WALManager` | **Journal-Service** | Transform into distributed journal with HLC-based ordering |
-| `MMapStorage` & `SQLiteRecordLocationIndex` | **Storage-Node** | Adapt for journal replay instead of direct writes |
-| `HNSW`, `InvertedIndex` | **Storage-Node** (primary) + **Query-Processor** (cache) | Storage maintains authoritative copy, processor caches for performance |
-| `SqliteCatalog` | **Meta-Manager** | Replace with etcd schema; provide gRPC interface for metadata |
+| VecraftRestAPI | API-Gateway | Remove business logic; HTTP↔gRPC marshalling + smart journal routing |
+| Planner/Executor | Query-Processor | Preserve intact; handle vector similarity queries and result aggregation |
+| VectorDB facade | Journal-Service | Replace with journal append operations and global sequencing |
+| WALManager | Journal-Service | Transform into distributed journal with HLC-based ordering |
+| MMapStorage & SQLiteRecordLocationIndex | Storage-Node | Adapt for journal replay instead of direct writes |
+| HNSW, InvertedIndex | Storage-Node (primary) + Query-Processor (cache) | Storage maintains authoritative copy, processor caches for performance |
+| SqliteCatalog | Meta-Manager | Replace with etcd schema; provide gRPC interface for metadata |
 
 ### 3.2 Repository Structure Reorganization
 
