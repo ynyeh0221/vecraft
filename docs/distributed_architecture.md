@@ -296,3 +296,56 @@ Client ──[1]──► API-Gateway ──[2]──► Query-Processor ──[
 | `SqliteCatalog` | **Meta-Manager** | Replace with etcd schema; provide gRPC interface for metadata |
 
 ### 3.2 Repository Structure Reorganization
+
+```
+vecraft-db/
+├── services/
+│   ├── api-gateway/
+│   │   ├── main.py
+│   │   ├── handlers/
+│   │   ├── middleware/
+│   │   └── journal_router/      # NEW: Smart routing logic
+│   ├── journal-service/         # NEW: Replaces shard-router
+│   │   ├── main.py
+│   │   ├── hlc/                # Hybrid Logical Clock
+│   │   ├── partitioning/       # Journal partitioning
+│   │   ├── wal/                # Global WAL management
+│   │   └── distribution/       # Delta distribution
+│   ├── query-processor/        # NEW: Separated from storage
+│   │   ├── main.py
+│   │   ├── vector_search/
+│   │   ├── aggregation/
+│   │   └── cache/
+│   ├── storage-node/
+│   │   ├── main.py
+│   │   ├── journal_replay/     # NEW: Journal replay logic
+│   │   ├── indexes/            # HNSW, inverted indexes
+│   │   └── mmap/               # Memory-mapped storage
+│   ├── meta-manager/
+│   │   ├── main.py
+│   │   ├── etcd/
+│   │   ├── hlc_sync/           # NEW: HLC coordination
+│   │   └── schema/
+│   ├── fail-over-manager/
+│   │   ├── main.py
+│   │   ├── monitoring/
+│   │   └── journal_failover/   # NEW: Journal-specific failover
+│   ├── snapshot-service/
+│   │   ├── main.py
+│   │   ├── journal_backup/     # NEW: Journal backup logic
+│   │   └── recovery/
+│   └── compactor/
+│       ├── main.py
+│       ├── journal_gc/         # NEW: Journal log compaction
+│       └── index_optimization/
+├── shared/
+│   ├── model/             # vecraft_data_model
+│   ├── rpc/               # Generated gRPC stubs
+│   ├── hlc/               # NEW: Hybrid Logical Clock library
+│   ├── index/             # HNSW, InvertedIndex
+│   └── common/            # Utilities
+└── deployment/
+    ├── k8s/
+    ├── docker/
+    └── helm/
+```
