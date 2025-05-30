@@ -539,6 +539,14 @@ Failure Handling Matrix:
 
 ### 6.1 Horizontal Scaling Strategy
 
+| Component | Scaling Trigger | Scaling Method | Estimated Limit |
+|-----------|----------------|----------------|-----------------|
+| API-Gateway | CPU > 70% OR RPS threshold | Add instance (+1) | 1000 pods |
+| Query-Processor | CPU > 75% OR p99 latency > 40ms | Add replica per shard | 10 per shard |
+| Storage-Node | Storage capacity OR replay lag | Add replica (+1) | 20 per shard |
+| Journal-Service | Write throughput OR partition load | Add partition | 100 partitions |
+| Meta-Manager | Fixed cluster size | N/A (etcd cluster) | 3 nodes |
+
 ### 6.2 Performance Optimization Strategies
 ```
 Performance Optimization Layers:
