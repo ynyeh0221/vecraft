@@ -580,6 +580,46 @@ Performance Optimization Layers:
 
 ## 8. Monitoring and Observability
 
+### 8.1 Metrics and Alerting
+
+```
+Observability Stack for Journal Architecture with Consistency Monitoring:
+───────────────────────────────────────────────────────────────────────
+
+┌───────────────────────────────────────────────────────────────┐
+│                        METRICS LAYER                          │
+│     ┌─────────────┐  ┌──────────────┐  ┌───────────────┐      │
+│     │ Business    │  │ Application  │  │ Infrastructure│      │
+│     │ • QPS       │  │ • Latency    │  │ • CPU/Memory  │      │
+│     │ • Error Rate│  │ • Throughput │  │ • Disk I/O    │      │
+│     │ • SLA       │  │ • HLC Drift  │  │ • Network     │      │
+│     │ • Tracking  │  │ • Journal    │  │ • Journal     │      │
+│     │   Coverage  │  │   Lag        │  │   Storage     │      │
+│     │             │  │ • Sync Rate  │  │               │      │
+│     │             │  │ • Consistency│  │               │      │
+│     │             │  │   Level Mix  │  │               │      │
+│     └─────────────┘  └──────────────┘  └───────────────┘      │
+└───────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│                   ALERTING RULES (example)                    │
+│  • Journal Service High Latency > 10ms                        │
+│  • HLC Clock Drift > 100ms between services                   │
+│  • Storage Node Replay Lag > 1 second                         │
+│  • Vector Search Latency p99 > 100ms                          │
+│  • Journal Partition Failure Detection                        │
+│  • Cross-Shard Transaction Failure Rate > 1%                  │
+│  • Request Tracking Data Loss > 0.1%                          │
+│  • Sync Operation Failure Rate > 5%                           │
+│  • Strong Consistency Read Latency > 50ms                     │
+│  • Bounded Staleness Threshold Violations > 2%                │
+│  • Read-Your-Writes Consistency Violations Detected           │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### 8.2 Health Checks and Probes
+
 ## 9. Security Considerations
 
 ## 10. Implementation Considerations
