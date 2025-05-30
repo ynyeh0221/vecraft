@@ -506,6 +506,33 @@ Decision Logic:
 
 ### 5.1 Failure Scenarios and Responses
 
+```
+Failure Handling Matrix:
+────────────────────────
+
+┌─────────────────────┬─────────────────────┬──────────────────────┐
+│   Failure Type      │   Detection Method  │    Recovery Action   │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ Storage Node Down   │ Journal Stream      │ Replay from Journal  │
+│                     │ Timeout             │ Load Balance Queries │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ Query Processor Down│ Health Check        │ Redirect Queries     │
+│                     │ Failure             │ Auto-scale Replicas  │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ Journal Service Down│ HLC Heartbeat       │ Failover to Replica  │
+│                     │ Loss                │ Maintain Global Order│
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ API Gateway Down    │ Load Balancer       │ Route to Healthy     │
+│                     │ Health Probe        │ Gateway Instances    │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ Meta-Manager Down   │ etcd Cluster        │ etcd Auto-Recovery   │
+│                     │ Health              │ 3-node Quorum        │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│ Network Partition   │ HLC Drift           │ Partition-tolerant   │
+│                     │ Detection           │ Journal Selection    │
+└─────────────────────┴─────────────────────┴──────────────────────┘
+```
+
 ### 5.2 Background Service Failure Handling
 
 ## 6. Scaling and Performance
@@ -513,3 +540,48 @@ Decision Logic:
 ### 6.1 Horizontal Scaling Strategy
 
 ### 6.2 Performance Optimization Strategies
+```
+Performance Optimization Layers:
+───────────────────────────────
+
+┌────────────────────────────────────────────────────────────┐
+│                     CACHING LAYER                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ Gateway     │  │ Query Proc  │  │ Storage     │         │
+│  │ • Request   │  │ • Vector    │  │ • HNSW      │         │
+│  │   Results   │  │   Cache     │  │   Cache     │         │
+│  │ • Routing   │  │ • Similarity│  │ • mmap      │         │
+│  │   Cache     │  │   Results   │  │   Caching   │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+└────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────┐
+│                   INDEXING LAYER                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ HNSW        │  │ Inverted    │  │ Filtering   │         │
+│  │ Approximate │  │ Index       │  │ Indexes     │         │
+│  │ Search      │  │ (Metadata)  │  │ (SQL-like)  │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+└────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────┐
+│                   STORAGE LAYER                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ Journal     │  │ mmap        │  │ Snapshot    │         │
+│  │ Partitioned │  │ Random      │  │ Backup      │         │
+│  │ WAL         │  │ Access      │  │ Storage     │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+└────────────────────────────────────────────────────────────┘
+```
+
+## 7. Migration Timeline and Milestones
+
+## 8. Monitoring and Observability
+
+## 9. Security Considerations
+
+## 10. Implementation Considerations
+
+## 11. Critical Implementation Gaps and Solutions
