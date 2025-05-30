@@ -622,11 +622,11 @@ Observability Stack for Journal Architecture with Consistency Monitoring:
 
 | Service | Health Check | Readiness Probe | Liveness Probe |
 |---------|--------------|-----------------|----------------|
-| **API-Gateway** | HTTP 200 on /healthz | Journal service connectivity | Process health |
-| **Journal-Service** | HLC synchronization status | WAL write capability | Storage capacity |
-| **Query-Processor** | Vector index health | Storage node connectivity | Memory utilization |
-| **Storage-Node** | Journal replay status | Index sync status | Disk I/O capability |
-| **Meta-Manager** | etcd cluster quorum | Key-value operations | Leader election status |
+| API-Gateway | HTTP 200 on /healthz | Journal service connectivity | Process health |
+| Journal-Service | HLC synchronization status | WAL write capability | Storage capacity |
+| Query-Processor | Vector index health | Storage node connectivity | Memory utilization |
+| Storage-Node | Journal replay status | Index sync status | Disk I/O capability |
+| Meta-Manager | etcd cluster quorum | Key-value operations | Leader election status |
 
 ## 9. Security Considerations
 
