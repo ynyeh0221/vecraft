@@ -588,6 +588,8 @@ Performance Optimization Layers:
 
 ### 7.1 Phased Migration Approach
 
+### 7.2 Risk Mitigation Strategies
+
 ## 8. Monitoring and Observability
 
 ### 8.1 Metrics and Alerting
@@ -646,4 +648,41 @@ Observability Stack for Journal Architecture with Consistency Monitoring:
 
 ## 10. Implementation Considerations
 
+### 10.1 Journal Partitioning Strategy
+
+```
+Journal Partitioning Decision Tree:
+─────────────────────────────────
+
+Request Arrives
+       │
+       ▼
+   ┌─────────┐    Yes    ┌─────────────────┐
+   │Cross-   │──────────►│  Journal-2      │
+   │Shard?   │           │  (Cross-shard   │
+   └────┬────┘           │   ACID txns)    │
+        │ No             └─────────────────┘
+        ▼
+   ┌─────────┐    Yes    ┌─────────────────┐
+   │System   │──────────►│  Journal-3      │
+   │Metadata?│           │  (System ops)   │
+   └────┬────┘           └─────────────────┘
+        │ No
+        ▼
+   ┌─────────┐    High   ┌─────────────────┐
+   │Freq     │──────────►│  Journal-1      │
+   │Level?   │           │  (Single-tenant │
+   └─────────┘           │   high-freq)    │
+                         └─────────────────┘
+
+Routing Rules:
+• Vector similarity queries → Journal-1 (high frequency)
+• Bulk data imports → Journal-1 (high throughput)
+• Cross-shard analytics → Journal-2 (consistency critical)
+• Schema changes → Journal-3 (system operations)
+• User management → Journal-3 (metadata operations)
+```
+
 ## 11. Critical Implementation Gaps and Solutions
+
+### 11.1 Consensus Inside Each Journal Partition
