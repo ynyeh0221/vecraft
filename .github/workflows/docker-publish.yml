@@ -115,7 +115,7 @@ jobs:
   scorecard:
     runs-on: ubuntu-latest
     permissions:
-      actions: read      # Required by Scorecard
+      id-token: write      # Required by Scorecard
       contents: read     # Required to read repo content
       security-events: write  # Needed to upload SARIF file to code scanning (optional)
   
