@@ -128,6 +128,6 @@ jobs:
         continue-on-error: true
   
       - name: Upload Scorecard report to GitHub code scanning
-        uses: ossf/scorecard-action@f49aabe0b5af0936a0987cfb85d86b75731b0186 # v2.4.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           sarif_file: results.sarif
