@@ -3,6 +3,8 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=ynyeh0221_vecraft&metric=coverage)](https://sonarcloud.io/summary/new_code?id=ynyeh0221_vecraft)
 [![Coverage Status](https://coveralls.io/repos/github/ynyeh0221/vecraft/badge.svg?branch=main)](https://coveralls.io/github/ynyeh0221/vecraft?branch=main)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ynyeh0221/vecraft-vector-database)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/ynyeh0221/vecraft-vector-database/badge)](https://securityscorecards.dev/viewer/?uri=github.com/ynyeh0221/vecraft-vector-database)
+
 
 VecraftDB is an embeddable, MVCC‑powered vector database that brings fully transactional semantics, rich filtering, and blazing‑fast similarity search into a single Python package.
 
