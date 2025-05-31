@@ -111,3 +111,23 @@ jobs:
         run: |
           docker push ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
           docker push ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.ref_name }}
+
+  scorecard:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read      # Required by Scorecard
+      contents: read     # Required to read repo content
+      security-events: write  # Needed to upload SARIF file to code scanning (optional)
+  
+    steps:
+      - name: Run OpenSSF Scorecard analysis
+        uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+        continue-on-error: true
+  
+      - name: Upload Scorecard report to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: results.sarif
