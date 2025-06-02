@@ -714,4 +714,36 @@ Write Flow with Raft:
 
 ### 11.2 Isolation Level Clarification and Implementation
 
-**Problem**: Current design provides 
+**Problem**: Current design provides "eventual + read-your-writes via HLC" which is closer to Read Committed, not the serializable isolation typically expected for ACID systems.
+
+**Solution**: Implement **configurable isolation levels** with explicit contracts and pull-before-read mechanisms:
+
+```
+Isolation Level Implementation with Pull-Before-Read:
+───────────────────────────────────────────────────
+
+┌─────────────────┬─────────────────┬─────────────────────────┬─────────────────┐
+│ Isolation Level │ Sync Behavior   │ Use Case                │ Implementation  │
+├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
+│ Eventual        │ No sync         │ Analytics, bulk ops     │ Direct read     │
+│ (Default)       │ required        │ non-critical reads      │ from storage    │
+├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
+│ Bounded         │ Sync if         │ Real-time dashboards    │ Check staleness │
+│ Staleness       │ staleness >     │ monitoring systems      │ threshold       │
+│                 │ threshold       │                         │                 │
+├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
+│ Read-Your-      │ Sync for        │ User-facing apps        │ Track recent    │
+│ Writes          │ recent writers  │ profile updates         │ writers         │
+├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
+│ Strong/         │ Always sync     │ Financial apps          │ Pull latest     │
+│ Linearizable    │ to latest       │ compliance systems      │ before read     │
+└─────────────────┴─────────────────┴─────────────────────────┴─────────────────┘
+```
+
+### 11.3 Cross-Partition Transactional Writes
+
+**Problem**: Operations that touch both data and metadata (e.g., "create collection then insert vectors") can violate atomicity if they span multiple journal partitions.
+
+**Solution**: Implement **distributed transaction coordination** with 2PC protocol:
+
+
