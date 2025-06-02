@@ -686,3 +686,32 @@ Routing Rules:
 ## 11. Critical Implementation Gaps and Solutions
 
 ### 11.1 Consensus Inside Each Journal Partition
+
+**Problem**: The current design shows "3-N per partition" but doesn't specify the internal consensus protocol needed for write atomicity and linearizability under failover.
+
+**Solution**: Implement **Raft consensus within each journal partition**:
+
+```
+Journal Partition Internal Architecture:
+──────────────────────────────────────
+
+┌─────────────────────────────────────────────────────┐
+│                Journal Partition 1                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │Journal-1-A  │  │Journal-1-B  │  │Journal-1-C  │  │
+│  │ [Leader]    │◄─│ [Follower]  │◄─│ [Follower]  │  │
+│  │ Raft Log    │  │ Raft Log    │  │ Raft Log    │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  │
+└─────────────────────────────────────────────────────┘
+
+Write Flow with Raft:
+1. Client → Journal Leader: Append(entry)
+2. Leader → Followers: AppendEntries RPC
+3. Followers → Leader: ACK (after fsync)
+4. Leader → Client: Success (after majority)
+5. Leader → Storage Nodes: Distribute WAL delta
+```
+
+### 11.2 Isolation Level Clarification and Implementation
+
+**Problem**: Current design provides 
