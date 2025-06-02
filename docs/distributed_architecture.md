@@ -191,33 +191,33 @@ Note: Journal services are partitioned for scalability while maintaining global 
                          │  API-Gateway    │
                          │  (Load Balanced)│
                          └─────────┬───────┘
-                                   │ Smart Routing
-                                   │ (HLC-aware)
+                                   │  Smart Routing
+                                   │  (HLC-aware)
                  ┌─────────────────┼─────────────────┐
                  ▼                 ▼                 ▼
         ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
         │ Journal-1   │    │ Journal-2   │    │ Journal-3   │
         │Single-tenant│    │Cross-shard  │    │System ops   │
         │operations   │    │ACID txns    │    │metadata     │
-        └─────┬───────┘    └─────┬───────┘    └──────┬──────┘
-              │ WAL Stream       │ WAL Stream        │ WAL Stream
-    ┌─────────┼─────────┐        │         ┌─────────┼─────────┐
-    ▼         ▼         ▼        │         ▼         ▼         ▼
-┌─────────┐┌─────────┐┌─────────┐│     ┌─────────┐┌─────────┐┌─────────┐
-│Storage-A││Storage-B││Storage-C││     │Storage-A││Storage-B││Storage-C│
-│(Shard 1)││(Shard 1)││(Shard 1)││ ... │(Shard N)││(Shard N)││(Shard N)│
-│[Replica]││[Replica]││[Replica]││     │[Replica]││[Replica]││[Replica]│
-└─────────┘└─────────┘└─────────┘│     └─────────┘└─────────┘└─────────┘
-                                 │
-       ┌─────────────────────────┼─────────────────────────┐
-       ▼                         ▼                         ▼
-┌─────────────┐            ┌─────────────┐            ┌─────────────┐
-│Query-Proc-1 │            │Query-Proc-2 │            │Query-Proc-N │
-│(Shard 1)    │            │(Shard 2)    │            │(Shard N)    │
-│Vector Search│            │Vector Search│            │Vector Search│
-└─────────────┘            └─────────────┘            └─────────────┘
-                                 │
-                                 ▼
+        └─────┬───────┘    └──────┬──────┘    └────────┬────┘
+              │ WAL Stream        │ WAL Stream         │ WAL Stream
+    ┌─────────┼─────────┐         │          ┌─────────┼─────────┐
+    ▼         ▼         ▼         │          ▼         ▼         ▼
+┌─────────┐┌─────────┐┌─────────┐ │     ┌─────────┐┌─────────┐┌─────────┐
+│Storage-A││Storage-B││Storage-C│ │     │Storage-A││Storage-B││Storage-C│
+│(Shard 1)││(Shard 1)││(Shard 1)│ │ ... │(Shard N)││(Shard N)││(Shard N)│
+│[Replica]││[Replica]││[Replica]│ │     │[Replica]││[Replica]││[Replica]│
+└─────────┘└─────────┘└─────────┘ │     └─────────┘└─────────┘└─────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        ▼                         ▼                         ▼
+ ┌─────────────┐           ┌─────────────┐            ┌─────────────┐
+ │Query-Proc-1 │           │Query-Proc-2 │            │Query-Proc-N │
+ │(Shard 1)    │           │(Shard 2)    │            │(Shard N)    │
+ │Vector Search│           │Vector Search│            │Vector Search│
+ └─────────────┘           └─────────────┘            └─────────────┘
+                                  │
+                                  ▼
                      ┌─────────────────────────┐
                      │    Control Plane        │
                      │ ┌─────────┐ ┌─────────┐ │
@@ -374,17 +374,17 @@ Write Operation Detailed Sequence with HLC:
     │              │◄──[SUCCESS]────│              │       │       │
     │◄──[201]──────│                │              │       │       │
     │              │                │              │       │       │
+```
 
 Timeline:
-T1: Client sends insert request with vector data
-T2: Gateway routes to appropriate journal partition
-T3: Journal assigns HLC timestamp and global sequence number
-T4: WAL delta distributed to all relevant storage nodes
-T5: Storage nodes acknowledge delta application
-T6: Success response propagated back to client
+- T1: Client sends insert request with vector data
+- T2: Gateway routes to appropriate journal partition
+- T3: Journal assigns HLC timestamp and global sequence number
+- T4: WAL delta distributed to all relevant storage nodes
+- T5: Storage nodes acknowledge delta application
+- T6: Success response propagated back to client
 
 HLC ensures global ordering: HLC = (physical_time, logical_counter)
-```
 
 ### 4.2 Vector Search Path with Fan-out
 
@@ -480,13 +480,13 @@ Consistency-Aware Read Flow:
     │                │──[EXECUTE]──────►│                  │
     │                │◄─[RESULTS]───────│                  │
     │◄─[RESULTS]─────│                  │                  │
+```
 
 Decision Logic:
-• Eventual: Skip sync, read directly from storage
-• Bounded Staleness: Sync only if staleness > threshold
-• Read-Your-Writes: Sync if client recently wrote
-• Strong: Always sync to latest before read
-```
+- Eventual: Skip sync, read directly from storage
+- Bounded Staleness: Sync only if staleness > threshold
+- Read-Your-Writes: Sync if client recently wrote
+- Strong: Always sync to latest before read
 
 #### **Consistency Level Specifications**
 
@@ -567,7 +567,25 @@ Performance Optimization Layers:
 
 ### 7.1 Phased Migration Approach
 
+| Phase | Duration | Key Deliverables | Success Criteria |
+|-------|----------|------------------|------------------|
+| Phase 1: Foundation | Weeks 1-2 | • Extract gRPC interfaces<br>• PoC Journal service<br>• HLC implementation<br>• Service skeleton code | • gRPC stubs compile<br>• Journal partition tests pass<br>• HLC synchronization works |
+| Phase 2: Journal Layer | Weeks 2-3 | • Journal-Service implementation<br>• WAL delta distribution<br>• Storage node replay logic<br>• Unit test coverage | • Write operations flow through journal<br>• Storage nodes replay correctly<br>• HLC ordering maintained |
+| Phase 3: Query Layer | Week 4 | • Query-Processor separation<br>• Vector search fan-out<br>• Result aggregation logic<br>• Performance benchmarks | • Vector similarity searches work<br>• Multi-shard queries functional<br>• Performance targets met |
+| Phase 4: Gateway Enhancement | Week 5 | • Smart routing implementation<br>• Journal partition awareness<br>• Request tracking integration<br>• Load balancing | • End-to-end request flow<br>• Routing efficiency verified<br>• Request tracing functional |
+| Phase 5: Control Plane | Week 6 | • Meta-Manager with etcd<br>• HLC coordination service<br>• Cluster management tools<br>• CLI tooling | • Cluster bootstrap functional<br>• HLC sync across services<br>• Metadata consistency verified |
+| Phase 6: Integration | Week 7 | • End-to-end testing<br>• Chaos engineering<br>• Performance tuning<br>• Request tracking validation | • Fault tolerance verified<br>• Performance targets met<br>• Complete operation tracking |
+| Phase 7: Deployment | Week 8 | • Canary deployment (5% traffic)<br>• Monitoring & alerting<br>• Rollback procedures<br>• Documentation | • Production stability<br>• Monitoring coverage complete<br>• Audit compliance verified |
+| Phase 8: Full Migration | Week 9 | • Full traffic migration<br>• Monolith decommission<br>• Operational runbooks<br>• Training completion | • 100% traffic migrated<br>• Legacy system retired<br>• Team operational readiness |
+
 ### 7.2 Risk Mitigation Strategies
+
+| Risk Category | Specific Risk | Mitigation Strategy |
+|---------------|---------------|-------------------|
+| Data Consistency | HLC drift causing ordering issues | • NTP synchronization<br>• HLC drift monitoring<br>• Automated clock correction |
+| Performance | Journal becoming bottleneck | • Partition-based scaling<br>• Write batch optimization<br>• Async replication tuning |
+| Operational | Complex global ordering | • Comprehensive monitoring<br>• HLC visualization tools<br>• Operation replay tools |
+| Availability | Journal partition failures | • Multi-replica journals<br>• Automatic failover<br>• Partition isolation |
 
 ## 8. Monitoring and Observability
 
@@ -622,6 +640,36 @@ Observability Stack for Journal Architecture with Consistency Monitoring:
 
 ### 9.1 Security Architecture
 
+Security Layers:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   EDGE SECURITY                             │
+│  • TLS Termination          • Rate Limiting                 │
+│  • Authentication           • DDoS Protection               │
+│  • Authorization            • Input Validation              │
+│  • Request Tracking         • Audit Logging                 │
+└─────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 INTER-SERVICE SECURITY                      │
+│  • mTLS between services    • Service mesh integration      │
+│  • JWT token propagation    • Network policies              │
+│  • SPIFFE/SPIRE identity    • Certificate rotation          │
+│  • Journal access control   • HLC integrity protection      │
+└─────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   DATA SECURITY                             │
+│  • Journal encryption       • WAL encryption                │
+│  • Vector data encryption   • Backup encryption             │
+│  • Key management (KMS)     • Audit trail integrity         │
+│  • PII data masking         • Compliance reporting          │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### 9.2 Certificate Authority and Identity Management
 
 ## 10. Implementation Considerations
@@ -651,14 +699,14 @@ Request Arrives
    │Level?   │           │  (Single-tenant │
    └─────────┘           │   high-freq)    │
                          └─────────────────┘
+```
 
 Routing Rules:
-• Vector similarity queries → Journal-1 (high frequency)
-• Bulk data imports → Journal-1 (high throughput)
-• Cross-shard analytics → Journal-2 (consistency critical)
-• Schema changes → Journal-3 (system operations)
-• User management → Journal-3 (metadata operations)
-```
+- Vector similarity queries → Journal-1 (high frequency)
+- Bulk data imports → Journal-1 (high throughput)
+- Cross-shard analytics → Journal-2 (consistency critical)
+- Schema changes → Journal-3 (system operations)
+- User management → Journal-3 (metadata operations)
 
 ## 11. Critical Implementation Gaps and Solutions
 
@@ -679,14 +727,14 @@ Journal Partition Internal Architecture:
 │  │ Raft Log    │  │ Raft Log    │  │ Raft Log    │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  │
 └─────────────────────────────────────────────────────┘
+```
 
 Write Flow with Raft:
-1. Client → Journal Leader: Append(entry)
-2. Leader → Followers: AppendEntries RPC
-3. Followers → Leader: ACK (after fsync)
-4. Leader → Client: Success (after majority)
-5. Leader → Storage Nodes: Distribute WAL delta
-```
+- Client → Journal Leader: Append(entry)
+- Leader → Followers: AppendEntries RPC
+- Followers → Leader: ACK (after fsync)
+- Leader → Client: Success (after majority)
+- Leader → Storage Nodes: Distribute WAL delta
 
 ### 11.2 Isolation Level Clarification and Implementation
 
@@ -744,7 +792,7 @@ Cross-Partition Transaction Flow:
 
 **Problem**: HLC requires bounded clock skew to function correctly.
 
-**Solution**: Implement **robust clock safety mechanisms** including:
+**Solution**: Implement robust clock safety mechanisms including:
 - NTP synchronization enforcement (<1ms skew)
 - HLC drift detection and alerting
 - Logical counter overflow protection
@@ -805,11 +853,11 @@ Consistency Level Performance Matrix:
 | Use Case        | Analytics| Dashboards        | User Apps        | Financial |
 
 Optimization Strategies:
-• Batch sync operations to reduce overhead  
-• Cache sync results for repeated reads  
-• Use client affinity for read-your-writes  
-• Implement adaptive staleness thresholds  
-• Provide sync status in query responses
+- Batch sync operations to reduce overhead  
+- Cache sync results for repeated reads  
+- Use client affinity for read-your-writes  
+- Implement adaptive staleness thresholds  
+- Provide sync status in query responses
 
 ## 12. Conclusion
 
