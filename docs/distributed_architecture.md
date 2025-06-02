@@ -747,3 +747,13 @@ Isolation Level Implementation with Pull-Before-Read:
 **Solution**: Implement **distributed transaction coordination** with 2PC protocol:
 
 
+
+### 11.4 Back-pressure and Flow Control
+
+**Problem**: Storage node replay lag can cause unbounded WAL growth and stale reads.
+
+**Solution**: Implement **adaptive back-pressure mechanism** that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
+
+### 11.5 Clock Safety for HLC
+
+
