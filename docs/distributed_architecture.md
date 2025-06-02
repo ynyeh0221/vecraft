@@ -53,10 +53,9 @@ Reconstruction: Direct, perfect temporal ordering
 
 #### **Addressing Scalability Through Journal Partitioning**
 
-To overcome the traditional "single point of failure" concern with centralized journals, we implement **partitioned journal architecture**:
+To overcome the traditional "single point of failure" concern with centralized journals, we implement partitioned journal architecture:
 
 ```
-Partitioned Journal Design:
                     ┌─────────────┐
                     │Smart Router │
                     │(Hybrid Logic│
@@ -178,7 +177,7 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 | Compactor | Background | 1 per journal partition | Journal log compaction, index optimization, tombstone GC | Internal RPC |
 | Metrics-Exporter | Observability | 1 per node | Prometheus metrics, health probes, request tracing, consistency monitoring | /metrics, /healthz |
 
-> **Note:** Journal services are partitioned for scalability while maintaining global ordering through Hybrid Logical Clocks (HLC). Storage nodes implement pull-before-read for configurable consistency guarantees.
+Note: Journal services are partitioned for scalability while maintaining global ordering through Hybrid Logical Clocks (HLC). Storage nodes implement pull-before-read for configurable consistency guarantees.
 
 ## 2. Detailed Service Architecture
 
@@ -219,14 +218,14 @@ The Vecraft DB distributed architecture is organized into five distinct layers:
 └─────────────┘            └─────────────┘            └─────────────┘
                                  │
                                  ▼
-                    ┌─────────────────────────┐
-                    │    Control Plane        │
-                    │ ┌─────────┐ ┌─────────┐ │
-                    │ │Meta-Mgr │ │Failover │ │
-                    │ │ (etcd)  │ │Manager  │ │
-                    │ │  x3     │ │+ HLC    │ │
-                    │ └─────────┘ └─────────┘ │
-                    └─────────────────────────┘
+                     ┌─────────────────────────┐
+                     │    Control Plane        │
+                     │ ┌─────────┐ ┌─────────┐ │
+                     │ │Meta-Mgr │ │Failover │ │
+                     │ │ (etcd)  │ │Manager  │ │
+                     │ │  x3     │ │+ HLC    │ │
+                     │ └─────────┘ └─────────┘ │
+                     └─────────────────────────┘
 ```
 
 ### 2.2 Service Interaction Flow with Global Ordering
@@ -271,14 +270,14 @@ Client ──[1]──► API-Gateway ──[2]──► Query-Processor ──[
                          │             │             │
                          └─────────────┼─────────────┘
                                        ▼
-                               ┌─────────────┐
-                               │ Execute     │
-                               │ Vector      │
-                               │ Search      │
-                               └──────┬──────┘
-                                      │
-                                      ▼
-               Ranked Results ◄───────┘
+                                ┌─────────────┐
+                                │ Execute     │
+                                │ Vector      │
+                                │ Search      │
+                                └──────┬──────┘
+                                       │
+                                       ▼
+               Ranked Results ◄────────┘
 ```
 
 ## 3. Migration Strategy
@@ -354,10 +353,9 @@ vecraft-db/
 
 ### 4.1 Write Path Sequence with Global Ordering
 
-```
 Write Operation Detailed Sequence with HLC:
-──────────────────────────────────────────
 
+```
 ┌────────┐    ┌─────────┐    ┌─────────────┐    ┌─────────────────────┐
 │ Client │    │   API   │    │   Journal   │    │    Storage Nodes    │
 │  SDK   │    │Gateway  │    │  Service    │    │  A  │ │  B  │ │  C  │
@@ -390,10 +388,9 @@ HLC ensures global ordering: HLC = (physical_time, logical_counter)
 
 ### 4.2 Vector Search Path with Fan-out
 
-```
 Multi-Shard Vector Search Flow:
-──────────────────────────────
 
+```
 ┌────────┐    ┌─────────┐    ┌───────────────────────────────┐
 │ Client │    │   API   │    │        Query Processors       │
 │  SDK   │    │ Gateway │    │   Q1  ││  Q2  ││  Q3  ││  QN  │
@@ -422,10 +419,9 @@ Multi-Shard Vector Search Flow:
 
 ### 4.3 Consistency Guarantees with Pull-Before-Read
 
-```
 Enhanced Consistency Model with Journal Sync:
-───────────────────────────────────────────
 
+```
 Strong Consistency (Writes):
 ┌─────────────────────────────────────────────────────────────┐
 │  All writes go through Journal with global ordering         │
@@ -459,10 +455,9 @@ Configurable Consistency (Reads):
 
 #### **Pull-Before-Read Implementation**
 
-```
 Consistency-Aware Read Flow:
-──────────────────────────
 
+```
 ┌────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │ Client │    │    Query    │    │  Storage    │    │  Journal    │
 │        │    │ Processor   │    │   Node      │    │  Service    │
@@ -506,32 +501,16 @@ Decision Logic:
 
 ### 5.1 Failure Scenarios and Responses
 
-```
 Failure Handling Matrix:
-────────────────────────
 
-┌─────────────────────┬─────────────────────┬──────────────────────┐
-│   Failure Type      │   Detection Method  │    Recovery Action   │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ Storage Node Down   │ Journal Stream      │ Replay from Journal  │
-│                     │ Timeout             │ Load Balance Queries │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ Query Processor Down│ Health Check        │ Redirect Queries     │
-│                     │ Failure             │ Auto-scale Replicas  │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ Journal Service Down│ HLC Heartbeat       │ Failover to Replica  │
-│                     │ Loss                │ Maintain Global Order│
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ API Gateway Down    │ Load Balancer       │ Route to Healthy     │
-│                     │ Health Probe        │ Gateway Instances    │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ Meta-Manager Down   │ etcd Cluster        │ etcd Auto-Recovery   │
-│                     │ Health              │ 3-node Quorum        │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│ Network Partition   │ HLC Drift           │ Partition-tolerant   │
-│                     │ Detection           │ Journal Selection    │
-└─────────────────────┴─────────────────────┴──────────────────────┘
-```
+| Failure Type | Detection Method | Recovery Action |
+|--------------|------------------|-----------------|
+| Storage Node Down | Journal Stream Timeout | Replay from Journal, Load Balance Queries |
+| Query Processor Down | Health Check Failure | Redirect Queries, Auto-scale Replicas |
+| Journal Service Down | HLC Heartbeat Loss | Failover to Replica, Maintain Global Order |
+| API Gateway Down | Load Balancer Health Probe | Route to Healthy Gateway Instances |
+| Meta-Manager Down | etcd Cluster Health | etcd Auto-Recovery, 3-node Quorum |
+| Network Partition | HLC Drift Detection | Partition-tolerant Journal Selection |
 
 ### 5.2 Background Service Failure Handling
 
@@ -548,10 +527,10 @@ Failure Handling Matrix:
 | Meta-Manager | Fixed cluster size | N/A (etcd cluster) | 3 nodes |
 
 ### 6.2 Performance Optimization Strategies
-```
-Performance Optimization Layers:
-───────────────────────────────
 
+Performance Optimization Layers:
+
+```
 ┌─────────────────────────────────────────────────────┐
 │                     CACHING LAYER                   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
@@ -562,8 +541,8 @@ Performance Optimization Layers:
 │  │   Cache     │  │   Results   │  │   Caching   │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  │
 └─────────────────────────────────────────────────────┘
-                                │
-                                ▼
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────┐
 │                   INDEXING LAYER                    │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
@@ -572,8 +551,8 @@ Performance Optimization Layers:
 │  │ Search      │  │ (Metadata)  │  │ (SQL-like)  │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  │
 └─────────────────────────────────────────────────────┘
-                                │
-                                ▼
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────┐
 │                   STORAGE LAYER                     │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
@@ -594,10 +573,9 @@ Performance Optimization Layers:
 
 ### 8.1 Metrics and Alerting
 
-```
 Observability Stack for Journal Architecture with Consistency Monitoring:
-───────────────────────────────────────────────────────────────────────
 
+```
 ┌───────────────────────────────────────────────────────────────┐
 │                        METRICS LAYER                          │
 │     ┌─────────────┐  ┌──────────────┐  ┌───────────────┐      │
@@ -650,10 +628,9 @@ Observability Stack for Journal Architecture with Consistency Monitoring:
 
 ### 10.1 Journal Partitioning Strategy
 
-```
 Journal Partitioning Decision Tree:
-─────────────────────────────────
 
+```
 Request Arrives
        │
        ▼
@@ -691,10 +668,9 @@ Routing Rules:
 
 **Solution**: Implement **Raft consensus within each journal partition**:
 
-```
 Journal Partition Internal Architecture:
-──────────────────────────────────────
 
+```
 ┌─────────────────────────────────────────────────────┐
 │                Journal Partition 1                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
@@ -718,27 +694,14 @@ Write Flow with Raft:
 
 **Solution**: Implement **configurable isolation levels** with explicit contracts and pull-before-read mechanisms:
 
-```
 Isolation Level Implementation with Pull-Before-Read:
-───────────────────────────────────────────────────
 
-┌─────────────────┬─────────────────┬─────────────────────────┬─────────────────┐
-│ Isolation Level │ Sync Behavior   │ Use Case                │ Implementation  │
-├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
-│ Eventual        │ No sync         │ Analytics, bulk ops     │ Direct read     │
-│ (Default)       │ required        │ non-critical reads      │ from storage    │
-├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
-│ Bounded         │ Sync if         │ Real-time dashboards    │ Check staleness │
-│ Staleness       │ staleness >     │ monitoring systems      │ threshold       │
-│                 │ threshold       │                         │                 │
-├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
-│ Read-Your-      │ Sync for        │ User-facing apps        │ Track recent    │
-│ Writes          │ recent writers  │ profile updates         │ writers         │
-├─────────────────┼─────────────────┼─────────────────────────┼─────────────────┤
-│ Strong/         │ Always sync     │ Financial apps          │ Pull latest     │
-│ Linearizable    │ to latest       │ compliance systems      │ before read     │
-└─────────────────┴─────────────────┴─────────────────────────┴─────────────────┘
-```
+| Isolation Level | Sync Behavior | Use Case | Implementation |
+|-----------------|---------------|----------|----------------|
+| Eventual (Default) | No sync required | Analytics, bulk ops, non-critical reads | Direct read from storage |
+| Bounded Staleness | Sync if staleness > threshold | Real-time dashboards, monitoring systems | Check staleness threshold |
+| Read-Your-Writes | Sync for recent writers | User-facing apps, profile updates | Track recent writers |
+| Strong/Linearizable | Always sync to latest | Financial apps, compliance systems | Pull latest before read |
 
 ### 11.3 Cross-Partition Transactional Writes
 
@@ -746,10 +709,9 @@ Isolation Level Implementation with Pull-Before-Read:
 
 **Solution**: Implement **distributed transaction coordination** with 2PC protocol:
 
-```
 Cross-Partition Transaction Flow:
-───────────────────────────────
 
+```
                 Transaction Coordinator
                         │
         ┌───────────────┼───────────────┐
@@ -794,12 +756,61 @@ With these critical gaps addressed, the service specifications are updated:
 
 | Service | Layer | Consensus Protocol | Isolation Level | Consistency Behavior | Key Responsibilities |
 |---------|-------|-------------------|----------------|---------------------|---------------------|
-| **Journal-Service** | Journal Layer | **Raft per partition** | Linearizable writes | Source of truth | Global write ordering, 2PC coordination, HLC management, offset tracking |
-| **Query-Processor** | Data-Plane | N/A | **Configurable** (Eventual/Bounded/Read-Your-Writes/Strong) | Consistency routing | Vector similarity search, isolation enforcement, sync coordination |
-| **Storage-Node** | Data-Plane | N/A | Pull-before-read | Sync-on-demand | Journal replay with lag monitoring, pull-before-read sync, local indexes |
-| **Flow-Control-Manager** | Control-Plane | N/A | N/A | Adaptive | Back-pressure management, lag monitoring, sync throttling |
-| **Clock-Safety-Manager** | Control-Plane | N/A | N/A | Time coordination | NTP synchronization, HLC validation, drift detection |
-| **Consistency-Manager** | Data-Plane | N/A | N/A | Decision engine | Client tracking, staleness monitoring, sync optimization |
+| Journal-Service | Journal Layer | Raft per partition | Linearizable writes | Source of truth | Global write ordering, 2PC coordination, HLC management, offset tracking |
+| Query-Processor | Data-Plane | N/A | Configurable (Eventual/Bounded/Read-Your-Writes/Strong) | Consistency routing | Vector similarity search, isolation enforcement, sync coordination |
+| Storage-Node | Data-Plane | N/A | Pull-before-read | Sync-on-demand | Journal replay with lag monitoring, pull-before-read sync, local indexes |
+| Flow-Control-Manager | Control-Plane | N/A | N/A | Adaptive | Back-pressure management, lag monitoring, sync throttling |
+| Clock-Safety-Manager | Control-Plane | N/A | N/A | Time coordination | NTP synchronization, HLC validation, drift detection |
+| Consistency-Manager | Data-Plane | N/A | N/A | Decision engine | Client tracking, staleness monitoring, sync optimization |
 
 ### 11.7 Implementation Priority
 
+Critical Path Implementation Order:
+
+```
+Phase 1: Foundations
+├── Raft consensus within journal partitions
+├── Basic HLC implementation with safety checks
+├── Flow control mechanism
+└── Pull-before-read infrastructure
+
+Phase 2: Consistency Framework
+├── Configurable isolation levels
+├── Client tracking for read-your-writes
+├── Bounded staleness implementation
+└── Consistency manager integration
+
+Phase 3: Transaction Support  
+├── Distributed transaction coordinator
+├── Cross-partition 2PC protocol
+└── Strong consistency guarantees
+
+Phase 4: Production Hardening
+├── Clock safety with NTP integration
+├── Advanced back-pressure algorithms
+├── Sync optimization and caching
+└── Comprehensive monitoring and alerting
+```
+
+### 11.8 Performance vs Consistency Trade-offs
+
+Consistency Level Performance Matrix:
+
+|                 | Eventual | Bounded Staleness | Read-Your-Writes | Strong |
+|-----------------|----------|-------------------|------------------|--------|
+| Read Latency    | Lowest   | Low               | Medium           | Highest |
+| Throughput      | Highest  | High              | Medium           | Lowest |
+| Sync Overhead   | None     | Minimal           | Conditional      | Always |
+| Consistency     | Eventual | Bounded           | Session          | Strong |
+| Use Case        | Analytics| Dashboards        | User Apps        | Financial |
+
+Optimization Strategies:
+• Batch sync operations to reduce overhead  
+• Cache sync results for repeated reads  
+• Use client affinity for read-your-writes  
+• Implement adaptive staleness thresholds  
+• Provide sync status in query responses
+
+## 12. Conclusion
+
+The proposed architecture (WIP)
