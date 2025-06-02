@@ -746,14 +746,60 @@ Isolation Level Implementation with Pull-Before-Read:
 
 **Solution**: Implement **distributed transaction coordination** with 2PC protocol:
 
+```
+Cross-Partition Transaction Flow:
+───────────────────────────────
 
+                Transaction Coordinator
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+   Journal-1       Journal-2       Journal-3
+   (Data ops)   (Cross-shard)    (Metadata)
+        │               │               │
+        ▼               ▼               ▼
+    [Prepare]       [Prepare]       [Prepare]
+        │               │               │
+        ▼               ▼               ▼
+     [Vote]          [Vote]          [Vote]
+        │               │               │
+        └───────────────┼───────────────┘
+                        ▼
+                  [Decision: Commit/Abort]
+                        │
+        ┌───────────────┼───────────────┐
+        ▼               ▼               ▼
+    [Commit]        [Commit]        [Commit]
+```
 
 ### 11.4 Back-pressure and Flow Control
 
 **Problem**: Storage node replay lag can cause unbounded WAL growth and stale reads.
 
-**Solution**: Implement **adaptive back-pressure mechanism** that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
+**Solution**: Implement adaptive back-pressure mechanism that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
 
 ### 11.5 Clock Safety for HLC
 
+**Problem**: HLC requires bounded clock skew to function correctly.
+
+**Solution**: Implement **robust clock safety mechanisms** including:
+- NTP synchronization enforcement (<1ms skew)
+- HLC drift detection and alerting
+- Logical counter overflow protection
+- Automatic time advancement fallbacks
+
+### 11.6 Updated Service Specifications
+
+With these critical gaps addressed, the service specifications are updated:
+
+| Service | Layer | Consensus Protocol | Isolation Level | Consistency Behavior | Key Responsibilities |
+|---------|-------|-------------------|----------------|---------------------|---------------------|
+| **Journal-Service** | Journal Layer | **Raft per partition** | Linearizable writes | Source of truth | Global write ordering, 2PC coordination, HLC management, offset tracking |
+| **Query-Processor** | Data-Plane | N/A | **Configurable** (Eventual/Bounded/Read-Your-Writes/Strong) | Consistency routing | Vector similarity search, isolation enforcement, sync coordination |
+| **Storage-Node** | Data-Plane | N/A | Pull-before-read | Sync-on-demand | Journal replay with lag monitoring, pull-before-read sync, local indexes |
+| **Flow-Control-Manager** | Control-Plane | N/A | N/A | Adaptive | Back-pressure management, lag monitoring, sync throttling |
+| **Clock-Safety-Manager** | Control-Plane | N/A | N/A | Time coordination | NTP synchronization, HLC validation, drift detection |
+| **Consistency-Manager** | Data-Plane | N/A | N/A | Decision engine | Client tracking, staleness monitoring, sync optimization |
+
+### 11.7 Implementation Priority
 
