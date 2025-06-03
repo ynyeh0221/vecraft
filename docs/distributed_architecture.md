@@ -672,9 +672,9 @@ Security Layers:
 
 ### 9.2 Certificate Authority and Identity Management
 
-## 10. Implementation Considerations
+## 11. Implementation Considerations
 
-### 10.1 Journal Partitioning Strategy
+### 11.1 Journal Partitioning Strategy
 
 Journal Partitioning Decision Tree:
 
@@ -708,9 +708,9 @@ Routing Rules:
 - Schema changes → Journal-3 (system operations)
 - User management → Journal-3 (metadata operations)
 
-## 11. Critical Implementation Gaps and Solutions
+## 12. Critical Implementation Gaps and Solutions
 
-### 11.1 Consensus Inside Each Journal Partition
+### 12.1 Consensus Inside Each Journal Partition
 
 **Problem**: The current design shows "3-N per partition" but doesn't specify the internal consensus protocol needed for write atomicity and linearizability under failover.
 
@@ -736,7 +736,7 @@ Write Flow with Raft:
 - Leader → Client: Success (after majority)
 - Leader → Storage Nodes: Distribute WAL delta
 
-### 11.2 Isolation Level Clarification and Implementation
+### 12.2 Isolation Level Clarification and Implementation
 
 **Problem**: Current design provides "eventual + read-your-writes via HLC" which is closer to Read Committed, not the serializable isolation typically expected for ACID systems.
 
@@ -751,7 +751,7 @@ Isolation Level Implementation with Pull-Before-Read:
 | Read-Your-Writes | Sync for recent writers | User-facing apps, profile updates | Track recent writers |
 | Strong/Linearizable | Always sync to latest | Financial apps, compliance systems | Pull latest before read |
 
-### 11.3 Cross-Partition Transactional Writes
+### 12.3 Cross-Partition Transactional Writes
 
 **Problem**: Operations that touch both data and metadata (e.g., "create collection then insert vectors") can violate atomicity if they span multiple journal partitions.
 
@@ -782,13 +782,13 @@ Cross-Partition Transaction Flow:
     [Commit]        [Commit]        [Commit]
 ```
 
-### 11.4 Back-pressure and Flow Control
+### 12.4 Back-pressure and Flow Control
 
 **Problem**: Storage node replay lag can cause unbounded WAL growth and stale reads.
 
 **Solution**: Implement adaptive back-pressure mechanism that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
 
-### 11.5 Clock Safety for HLC
+### 12.5 Clock Safety for HLC
 
 **Problem**: HLC requires bounded clock skew to function correctly.
 
@@ -798,7 +798,7 @@ Cross-Partition Transaction Flow:
 - Logical counter overflow protection
 - Automatic time advancement fallbacks
 
-### 11.6 Updated Service Specifications
+### 12.6 Updated Service Specifications
 
 With these critical gaps addressed, the service specifications are updated:
 
@@ -811,7 +811,7 @@ With these critical gaps addressed, the service specifications are updated:
 | Clock-Safety-Manager | Control-Plane | N/A | N/A | Time coordination | NTP synchronization, HLC validation, drift detection |
 | Consistency-Manager | Data-Plane | N/A | N/A | Decision engine | Client tracking, staleness monitoring, sync optimization |
 
-### 11.7 Implementation Priority
+### 12.7 Implementation Priority
 
 Critical Path Implementation Order:
 
@@ -840,7 +840,7 @@ Phase 4: Production Hardening
 └── Comprehensive monitoring and alerting
 ```
 
-### 11.8 Performance vs Consistency Trade-offs
+### 12.8 Performance vs Consistency Trade-offs
 
 Consistency Level Performance Matrix:
 
@@ -859,6 +859,6 @@ Optimization Strategies:
 - Implement adaptive staleness thresholds  
 - Provide sync status in query responses
 
-## 12. Conclusion
+## 13. Conclusion
 
 The proposed architecture (WIP)
