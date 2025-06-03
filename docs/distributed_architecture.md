@@ -676,7 +676,14 @@ Security Layers:
 
 ### 10.1.1 Service Tier Classification
 
+Vecraft DB implements a **4-tier QoS model** aligned with ML/AI workload characteristics:
 
+| Tier | Workload Type | SLO Target | Use Case | Priority |
+|------|---------------|------------|----------|----------|
+| Tier-0 (Critical) | Synchronous writes with strong consistency | • P99 write latency ≤ 25ms<br>• 99.99% availability<br>• Strong consistency | Financial transactions, compliance logging, audit trails | Highest |
+| Tier-1 (Interactive) | Real-time vector similarity search | • P99 search latency ≤ 50ms<br>• P95 search latency ≤ 25ms<br>• 99.9% availability | User-facing applications, recommendation engines, chat/search | High |
+| Tier-2 (Batch) | ML training data ingestion, bulk operations | • P99 write latency ≤ 200ms<br>• Throughput ≥ 10K ops/sec<br>• 99.5% availability | Model training, data pipeline, analytics | Medium |
+| Tier-3 (Background) | System maintenance, analytics | • P99 latency ≤ 1000ms<br>• Best effort availability<br>• Eventual consistency | Log compaction, metrics collection, health checks | Low |
 
 ## 11. Implementation Considerations
 
