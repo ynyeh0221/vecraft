@@ -944,6 +944,47 @@ Grafana QoS Dashboard Layout:
 
 ### 10.6 Capacity Planning with SLO-Driven Scaling
 
+#### 10.6.1 SLO-Based Scaling Triggers
+
+Enhanced scaling decision matrix:
+
+| Metric | Tier-0 Threshold | Tier-1 Threshold | Tier-2 Threshold | Action |
+|--------|------------------|------------------|------------------|---------|
+| P99 Latency SLO Miss | 2 consecutive minutes | 5 consecutive minutes | 10 consecutive minutes | Scale up Query-Processor |
+| Error Budget Consumption | >60% in 1 hour | >70% in 1 hour | >80% in 1 hour | Scale up Journal replicas |
+| Request Queue Depth | >10 requests | >50 requests | >200 requests | Scale up API-Gateway |
+| Storage Replay Lag | >200ms | >500ms | >1000ms | Scale up Storage-Node |
+
+#### 10.6.2 Capacity Formula with QoS Constraints
+
+```
+// SLO-driven capacity calculation
+FUNCTION calculate_minimum_capacity(tier: QoSTier, target_slo: SLOSpec) -> CapacitySpec:
+    // Base capacity from SLO requirements
+    base_capacity = (expected_rps * target_slo.p99_latency) / target_utilization
+    
+    // Tier-specific safety margins
+    safety_margins = {
+        Tier0: 2.0,  // 100% safety margin for critical
+        Tier1: 1.5,  // 50% safety margin for interactive  
+        Tier2: 1.2,  // 20% safety margin for batch
+        Tier3: 1.0   // No safety margin for background
+    }
+    
+    RETURN CapacitySpec {
+        min_replicas: INTEGER(base_capacity * safety_margins[tier]),
+        max_replicas: INTEGER(base_capacity * safety_margins[tier] * 3),
+        target_cpu_percent: 60  // Conservative target
+    }
+```
+
+### 10.7 Operations and Continuous Improvement
+
+#### 10.7.1 Monthly SLO Review Process
+
+#### 10.7.2 Incident Response by QoS Tier
+
+#### 10.7.3 SLO-Driven Feature Development
 
 ## 11. Implementation Considerations
 
