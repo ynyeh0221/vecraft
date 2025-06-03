@@ -802,6 +802,32 @@ message RequestContext {
 
 | Degradation Trigger | Tier-0 Response | Tier-1 Response | Tier-2 Response | Tier-3 Response |
 |---------------------|-----------------|-----------------|-----------------|-----------------|
+| Storage replay lag > 1s | Maintain strong consistency, increase timeout | Switch to bounded staleness | Queue requests, return 202 Accepted | Drop requests, return 503 |
+| Journal partition failure | Failover to backup partition | Continue with available partitions | Batch and retry | Disable temporarily |
+| Memory pressure > 90% | Maintain critical operations only | Reduce vector cache size | Suspend bulk operations | Stop background tasks |
+| Error budget 80% consumed | Normal operation | Reduce retry attempts | Queue non-critical writes | Shed all load |
+| Network partition | Maintain strong consistency mode | Allow degraded mode | Async batch mode | Offline mode |
+
+#### 10.3.2 Circuit Breaker Implementation
+
+```pseudocode
+CLASS TierAwareCircuitBreaker:
+    FIELD breakers: MAP[QoSTier -> CircuitBreaker]
+    FIELD config: CircuitBreakerConfig
+
+CLASS CircuitBreakerConfig:
+    FIELD tier0_failure_threshold: 5
+    FIELD tier0_open_timeout: 1_second
+    FIELD tier1_failure_threshold: 10  
+    FIELD tier1_open_timeout: 5_seconds
+    FIELD tier2_failure_threshold: 20
+    FIELD tier2_open_timeout: 15_seconds
+    FIELD tier3_failure_threshold: 50
+    FIELD tier3_open_timeout: 60_seconds
+```
+
+### 10.4 Adaptive Backpressure and Throttling
+
 
 
 ## 11. Implementation Considerations
