@@ -24,6 +24,7 @@ from vecraft_cli.vecraft_cli import (
     _is_help_command,
     _handle_direct,
     _handle_interactive,
+    _process_interactive_line,
 )
 
 
@@ -271,6 +272,15 @@ class TestRunInteractive(unittest.TestCase):
         _handle_interactive(parser)
         mock_run_rest.assert_awaited_once()
         self.assertIn("Entering interactive mode", mock_stdout.getvalue())
+
+
+class TestProcessInteractiveLine(unittest.TestCase):
+
+    @patch('sys.stderr', new_callable=StringIO)
+    def test_process_interactive_line_invalid_command(self, mock_stderr):
+        parser = get_parser()
+        _process_interactive_line("badcmd", parser)
+        self.assertIn("Error:", mock_stderr.getvalue())
 
 
 if __name__ == '__main__':
