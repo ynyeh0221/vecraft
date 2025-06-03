@@ -260,4 +260,5 @@ class VecraftClient:
 
     def close(self):
         """Graceful shutdown Vecraft db"""
-        self.planner.plan_shutdown()
+        plan = self.planner.plan_shutdown()
+        self.executor.execute(plan)
