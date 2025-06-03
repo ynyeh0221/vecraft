@@ -828,6 +828,121 @@ CLASS CircuitBreakerConfig:
 
 ### 10.4 Adaptive Backpressure and Throttling
 
+#### 10.4.1 Token Bucket Rate Limiting by Tier
+
+Token Bucket Configuration:
+- Tier-0: 1000 tokens/sec, burst=100
+- Tier-1: 5000 tokens/sec, burst=500  
+- Tier-2: 2000 tokens/sec, burst=2000
+- Tier-3: 500 tokens/sec, burst=50
+
+Dynamic Adjustment Rules:
+- Journal lag > 100ms → Reduce all tiers by 20%
+- Storage replay lag > 500ms → Tier-2/3 reduction by 50%
+- Error budget consumption > 50% → Tier-specific reduction
+
+#### 10.4.2 Flow Control Manager Enhancement
+
+```
+CLASS QoSAwareFlowController:
+    FIELD tier_limits: MAP[QoSTier -> RateLimiter]
+    FIELD lag_monitor: LagMonitor
+    FIELD error_budget: ErrorBudgetTracker
+
+FUNCTION should_throttle(request: Request) -> BOOLEAN:
+    tier = request.context.tier
+    
+    // Check tier-specific rate limit
+    IF NOT tier_limits[tier].allow():
+        RETURN true
+    
+    // Check system health  
+    IF lag_monitor.replay_lag() > get_max_lag(tier):
+        RETURN true
+    
+    // Check error budget
+    IF error_budget.remaining_budget(tier) < 0.1:
+        RETURN tier >= Tier2  // Only throttle lower priority tiers
+    
+    RETURN false
+
+FUNCTION get_max_lag(tier: QoSTier) -> DURATION:
+    SWITCH tier:
+        CASE Tier0: RETURN 100_milliseconds
+        CASE Tier1: RETURN 200_milliseconds  
+        CASE Tier2: RETURN 500_milliseconds
+        CASE Tier3: RETURN 1000_milliseconds
+```
+
+### 10.5 SLO Monitoring and Alerting
+
+#### 10.5.1 Prometheus Metrics for QoS
+
+```
+# Key QoS metrics
+vecraft_request_duration_seconds_bucket{tier, operation, consistency_level}
+vecraft_request_total{tier, operation, status}
+vecraft_error_budget_remaining{tier}
+vecraft_slo_burn_rate{tier, window}
+vecraft_capacity_utilization{tier, service}
+vecraft_degradation_active{tier, reason}
+```
+
+#### 10.5.2 SLO Burn Rate Alerting
+
+```
+# Prometheus alerting rules
+groups:
+- name: vecraft.slo.rules
+  rules:
+  - alert: VecraftTier1HighBurnRate
+    expr: vecraft_slo_burn_rate{tier="1", window="1h"} > 14.4
+    for: 2m
+    labels:
+      severity: critical
+      tier: "1"
+    annotations:
+      summary: "Tier-1 SLO burning too fast"
+      description: "At current rate, monthly error budget will be exhausted in {{ $value }} hours"
+
+  - alert: VecraftErrorBudgetLow
+    expr: vecraft_error_budget_remaining{tier="0"} < 0.2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Tier-0 error budget critically low"
+      description: "Only {{ $value }}% of monthly error budget remaining"
+```
+
+#### 10.5.3 QoS Dashboard Design
+
+Grafana QoS Dashboard Layout:
+```
+┌─────────────────────────────────────────────────┐
+│ Row 1: SLO Overview                             │
+│ ├── Error Budget Remaining (by tier)            │
+│ ├── SLO Burn Rate (4h window)                   │
+│ └── Current SLO Status (Green/Yellow/Red)       │
+│                                                 │
+│ Row 2: Latency Performance                      │
+│ ├── P99 Latency by Tier (target lines)          │
+│ ├── Request Volume by Tier                      │
+│ └── Success Rate by Tier                        │
+│                                                 │
+│ Row 3: System Health Impact                     │
+│ ├── Journal Replay Lag                          │
+│ ├── Storage Node Utilization                    │
+│ └── Degradation Events Timeline                 │
+│                                                 │
+│ Row 4: Capacity Planning                        │
+│ ├── Tier Capacity Utilization                   │
+│ ├── Scaling Events                              │
+│ └── Performance Projections                     │
+└─────────────────────────────────────────────────┘
+```
+
+### 10.6 Capacity Planning with SLO-Driven Scaling
 
 
 ## 11. Implementation Considerations
