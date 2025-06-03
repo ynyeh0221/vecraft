@@ -6,26 +6,26 @@ from vecraft_data_model.index_packets import VectorPacket, Vector
 
 
 class Index(ABC):
-    """Abstract vector record_vector with support for pre-filtering."""
+    """Abstract vector index with support for pre-filtering."""
 
     @abstractmethod
     def build(self, items: List[VectorPacket]) -> None:
-        """Build the record_vector from a list of IndexItems."""
+        """Build the index from a list of IndexItems."""
         ...
 
     @abstractmethod
     def add(self, item: VectorPacket) -> None:
-        """Add a single IndexItem to the record_vector."""
+        """Add a single IndexItem to the index."""
         ...
 
     @abstractmethod
     def delete(self, record_id: str) -> None:
-        """Delete a single IndexItem from the record_vector."""
+        """Delete a single IndexItem from the index."""
         ...
 
     @abstractmethod
     def get_ids(self) -> Set[str]:
-        """Get all record IDs in the record_vector."""
+        """Get all record IDs in the index."""
         ...
 
     @abstractmethod
