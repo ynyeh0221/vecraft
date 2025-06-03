@@ -672,9 +672,11 @@ Security Layers:
 
 ### 9.2 Certificate Authority and Identity Management
 
-## 10.1 Service Level Objectives (SLOs) and Tiers
+## 10. QoS (Quality of Service) Architecture
 
-### 10.1.1 Service Tier Classification
+### 10.1 Service Level Objectives (SLOs) and Tiers
+
+#### 10.1.1 Service Tier Classification
 
 Vecraft DB implements a **4-tier QoS model** aligned with ML/AI workload characteristics:
 
@@ -684,6 +686,123 @@ Vecraft DB implements a **4-tier QoS model** aligned with ML/AI workload charact
 | Tier-1 (Interactive) | Real-time vector similarity search | • P99 search latency ≤ 50ms<br>• P95 search latency ≤ 25ms<br>• 99.9% availability | User-facing applications, recommendation engines, chat/search | High |
 | Tier-2 (Batch) | ML training data ingestion, bulk operations | • P99 write latency ≤ 200ms<br>• Throughput ≥ 10K ops/sec<br>• 99.5% availability | Model training, data pipeline, analytics | Medium |
 | Tier-3 (Background) | System maintenance, analytics | • P99 latency ≤ 1000ms<br>• Best effort availability<br>• Eventual consistency | Log compaction, metrics collection, health checks | Low |
+
+#### 10.1.2 SLO Specification Format
+
+```
+# Example SLO specification (OpenSLO format)
+apiVersion: openslo/v1
+kind: SLO
+metadata:
+  name: vecraft-tier1-search-latency
+spec:
+  service: query-processor
+  indicator:
+    metricSource:
+      type: prometheus
+      spec:
+        query: 'histogram_quantile(0.99, vector_search_duration_seconds_bucket{tier="1"})'
+  objectives:
+  - target: 0.05  # 50ms
+    timeWindow:
+      duration: 30d
+      isRolling: true
+  errorBudget:
+    policy: burn-rate
+    rules:
+    - shortWindow: 1h
+      longWindow: 24h
+      burnRate: 14.4
+```
+
+#### 10.1.3 Global Error Budget Management
+
+Error Budget Allocation (Monthly):
+- Tier-0: 99.99% → 4.32 minutes downtime budget
+- Tier-1: 99.9%  → 43.2 minutes downtime budget
+- Tier-2: 99.5%  → 3.6 hours downtime budget
+- Tier-3: 99.0%  → 7.2 hours downtime budget
+
+Error Budget Consumption Triggers:
+- 50% consumed → Warning alerts
+- 80% consumed → Automatic feature freeze for that tier
+- 95% consumed → Emergency response, possible degradation
+
+### 10.2 Request Classification and Routing
+
+#### 10.2.1 Priority-Aware API Gateway
+
+Enhanced API Gateway with QoS-aware routing:
+
+```
+// Request classification at API Gateway
+CLASS RequestClassifier:
+    FIELD rules: LIST of ClassificationRule
+
+CLASS ClassificationRule:
+    FIELD pattern: STRING          // API endpoint pattern
+    FIELD tier: QoSTier            // Target service tier  
+    FIELD timeout: DURATION        // Request timeout
+    FIELD retries: INTEGER         // Max retry attempts
+
+// Classification examples
+DEFAULT_RULES = [
+    {pattern: "/v1/vectors/search", tier: Tier1, timeout: 100ms, retries: 2},
+    {pattern: "/v1/vectors/bulk", tier: Tier2, timeout: 5s, retries: 1},
+    {pattern: "/v1/collections", tier: Tier0, timeout: 50ms, retries: 3},
+    {pattern: "/v1/admin/*", tier: Tier3, timeout: 30s, retries: 0}
+]
+```
+
+#### 10.2.2 Journal Service Priority Queues
+
+Journal services implement **weighted priority queues** with dedicated partitions:
+
+```
+Journal Partition Assignment by QoS Tier:
+┌─────────────────────────────────────────────────┐
+│ Journal-Tier0 (2 partitions, 3 replicas each)   │
+│ ├── Strong consistency writes                   │
+│ ├── Schema changes                              │
+│ └── Administrative operations                   │
+│                                                 │
+│ Journal-Tier1 (4 partitions, 3 replicas each)   │
+│ ├── Vector similarity queries                   │
+│ ├── Real-time updates                           │
+│ └── User-facing operations                      │
+│                                                 │
+│ Journal-Tier2 (6 partitions, 2 replicas each)   │
+│ ├── Bulk vector ingestion                       │
+│ ├── ML training data                            │
+│ └── Analytics operations                        │
+│                                                 │
+│ Journal-Tier3 (2 partitions, 2 replicas each)   │
+│ ├── Background maintenance                      │
+│ ├── Metrics collection                          │
+│ └── Health monitoring                           │
+└─────────────────────────────────────────────────┘
+```
+
+#### 10.2.3 Priority Propagation Through gRPC Metadata
+
+```
+// Enhanced gRPC metadata for QoS
+message RequestContext {
+  QoSTier tier = 1;
+  string request_id = 2;
+  int64 deadline_ms = 3;
+  map<string, string> client_metadata = 4;
+  ConsistencyLevel consistency_level = 5;
+}
+```
+
+### 10.3 Graceful Degradation Strategies
+
+#### 10.3.1 Tier-Based Degradation Matrix
+
+| Degradation Trigger | Tier-0 Response | Tier-1 Response | Tier-2 Response | Tier-3 Response |
+|---------------------|-----------------|-----------------|-----------------|-----------------|
+
 
 ## 11. Implementation Considerations
 
