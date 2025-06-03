@@ -672,6 +672,12 @@ Security Layers:
 
 ### 9.2 Certificate Authority and Identity Management
 
+## 10.1 Service Level Objectives (SLOs) and Tiers
+
+### 10.1.1 Service Tier Classification
+
+
+
 ## 11. Implementation Considerations
 
 ### 11.1 Journal Partitioning Strategy
