@@ -108,7 +108,7 @@ class TestVecraftFastAPIClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected)
         self.client.session.post.assert_called_once_with(
             f"https://testserver/collections/{self.test_collection}/create",
-            json=CreateCollectionRequest(dim=5, vector_type="float32", checksum_algorithm="sha256").dict()
+            json=CreateCollectionRequest(dim=5, vector_type="float", checksum_algorithm="sha256").dict(),
         )
 
     async def test_list_collections(self):

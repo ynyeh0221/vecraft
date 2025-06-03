@@ -45,6 +45,7 @@ class VecraftFastAPIClient:
         assert self.session, "Client session not initialized. Use 'async with' context."
         payload = CreateCollectionRequest(
             dim=collection_schema.dim,
+            vector_type=collection_schema.vector_type,
             checksum_algorithm=collection_schema.checksum_algorithm
         ).dict()
         response = await self.session.post(
