@@ -1040,10 +1040,50 @@ feature_gates:
 
 #### 10.8.1 Enhanced Service Specifications
 
+Updated service table with QoS integration:
+
+| Service | QoS Responsibilities | SLO Enforcement | Degradation Behavior |
+|---------|---------------------|-----------------|---------------------|
+| API-Gateway | Request classification, tier-based routing, rate limiting | Entry point SLO measurement | Drop Tier-3 requests first |
+| Journal-Service | Priority queue processing, tier-aware replication | Write latency SLO enforcement | Partition isolation by tier |
+| Query-Processor | Consistency level routing, cache tier management | Search latency SLO enforcement | Tier-based cache eviction |
+| Storage-Node | Tier-aware replay scheduling, memory allocation | Storage SLO contribution | Prioritize Tier-0/1 replay |
+
 #### 10.8.2 Observability Integration
+
+Add below metrics to existing Section 8 (Monitoring and Observability):
+
+- **Business Metrics**: Extend with SLO burn rate, error budget tacking
+- **Application Metrics**: Add tier-specific latency and throughput
+- **Infrastructure Metrics**: Include capacity utilization by QoS tier
+- **Alerting Rules**: Replace simple thresholds with SLO-based alerts
 
 #### 10.8.3 Flow Control Integration
 
+```
+// Enhanced Flow Control with QoS awareness
+CLASS EnhancedFlowControlManager:
+    FIELD qos_controller: QoSAwareFlowController
+    FIELD lag_monitor: LagMonitor  
+    FIELD error_budget_mgr: ErrorBudgetManager
+    FIELD capacity_planner: CapacityPlanner
+
+FUNCTION handle_backpressure(pressure: BackpressureSignal):
+    // Apply tier-based throttling instead of uniform throttling
+    FOR tier FROM Tier3 DOWN TO Tier0:
+        IF pressure.severity >= get_throttle_threshold(tier):
+            qos_controller.throttle_tier(tier, pressure.intensity)
+        
+        IF pressure.resolved(tier):
+            BREAK  // Stop degrading higher priority tiers
+
+FUNCTION get_throttle_threshold(tier: QoSTier) -> FLOAT:
+    SWITCH tier:
+        CASE Tier0: RETURN 0.9   // Only throttle at 90% pressure
+        CASE Tier1: RETURN 0.7   // Throttle at 70% pressure  
+        CASE Tier2: RETURN 0.5   // Throttle at 50% pressure
+        CASE Tier3: RETURN 0.2   // Throttle at 20% pressure
+```
 
 ## 11. Implementation Considerations
 
