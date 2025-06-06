@@ -84,17 +84,17 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 ┌────────────┐   WAL   ┌──────────────┐      ┌────────────┐
 │  Client    │◄───────►│ Collection   │◄────►│  Storage   │
 │  (REST/SDK)│         │  Service     │      │  Engine    │
-└────────────┘  MVCC   └────┬─────────┘      └─────┬──────┘
-                            │                   mmap + SQLite
-                            ▼
-                     ┌─────────────┐
-                     │ MVCCManager │  (versions, ref‑counts)
-                     └──────┬──────┘
-      async WAL queue       │       background thread
-                            ▼
-                     ┌────────────┐
-                     │ HNSW Index │  + metadata/doc inverted indices
-                     └────────────┘
+└────────────┘  MVCC   └──────┬───────┘      └─────┬──────┘
+                              │               mmap + SQLite
+                              ▼
+                       ┌─────────────┐
+                       │ MVCCManager │  (versions, ref‑counts)
+                       └──────┬──────┘
+        async WAL queue       │       background thread
+                              ▼
+                       ┌─────────────┐
+                       │ HNSW Index  │  + metadata/doc inverted indices
+                       └─────────────┘
 ```
 
 * **CollectionService** orchestrates WAL, storage, MVCC, and async index builds.
