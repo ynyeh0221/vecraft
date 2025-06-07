@@ -44,11 +44,11 @@ from vecraft_data_model import DataPacket, CollectionSchema, VectorPacket
 
 client = VecraftClient(root="./vecraft-data")
 
-# 1️)  Create a collection
+# 1️) Create a collection
 schema = CollectionSchema(name="images", dim=128, vector_type="float")
 client.create_collection(schema)
 
-# 2️)  Insert a vector
+# 2️) Insert a vector
 pkt = DataPacket(
     record_id="img-001",
     vector=VectorPacket.from_numpy(np.random.rand(128)),
@@ -56,7 +56,7 @@ pkt = DataPacket(
 )
 client.insert("images", pkt)
 
-# 3️)  Search
+# 3️) Search
 query = QueryPacket(query_vector=np.random.rand(128), k=5)
 results = client.search("images", query)
 for r in results:
@@ -99,10 +99,11 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 
 * **CollectionService** orchestrates WAL, storage, MVCC, and async index builds.
 * **MVCCManager** provides snapshot isolation with zero reader‑writer blocking.
-* **Storage** is an append‑only mmap file; offsets are tracked in SQLite for O(1) lookup.
+* **Storage** is an appended‑only mmap file; offsets are tracked in SQLite for O(1) lookup.
 * **HNSW** powers ANN search; Ids are mapped transparently via `IdMapper`.
 
-For an in‑depth journey, check the [single-host architecture doc](./docs/single_host_architecture.md) and [distributed architecture doc (WIP)](./docs/distributed_architecture.md).
+For an in depth journey, check the [single-host architecture doc](./docs/single_host_architecture.md)
+and [distributed architecture doc](./docs/distributed_architecture.md).
 
 
 ## Concepts
@@ -137,7 +138,7 @@ VecraftDB is **zero‑config** by default, but you can tune:
 ## Observability
 
 * **Prometheus** metrics exposed at `/metrics`
-* Built‑in counters/histograms for latency & throughput.
+* Built‑in counters/histograms for latency and throughput.
 * Health (`/healthz`) & readiness (`/readyz`) endpoints.
 
 
