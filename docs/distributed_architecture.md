@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document outlines the service decomposition and migration plan for Vecraft DB, transforming it from a monolithic vector database into a horizontally scalable, fault-tolerant distributed system. The new architecture introduces a **journal-based approach** with partitioned services across multiple layers, enabling high availability and elastic scaling while preserving over 80% of existing proven code and providing superior request tracking capabilities for ML/AI workloads.
+This document outlines the service decomposition and migration plan for Vecraft DB, transforming it from a monolithic vector database into a horizontally scalable, fault-tolerant-distributed system. The new architecture introduces a **journal-based approach** with partitioned services across multiple layers, enabling high availability and elastic scaling while preserving over 80% of existing proven code and providing superior request tracking capabilities for ML/AI workloads.
 
 ## 1. Architecture Overview
 
@@ -143,9 +143,9 @@ Partitioning Algorithm:
 
 Partition Scaling Triggers:
 - Average partition load > 70% CPU for 5 minutes
-- Write latency p99 > 15ms for any partition
+- Write latency p99 > 15 ms for any partition
 - Tenant count per partition > 150
-- Storage replay lag > 300ms across multiple partitions
+- Storage replay lag > 300 ms across multiple partitions
 
 Tenant Assignment Strategy:
 - New Tenant: Assign to least loaded partition
@@ -292,7 +292,7 @@ This hybrid approach provides:
 
 #### Architecture Decision Impact Analysis
 
-Journal-based vs Per-shard Raft Trade-off Analysis:
+Journal-based vs. Per-shard Raft Trade-off Analysis:
 
 ```
 Decision Impact Matrix:
@@ -792,7 +792,7 @@ Cache Management Strategy:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-This enhanced architecture ensures that Query-Processor maintains efficient caching while providing configurable consistency guarantees through journal offset-based version control,
+This enhanced architecture ensures that Query-Processor maintains efficient caching while providing configurable consistency guarantees through journal-offset-based version control,
 enabling both high performance and strong consistency when required.
 
 ### 2.2 Service Interaction Flow with Global Ordering
@@ -949,11 +949,11 @@ Timeline:
 - T3: Journal assigns HLC timestamp and global sequence number
 - T4: WAL delta distributed to all relevant storage nodes
 - T5: Storage nodes acknowledge delta application
-- T6: Success response propagated back to client
+- T6: Success response propagated back to the client
 
 HLC ensures global ordering: HLC = (physical_time, logical_counter)
 
-### 4.2 Vector Search Path with Fan-out
+### 4.2 Vector Search Path with Fan out
 
 Multi-Shard Vector Search Flow:
 
@@ -1052,7 +1052,7 @@ Consistency-Aware Read Flow:
 Decision Logic:
 - Eventual: Skip sync, read directly from storage
 - Bounded Staleness: Sync only if staleness > threshold
-- Read-Your-Writes: Sync if client recently wrote
+- Read-Your-Writes: Sync if a client recently wrote
 - Strong: Always sync to latest before read
 
 #### **Consistency Level Specifications**
@@ -1241,11 +1241,9 @@ Security Layers:
 
 ## 10. QoS (Quality of Service) Architecture
 
-### 10.1 Service Level Objectives (SLOs) and Tiers
+### 10.1 Service Tier Classification and SLO Targets
 
-#### 10.1.1 Service Tier Classification
-
-Vecraft DB implements a **4-tier QoS model** aligned with ML/AI workload characteristics:
+Vecraft DB implements a **4-tier QoS model** for ML/AI workloads:
 
 | Tier | Workload Type | SLO Target | Use Case | Priority |
 |------|---------------|------------|----------|----------|
@@ -1254,118 +1252,32 @@ Vecraft DB implements a **4-tier QoS model** aligned with ML/AI workload charact
 | Tier-2 (Batch) | ML training data ingestion, bulk operations | • P99 write latency ≤ 200ms<br>• Throughput ≥ 10K ops/sec<br>• 99.5% availability | Model training, data pipeline, analytics | Medium |
 | Tier-3 (Background) | System maintenance, analytics | • P99 latency ≤ 1000ms<br>• Best effort availability<br>• Eventual consistency | Log compaction, metrics collection, health checks | Low |
 
-#### 10.1.2 SLO Specification Format
-
-```
-# Example SLO specification (OpenSLO format)
-apiVersion: openslo/v1
-kind: SLO
-metadata:
-  name: vecraft-tier1-search-latency
-spec:
-  service: query-processor
-  indicator:
-    metricSource:
-      type: prometheus
-      spec:
-        query: 'histogram_quantile(0.99, vector_search_duration_seconds_bucket{tier="1"})'
-  objectives:
-  - target: 0.05  # 50ms
-    timeWindow:
-      duration: 30d
-      isRolling: true
-  errorBudget:
-    policy: burn-rate
-    rules:
-    - shortWindow: 1h
-      longWindow: 24h
-      burnRate: 14.4
-```
-
-#### 10.1.3 Global Error Budget Management
-
 Error Budget Allocation (Monthly):
-- Tier-0: 99.99% → 4.32 minutes downtime budget
-- Tier-1: 99.9%  → 43.2 minutes downtime budget
-- Tier-2: 99.5%  → 3.6 hours downtime budget
-- Tier-3: 99.0%  → 7.2 hours downtime budget
+- Tier-0: 99.99% → 4.32-minute downtime budget
+- Tier-1: 99.9% → 43.2-minute downtime budget  
+- Tier-2: 99.5% → 3.6 hours downtime budget
+- Tier-3: 99.0% → 7.2 hours downtime budget
 
-Error Budget Consumption Triggers:
-- 50% consumed → Warning alerts
-- 80% consumed → Automatic feature freeze for that tier
-- 95% consumed → Emergency response, possible degradation
+### 10.2 Request Classification and Journal Priority Queues
 
-### 10.2 Request Classification and Routing
-
-#### 10.2.1 Priority-Aware API Gateway
-
-Enhanced API Gateway with QoS-aware routing:
-
+API Endpoint Classification:
 ```
-// Request classification at API Gateway
-CLASS RequestClassifier:
-    FIELD rules: LIST of ClassificationRule
-
-CLASS ClassificationRule:
-    FIELD pattern: STRING          // API endpoint pattern
-    FIELD tier: QoSTier            // Target service tier  
-    FIELD timeout: DURATION        // Request timeout
-    FIELD retries: INTEGER         // Max retry attempts
-
-// Classification examples
-DEFAULT_RULES = [
-    {pattern: "/v1/vectors/search", tier: Tier1, timeout: 100ms, retries: 2},
-    {pattern: "/v1/vectors/bulk", tier: Tier2, timeout: 5s, retries: 1},
-    {pattern: "/v1/collections", tier: Tier0, timeout: 50ms, retries: 3},
-    {pattern: "/v1/admin/*", tier: Tier3, timeout: 30s, retries: 0}
-]
+Classification Rules:
+├── /v1/vectors/search → Tier-1 (timeout: 100ms, retries: 2)
+├── /v1/vectors/bulk → Tier-2 (timeout: 5s, retries: 1)  
+├── /v1/collections → Tier-0 (timeout: 50ms, retries: 3)
+└── /v1/admin/* → Tier-3 (timeout: 30s, retries: 0)
 ```
 
-#### 10.2.2 Journal Service Priority Queues
-
-Journal services implement **weighted priority queues** with dedicated partitions:
-
-```
 Journal Partition Assignment by QoS Tier:
-┌─────────────────────────────────────────────────┐
-│ Journal-Tier0 (2 partitions, 3 replicas each)   │
-│ ├── Strong consistency writes                   │
-│ ├── Schema changes                              │
-│ └── Administrative operations                   │
-│                                                 │
-│ Journal-Tier1 (4 partitions, 3 replicas each)   │
-│ ├── Vector similarity queries                   │
-│ ├── Real-time updates                           │
-│ └── User-facing operations                      │
-│                                                 │
-│ Journal-Tier2 (6 partitions, 2 replicas each)   │
-│ ├── Bulk vector ingestion                       │
-│ ├── ML training data                            │
-│ └── Analytics operations                        │
-│                                                 │
-│ Journal-Tier3 (2 partitions, 2 replicas each)   │
-│ ├── Background maintenance                      │
-│ ├── Metrics collection                          │
-│ └── Health monitoring                           │
-└─────────────────────────────────────────────────┘
+```
+├── Journal-Tier0: 2 partitions, 3 replicas (strong consistency writes)
+├── Journal-Tier1: 4 partitions, 3 replicas (vector similarity queries)  
+├── Journal-Tier2: 6 partitions, 2 replicas (bulk vector ingestion)
+└── Journal-Tier3: 2 partitions, 2 replicas (background maintenance)
 ```
 
-#### 10.2.3 Priority Propagation Through gRPC Metadata
-
-```
-// Enhanced gRPC metadata for QoS
-message RequestContext {
-  QoSTier tier = 1;
-  string request_id = 2;
-  int64 deadline_ms = 3;
-  map<string, string> client_metadata = 4;
-  ConsistencyLevel consistency_level = 5;
-}
-```
-
-### 10.3 Graceful Degradation Strategies
-
-#### 10.3.1 Tier-Based Degradation Matrix
+### 10.3 Graceful Degradation Matrix
 
 | Degradation Trigger | Tier-0 Response | Tier-1 Response | Tier-2 Response | Tier-3 Response |
 |---------------------|-----------------|-----------------|-----------------|-----------------|
@@ -1373,80 +1285,30 @@ message RequestContext {
 | Journal partition failure | Failover to backup partition | Continue with available partitions | Batch and retry | Disable temporarily |
 | Memory pressure > 90% | Maintain critical operations only | Reduce vector cache size | Suspend bulk operations | Stop background tasks |
 | Error budget 80% consumed | Normal operation | Reduce retry attempts | Queue non-critical writes | Shed all load |
-| Network partition | Maintain strong consistency mode | Allow degraded mode | Async batch mode | Offline mode |
 
-#### 10.3.2 Circuit Breaker Implementation
-
-```pseudocode
-CLASS TierAwareCircuitBreaker:
-    FIELD breakers: MAP[QoSTier -> CircuitBreaker]
-    FIELD config: CircuitBreakerConfig
-
-CLASS CircuitBreakerConfig:
-    FIELD tier0_failure_threshold: 5
-    FIELD tier0_open_timeout: 1_second
-    FIELD tier1_failure_threshold: 10  
-    FIELD tier1_open_timeout: 5_seconds
-    FIELD tier2_failure_threshold: 20
-    FIELD tier2_open_timeout: 15_seconds
-    FIELD tier3_failure_threshold: 50
-    FIELD tier3_open_timeout: 60_seconds
-```
-
-### 10.4 Adaptive Backpressure and Throttling
-
-#### 10.4.1 Token Bucket Rate Limiting by Tier
+### 10.4 Rate Limiting and Throttling
 
 Token Bucket Configuration:
 - Tier-0: 1000 tokens/sec, burst=100
-- Tier-1: 5000 tokens/sec, burst=500  
-- Tier-2: 2000 tokens/sec, burst=2000
+- Tier-1: 5000 tokens/sec, burst=500
+- Tier-2: 2000 tokens/sec, burst=2000  
 - Tier-3: 500 tokens/sec, burst=50
 
 Dynamic Adjustment Rules:
-- Journal lag > 100ms → Reduce all tiers by 20%
-- Storage replay lag > 500ms → Tier-2/3 reduction by 50%
+- Journal lag > 100 ms → Reduces all tiers by 20%
+- Storage replay lag > 500 ms → Tier-2/3 reduction by 50%
 - Error budget consumption > 50% → Tier-specific reduction
 
-#### 10.4.2 Flow Control Manager Enhancement
+Max Allowed Lag by Tier:
+- Tier-0: 100 ms
+- Tier-1: 200 ms
+- Tier-2: 500 ms  
+- Tier-3: 1000 ms
 
+### 10.5 Core Monitoring Metrics
+
+Key QoS Metrics:
 ```
-CLASS QoSAwareFlowController:
-    FIELD tier_limits: MAP[QoSTier -> RateLimiter]
-    FIELD lag_monitor: LagMonitor
-    FIELD error_budget: ErrorBudgetTracker
-
-FUNCTION should_throttle(request: Request) -> BOOLEAN:
-    tier = request.context.tier
-    
-    // Check tier-specific rate limit
-    IF NOT tier_limits[tier].allow():
-        RETURN true
-    
-    // Check system health  
-    IF lag_monitor.replay_lag() > get_max_lag(tier):
-        RETURN true
-    
-    // Check error budget
-    IF error_budget.remaining_budget(tier) < 0.1:
-        RETURN tier >= Tier2  // Only throttle lower priority tiers
-    
-    RETURN false
-
-FUNCTION get_max_lag(tier: QoSTier) -> DURATION:
-    SWITCH tier:
-        CASE Tier0: RETURN 100_milliseconds
-        CASE Tier1: RETURN 200_milliseconds  
-        CASE Tier2: RETURN 500_milliseconds
-        CASE Tier3: RETURN 1000_milliseconds
-```
-
-### 10.5 SLO Monitoring and Alerting
-
-#### 10.5.1 Prometheus Metrics for QoS
-
-```
-# Key QoS metrics
 vecraft_request_duration_seconds_bucket{tier, operation, consistency_level}
 vecraft_request_total{tier, operation, status}
 vecraft_error_budget_remaining{tier}
@@ -1455,65 +1317,12 @@ vecraft_capacity_utilization{tier, service}
 vecraft_degradation_active{tier, reason}
 ```
 
-#### 10.5.2 SLO Burn Rate Alerting
+Critical Alerting Thresholds:
+- Tier-1 SLO burn rate > 14.4 (1h window) → Critical alert
+- Error budget remaining < 20% → Warning alert
+- P99 latency SLO miss > 2 consecutive minutes → Scale up trigger
 
-```
-# Prometheus alerting rules
-groups:
-- name: vecraft.slo.rules
-  rules:
-  - alert: VecraftTier1HighBurnRate
-    expr: vecraft_slo_burn_rate{tier="1", window="1h"} > 14.4
-    for: 2m
-    labels:
-      severity: critical
-      tier: "1"
-    annotations:
-      summary: "Tier-1 SLO burning too fast"
-      description: "At current rate, monthly error budget will be exhausted in {{ $value }} hours"
-
-  - alert: VecraftErrorBudgetLow
-    expr: vecraft_error_budget_remaining{tier="0"} < 0.2
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Tier-0 error budget critically low"
-      description: "Only {{ $value }}% of monthly error budget remaining"
-```
-
-#### 10.5.3 QoS Dashboard Design
-
-Grafana QoS Dashboard Layout:
-```
-┌─────────────────────────────────────────────────┐
-│ Row 1: SLO Overview                             │
-│ ├── Error Budget Remaining (by tier)            │
-│ ├── SLO Burn Rate (4h window)                   │
-│ └── Current SLO Status (Green/Yellow/Red)       │
-│                                                 │
-│ Row 2: Latency Performance                      │
-│ ├── P99 Latency by Tier (target lines)          │
-│ ├── Request Volume by Tier                      │
-│ └── Success Rate by Tier                        │
-│                                                 │
-│ Row 3: System Health Impact                     │
-│ ├── Journal Replay Lag                          │
-│ ├── Storage Node Utilization                    │
-│ └── Degradation Events Timeline                 │
-│                                                 │
-│ Row 4: Capacity Planning                        │
-│ ├── Tier Capacity Utilization                   │
-│ ├── Scaling Events                              │
-│ └── Performance Projections                     │
-└─────────────────────────────────────────────────┘
-```
-
-### 10.6 Capacity Planning with SLO-Driven Scaling
-
-#### 10.6.1 SLO-Based Scaling Triggers
-
-Enhanced scaling decision matrix:
+### 10.6 SLO-Based Scaling Triggers
 
 | Metric | Tier-0 Threshold | Tier-1 Threshold | Tier-2 Threshold | Action |
 |--------|------------------|------------------|------------------|---------|
@@ -1522,135 +1331,33 @@ Enhanced scaling decision matrix:
 | Request Queue Depth | >10 requests | >50 requests | >200 requests | Scale up API-Gateway |
 | Storage Replay Lag | >200ms | >500ms | >1000ms | Scale up Storage-Node |
 
-#### 10.6.2 Capacity Formula with QoS Constraints
+### 10.7 QoS Integration with Existing Services
 
+Enhanced Service Responsibilities:
+
+| Service | QoS Responsibilities | Degradation Behavior |
+|---------|---------------------|---------------------|
+| API-Gateway | Request classification, tier-based routing, rate limiting | Drop Tier-3 requests first |
+| Journal-Service | Priority queue processing, tier-aware replication | Partition isolation by tier |
+| Query-Processor | Consistency level routing, cache tier management | Tier-based cache eviction |
+| Storage-Node | Tier-aware replay scheduling, memory allocation | Prioritize Tier-0/1 replay |
+
+Flow Control Integration:
 ```
-// SLO-driven capacity calculation
-FUNCTION calculate_minimum_capacity(tier: QoSTier, target_slo: SLOSpec) -> CapacitySpec:
-    // Base capacity from SLO requirements
-    base_capacity = (expected_rps * target_slo.p99_latency) / target_utilization
-    
-    // Tier-specific safety margins
-    safety_margins = {
-        Tier0: 2.0,  // 100% safety margin for critical
-        Tier1: 1.5,  // 50% safety margin for interactive  
-        Tier2: 1.2,  // 20% safety margin for batch
-        Tier3: 1.0   // No safety margin for background
-    }
-    
-    RETURN CapacitySpec {
-        min_replicas: INTEGER(base_capacity * safety_margins[tier]),
-        max_replicas: INTEGER(base_capacity * safety_margins[tier] * 3),
-        target_cpu_percent: 60  // Conservative target
-    }
+Enhanced back-pressure handling with tier-based throttling:
+├── 90% pressure threshold → Throttle Tier-0
+├── 70% pressure threshold → Throttle Tier-1  
+├── 50% pressure threshold → Throttle Tier-2
+└── 20% pressure threshold → Throttle Tier-3
 ```
 
-### 10.7 Operations and Continuous Improvement
-
-```
-SLO Review Checklist:
-┌─────────────────────────────────────────────────┐
-│ 1. Error Budget Analysis                        │
-│    ├── Actual vs. target consumption            │
-│    ├── Root cause of budget consumption         │
-│    └── Trend analysis                           │
-│                                                 │
-│ 2. SLO Reliability Assessment                   │
-│    ├── Were SLOs achievable?                    │
-│    ├── Were SLOs too strict/loose?              │
-│    └── Customer impact analysis                 │
-│                                                 │
-│ 3. Operational Improvements                     │
-│    ├── Degradation events review                │
-│    ├── Scaling effectiveness                    │
-│    └── Alert noise analysis                     │
-│                                                 │
-│ 4. Action Items                                 │
-│    ├── SLO target adjustments                   │
-│    ├── Infrastructure improvements              │
-│    └── Process refinements                      │
-└─────────────────────────────────────────────────┘
-```
-
-#### 10.7.2 Incident Response by QoS Tier
+Incident Response by Tier:
 
 | Incident Severity | Tier-0 Response | Tier-1 Response | Tier-2 Response | Tier-3 Response |
 |-------------------|-----------------|-----------------|-----------------|-----------------|
 | P0 (Critical) | Immediate escalation, all hands | Page on-call engineer | Business hours response | Best effort |
 | P1 (High) | Page on-call engineer | Business hours escalation | Acknowledge within 4h | Next business day |
 | P2 (Medium) | Business hours response | Acknowledge within 4h | Acknowledge within 8h | Next business day |
-
-#### 10.7.3 SLO-Driven Feature Development
-
-```
-# Feature release gate configuration
-feature_gates:
-  slo_compliance:
-    required: true
-    checks:
-      - name: "slo_impact_assessment"
-        description: "New feature must declare SLO impact"
-        required_artifacts:
-          - performance_test_results
-          - capacity_impact_analysis
-          - error_budget_projection
-      
-      - name: "tier_classification"
-        description: "All new APIs must specify QoS tier"
-        validation:
-          - api_spec_contains_tier_annotation
-          - monitoring_metrics_defined
-          - alerting_rules_configured
-```
-
-### 10.8 Integration with Existing Architecture
-
-#### 10.8.1 Enhanced Service Specifications
-
-Updated service table with QoS integration:
-
-| Service | QoS Responsibilities | SLO Enforcement | Degradation Behavior |
-|---------|---------------------|-----------------|---------------------|
-| API-Gateway | Request classification, tier-based routing, rate limiting | Entry point SLO measurement | Drop Tier-3 requests first |
-| Journal-Service | Priority queue processing, tier-aware replication | Write latency SLO enforcement | Partition isolation by tier |
-| Query-Processor | Consistency level routing, cache tier management | Search latency SLO enforcement | Tier-based cache eviction |
-| Storage-Node | Tier-aware replay scheduling, memory allocation | Storage SLO contribution | Prioritize Tier-0/1 replay |
-
-#### 10.8.2 Observability Integration
-
-Add below metrics to existing Section 8 (Monitoring and Observability):
-
-- **Business Metrics**: Extend with SLO burn rate, error budget tacking
-- **Application Metrics**: Add tier-specific latency and throughput
-- **Infrastructure Metrics**: Include capacity utilization by QoS tier
-- **Alerting Rules**: Replace simple thresholds with SLO-based alerts
-
-#### 10.8.3 Flow Control Integration
-
-```
-// Enhanced Flow Control with QoS awareness
-CLASS EnhancedFlowControlManager:
-    FIELD qos_controller: QoSAwareFlowController
-    FIELD lag_monitor: LagMonitor  
-    FIELD error_budget_mgr: ErrorBudgetManager
-    FIELD capacity_planner: CapacityPlanner
-
-FUNCTION handle_backpressure(pressure: BackpressureSignal):
-    // Apply tier-based throttling instead of uniform throttling
-    FOR tier FROM Tier3 DOWN TO Tier0:
-        IF pressure.severity >= get_throttle_threshold(tier):
-            qos_controller.throttle_tier(tier, pressure.intensity)
-        
-        IF pressure.resolved(tier):
-            BREAK  // Stop degrading higher priority tiers
-
-FUNCTION get_throttle_threshold(tier: QoSTier) -> FLOAT:
-    SWITCH tier:
-        CASE Tier0: RETURN 0.9   // Only throttle at 90% pressure
-        CASE Tier1: RETURN 0.7   // Throttle at 70% pressure  
-        CASE Tier2: RETURN 0.5   // Throttle at 50% pressure
-        CASE Tier3: RETURN 0.2   // Throttle at 20% pressure
-```
 
 ## 11. Implementation Considerations
 
@@ -1684,7 +1391,7 @@ Request Arrives
 Routing Rules:
 - Vector similarity queries → Journal-1 (high frequency)
 - Bulk data imports → Journal-1 (high throughput)
-- Cross-shard analytics → Journal-2 (consistency critical)
+- Cross-shard analytics → Journal-2 (consistency-critical)
 - Schema changes → Journal-3 (system operations)
 - User management → Journal-3 (metadata operations)
 
@@ -1692,7 +1399,7 @@ Routing Rules:
 
 ### 12.1 Consensus Inside Each Journal Partition
 
-**Problem**: The current design shows "3-N per partition" but doesn't specify the internal consensus protocol needed for write atomicity and linearizability under failover.
+**Problem**: The current design shows "3-N per partition" but doesn't specify the internal consensus protocol needed for writing atomicity and linearizability under fail over.
 
 **Solution**: Implement **Raft consensus within each journal partition**:
 
@@ -1713,12 +1420,12 @@ Write Flow with Raft:
 - Client → Journal Leader: Append(entry)
 - Leader → Followers: AppendEntries RPC
 - Followers → Leader: ACK (after fsync)
-- Leader → Client: Success (after majority)
+- Leader → Client: Success (after a majority)
 - Leader → Storage Nodes: Distribute WAL delta
 
 ### 12.2 Isolation Level Clarification and Implementation
 
-**Problem**: Current design provides "eventual + read-your-writes via HLC" which is closer to Read Committed, not the serializable isolation typically expected for ACID systems.
+**Problem**: Current design provides "eventual + read-your-writes via HLC," which is closer to Read Committed, not the serializable isolation typically expected for ACID systems.
 
 **Solution**: Implement **configurable isolation levels** with explicit contracts and pull-before-read mechanisms:
 
@@ -1766,16 +1473,16 @@ Cross-Partition Transaction Flow:
 
 **Problem**: Storage node replay lag can cause unbounded WAL growth and stale reads.
 
-**Solution**: Implement adaptive back-pressure mechanism that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
+**Solution**: Implement an adaptive back-pressure mechanism that monitors storage node replay lag and applies exponential backoff when thresholds are exceeded.
 
 ### 12.5 Clock Safety for HLC
 
-**Problem**: HLC requires bounded clock skew to function correctly.
+**Problem**: HLC requires to be bounded clock skew to function correctly.
 
 **Solution**: Implement robust clock safety mechanisms including:
-- NTP synchronization enforcement (<1ms skew)
+- NTP synchronization enforcement (<1 ms skew)
 - HLC drift detection and alerting
-- Logical counter overflow protection
+- Logical counter-overflow protection
 - Automatic time advancement fallbacks
 
 ### 12.6 Updated Service Specifications
@@ -1820,7 +1527,7 @@ Phase 4: Production Hardening
 └── Comprehensive monitoring and alerting
 ```
 
-### 12.8 Performance vs Consistency Trade-offs
+### 12.8 Performance vs. Consistency Trade-offs
 
 Consistency Level Performance Matrix:
 
