@@ -1,7 +1,23 @@
-# VecraftDB Architecture
+# VecraftDB Architecture
 
+## Table of Contents
 
-## 1  Goals & Design Tenets
+- [1 Goals & Design Tenets](#1-goals-design-tenets)
+- [2 Component Diagram](#2-component-diagram)
+- [3 Write Path (Insert / Delete)](#3-write-path-insert-delete)
+- [4 Read Path](#4-read-path)
+- [5 MVCC Internals](#5-mvcc-internals)
+- [6 Durability & Recovery](#6-durability-recovery)
+- [7 Storage Engine Layout](#7-storage-engine-layout)
+- [8 Index Subsystem](#8-index-subsystem)
+- [9 Async Index Thread – Failure Handling](#9-async-index-thread-failure-handling)
+- [10 Observability](#10-observability)
+- [11 Extensibility Points](#11-extensibility-points)
+- [12 Threading Model](#12-threading-model)
+- [13 Deployment Options](#13-deployment-options)
+- [14 Future Work](#14-future-work)
+
+## 1 Goals & Design Tenets
 
 1. **Transactional correctness** – Snapshot‑isolated writes + reads using MVCC; always safe to crash.
 2. **Blazing‑fast similarity search** – HNSW index with async build so writers aren’t blocked.
@@ -9,13 +25,11 @@
 4. **Tiny operational footprint** – Single‑process, embeddable library; optional REST server wraps it.
 5. **Observable & debuggable** – Prometheus metrics, structured logging, self‑verifying checksums.
 
-
-
-## 2  Component Diagram
+## 2 Component Diagram
 
 ```text
 ┌─────────────┐     HTTP / gRPC     ┌──────────────────┐
-│   Clients   │ ─────────────────▶  │  REST / Gateway  │
+│   Clients   │ ─────────────────▶  │  REST / Gateway  │
 └─────────────┘                     └─────────┬────────┘
                                               ▼
                                            Planner
@@ -36,9 +50,7 @@
               Version objects   Durable log   HNSW + Inverted
 ```
 
-
-
-## 3  Write Path (Insert / Delete)
+## 3 Write Path (Insert / Delete)
 
 ```
 sequenceDiagram
@@ -69,19 +81,15 @@ sequenceDiagram
 * **Two‑phase commit** ensures durability before visibility.
 * **Async index thread** processes the WAL queue and calls `promote_version()` only after a successful index build.
 
-
-
-## 4  Read Path
+## 4 Read Path
 
 1. `search()` / `get()` obtains the current **visible** version via `MVCCManager.get_current_version()` (adds a ref‑count).
 2. Reads hit **vector index** + **metadata/doc inverted indexes**. If filters are provided, the metadata/doc IDs pre‑filter the candidate set before HNSW search.
 3. Upon return, the version’s ref‑count is decremented through `MVCCManager.release_version()`.
 
-Reads never block writers and vice versa.
+Reads never block writers and vice versa.
 
-
-
-## 5  MVCC Internals
+## 5 MVCC Internals
 
 ### Version Lifecycle
 
@@ -106,27 +114,21 @@ create_version() → begin_tx → commit_version(visible=false)
 | Write–Write | ✅                | Overlap of `modified_records` sets                   |
 | Read–Write  | configurable     | Compare `read_records` vs other’s `modified_records` |
 
-Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detection = True`.
+Set `MVCCManager.enable_read_write_conflict_detection=True` to enable serializable isolation.
 
-
-
-## 6  Durability & Recovery
+## 6 Durability & Recovery
 
 1. **WAL** records every change with an LSN and *phase*. Only entries with both **prepare** and **commit** are replayed.
 2. On startup, `WALManager.replay()` hands committed entries to `CollectionService._replay_entry()`, which rebuilds **in‑memory indexes** only – storage is already durable.
 3. After replay, snapshot files (`snapshots/`) are loaded if newer than WAL contents to skip rebuilds.
 
+## 7 Storage Engine Layout
 
-
-## 7  Storage Engine Layout
-
-* Binary data stored append‑only via `mmap`; each record block: `[status][payload…]` where `status ∈ {0 uncommitted, 1 committed, 2 deleted}`.
+* Binary data stored append‑only via `mmap`; each record block: `[status][payload…]` where `status ∈ {0 uncommitted, 1 committed, 2 deleted}`.
 * `SQLiteRecordLocationIndex` maps `record_id → (offset, size)` and supports atomic updates via a single transaction.
 * Consistency scanner at startup vacuums orphans, mismatches, and uncommitted garbage.
 
-
-
-## 8  Index Subsystem
+## 8 Index Subsystem
 
 ### Vector Index (HNSW)
 
@@ -139,28 +141,22 @@ Enable serializable isolation by `MVCCManager.enable_read_write_conflict_detecti
 | Index         | Purpose                                    | Structure                              |
 | ------------- | ------------------------------------------ | -------------------------------------- |
 | MetadataIndex | Equality / \$in / range filters            | Field → value → `{ids}` + sorted lists |
-| DocIndex      | JSON field filtering + full‑text prefilter | Field/Term inverted lists              |
+| DocIndex      | JSON field filtering + full‑text prefilter | Field/Term inverted lists              |
 
 Both are in‑process and serializable via `pickle` for snapshots.
 
-
-
-## 9  Async Index Thread – Failure Handling
+## 9 Async Index Thread – Failure Handling
 
 * Any exception during `index_insert` / `index_delete` triggers a **fatal log** + immediate process exit (`_shutdown_immediately()`).
 * On next start, WAL replay + snapshot restore guarantee data consistency.
 
-
-
-## 10  Observability
+## 10 Observability
 
 * **Prometheus**: counters, histograms, gauges prefixed `vecraft_…`.
 * **Structured logs**: JSON lines with `log_id`, `collection`, `version`, `lsn` fields.
 * **Fatal path**: critical errors are written to `fatal.log` before `sys.exit(1)`.
 
-
-
-## 11  Extensibility Points
+## 11 Extensibility Points
 
 * Implement `StorageIndexEngine` to swap in RocksDB, S3, etc.
 * Implement `Index` to use FAISS, ScaNN, or GPU‑backed ANN.
@@ -168,29 +164,23 @@ Both are in‑process and serializable via `pickle` for snapshots.
 
 Register factories in `VectorDB` constructor.
 
-
-
-## 12  Threading Model
+## 12 Threading Model
 
 | Thread           | Responsibility                                                 |
 | ---------------- | -------------------------------------------------------------- |
-| Main / request   | All user API calls; short lived MVCC txs                       |
+| Main / request   | All user API calls; short lived MVCC txs                       |
 | WAL queue worker | Pop `(collection, pkt, op, LSN)`; run index update & promotion |
 | Snapshot saver   | (optional) Off‑thread periodic snapshot flush                  |
 
 Locks are minimized: `ReentrantRWLock` guards collection‑level critical sections; most reads are lock‑free thanks to immutable versions.
 
-
-
-## 13  Deployment Options
+## 13 Deployment Options
 
 * **Embedded library** – import & run inside any Python service.
 * **Docker** – `docker run your-org/vecraftdb` exposes REST + metrics.
 * **Kubernetes** – StatefulSet with PVC; liveness ➜ `/healthz`, readiness ➜ `/readyz`.
 
-
-
-## 14  Future Work
+## 14 Future Work
 
 * Distributed replication (RAFT) for HA.
 * Tiered storage with object‑storage offload.
