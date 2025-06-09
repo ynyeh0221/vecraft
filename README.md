@@ -30,17 +30,25 @@ VecraftDB is an embeddable, MVCC‑powered vector database that brings fully tra
 
 ```bash
 # 1. Install (Python ≥3.11)
-pip install vecraftdb  # coming soon – for now, clone & `pip install -e .`
+git clone https://github.com/ynyeh0221/vecraft-vector-database.git
+cd vecraft-vector-database
+pip install -e .   # until the `vecraftdb` package is published
 
 # 2. Spin up the example REST server
 python -m vecraft_db.server   # http://127.0.0.1:8000
+# (set `VCRAFT_ROOT` if you want a different data directory)
 ```
 
 ### Minimal Python example
 
 ```python
 from vecraft_db.client.vecraft_client import VecraftClient
-from vecraft_data_model import DataPacket, CollectionSchema, VectorPacket
+from vecraft_data_model import (
+    DataPacket,
+    CollectionSchema,
+    VectorPacket,
+    QueryPacket,
+)
 
 client = VecraftClient(root="./vecraft-data")
 
@@ -75,6 +83,10 @@ curl -X POST "http://localhost:8000/collections/images/search" -H "content-type:
 ```
 
 See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
+
+For more details on VecraftDB's architecture see the
+[single-host architecture](./docs/single_host_architecture.md) and
+[distributed architecture](./docs/distributed_architecture.md) guides.
 
 
 
