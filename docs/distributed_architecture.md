@@ -1338,13 +1338,52 @@ Failure Handling Matrix:
 
 ### 5.2 Background Service Failure Handling
 
-Background Service Failure Matrix:
+#### Service-Specific Failure Handling
 
-| Service Failure | Detection Method | Recovery Action |
-|---|---|---|
-| Snapshot-Service Crash | Cron Job Status<br>Missing Journal Backups in Object Store | • Auto-restart pod<br>• Alert on missed backup window<br>• Manual backup trigger available |
-| Compactor Process Hang/Crash | Journal Log Growth<br>Monitoring Alert<br>No Progress on GC Metrics | • Restart compactor<br>• Manual compaction via CLI tool<br>• Partition-level compaction bypass |
-| Object Store Connectivity Loss | Backup Upload Failure<br>HTTP 5xx Errors | • Retry with exponential backoff<br>• Local backup retention (72h) |
+| Service Component | Failure Type | Recovery Strategy | Recovery Time |
+|-------------------|--------------|-------------------|---------------|
+| **Journal Service** | Leader failure | Automatic re-election | 150-300ms |
+| | Follower failure | Continue with reduced redundancy | Immediate |
+| | Majority failure | Enter read-only mode | Immediate |
+| | Split-brain protection | Quorum enforcement | Immediate |
+| | Recovery | Automatic catch-up replication | Variable |
+| **Storage Node** | Single node failure | Redirect queries to replicas | <1 second |
+| | Shard unavailable | Emergency read-only mode | Immediate |
+| | Data corruption | Restore from journal replay | 5-30 minutes |
+| | Performance degradation | Auto-scaling triggers | 2-5 minutes |
+| | Recovery | Background re-synchronization | Variable |
+| **Query Processor** | Cache invalidation | Rebuild from storage nodes | 10-60 seconds |
+| | HNSW corruption | Re-index from authoritative source | 5-15 minutes |
+| | Memory exhaustion | Graceful degradation to storage | Immediate |
+| | Network isolation | Circuit breaker activation | <5 seconds |
+| | Recovery | Rolling restart with traffic shifting | 30-120 seconds |
+| **Cross-AZ** | AZ isolation | Regional failover procedures | <5 minutes |
+| | Cache inconsistency | Refresh from authoritative source | 1-3 minutes |
+| | Latency spike | Degrade to local-only operations | Immediate |
+| | Bandwidth limit | Throttle cross-AZ synchronization | Immediate |
+| | Recovery | Gradual traffic restoration | 10-30 minutes |
+
+#### Automated Recovery Procedures
+
+##### Recovery Time Objectives (RTO)
+
+| Component | Target RTO | Description |
+|-----------|------------|-------------|
+| Journal leader election | <300ms | Automated leader selection process |
+| Storage node replacement | <60 seconds | Spin up new instance and sync |
+| Query processor restart | <30 seconds | Rolling restart with load balancing |
+| Cross-AZ failover | <5 minutes | Regional traffic redirection |
+| Full disaster recovery | <30 minutes | Complete system restoration |
+
+##### Recovery Point Objectives (RPO)
+
+| Component | Target RPO | Data Loss Tolerance |
+|-----------|------------|-------------------|
+| Journal replication | 0 data loss | Synchronous replication |
+| Storage node sync | <100ms of operations | Near real-time synchronization |
+| Cache consistency | <1 second staleness | Acceptable brief inconsistency |
+| Cross-AZ backup | <5 minutes of operations | Regular backup intervals |
+| Disaster recovery | <1 hour of operations | Full backup restoration |
 
 ## 6. Scaling and Performance
 
