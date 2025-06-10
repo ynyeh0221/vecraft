@@ -1338,6 +1338,14 @@ Failure Handling Matrix:
 
 ### 5.2 Background Service Failure Handling
 
+Background Service Failure Matrix:
+
+| Service Failure | Detection Method | Recovery Action |
+|---|---|---|
+| Snapshot-Service Crash | Cron Job Status<br>Missing Journal Backups in Object Store | • Auto-restart pod<br>• Alert on missed backup window<br>• Manual backup trigger available |
+| Compactor Process Hang/Crash | Journal Log Growth<br>Monitoring Alert<br>No Progress on GC Metrics | • Restart compactor<br>• Manual compaction via CLI tool<br>• Partition-level compaction bypass |
+| Object Store Connectivity Loss | Backup Upload Failure<br>HTTP 5xx Errors | • Retry with exponential backoff<br>• Local backup retention (72h) |
+
 ## 6. Scaling and Performance
 
 ### 6.1 Horizontal Scaling Strategy
