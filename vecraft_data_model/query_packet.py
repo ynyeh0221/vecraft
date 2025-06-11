@@ -1,3 +1,6 @@
+"""Data structures for representing query requests."""
+
+
 import base64
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List
@@ -10,6 +13,17 @@ from vecraft_exception_model.exception import ChecksumValidationFailureError
 
 @dataclass
 class QueryPacket:
+    """A packet describing a query against a collection.
+
+    Attributes:
+        query_vector: Vector used for the search operation.
+        k: Number of nearest neighbors to return.
+        where: Optional filter on record metadata.
+        where_document: Optional filter on document contents.
+        checksum_algorithm: Algorithm used to compute ``checksum``.
+        checksum: Hex encoded checksum for verifying integrity.
+    """
+
     query_vector: np.ndarray
     k: int
     where: Optional[Dict[str, Any]] = None
@@ -19,11 +33,13 @@ class QueryPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
+        """Compute and store the checksum after initialization."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
 
     def _serialize_for_checksum(self) -> bytes:
+        """Serialize fields into bytes for checksum calculation."""
         parts: List[bytes] = [
             self.query_vector.tobytes(),
             _prepare_field_bytes(self.k),
@@ -33,6 +49,7 @@ class QueryPacket:
         return _concat_bytes(parts)
 
     def validate_checksum(self) -> bool:
+        """Verify that the checksum matches the serialized field bytes."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         if func(raw) != self.checksum:
