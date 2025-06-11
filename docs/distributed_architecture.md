@@ -75,81 +75,73 @@ After comprehensive analysis of distributed database architectures, we evaluated
 
 #### Write Amplification Quantitative Analysis
 
-Write Amplification in Journal-Based Architecture:
+**Write Amplification in Journal-Based Architecture:**
 
-```
-Write Amplification Factors:
-┌─────────────────────────────────────────────────────────┐
-│ Operation Flow: Client → Journal → Storage Replicas     │
-│                                                         │
-│ Single Write Request:                                   │
-│ ├── 1x write to Journal Leader                          │
-│ ├── 2x writes to Journal Followers (Raft replication)   │
-│ ├── 3x writes to Storage Node replicas per shard        │
-│ └── Total: 6x amplification for 3-replica setup         │
-│                                                         │
-│ Compared to Direct Storage Writes:                      │
-│ ├── Monolith: 1x write to local WAL                     │
-│ ├── Journal: 6x write amplification                     │
-│ └── Trade-off: 6x write cost for global ordering        │
-└─────────────────────────────────────────────────────────┘
+**Operation Flow: Client → Journal → Storage Replicas**
 
-Write Amplification by Configuration:
-┌─────────────────┬─────────────┬─────────────┬─────────────┐
-│ Replica Config  │ Journal RF  │ Storage RF  │ Total Ampl. │
-├─────────────────┼─────────────┼─────────────┼─────────────┤
-│ Development     │ 1           │ 1           │ 2x          │
-│ Testing         │ 3           │ 2           │ 5x          │
-│ Production      │ 3           │ 3           │ 6x          │
-│ High Durability │ 3           │ 5           │ 8x          │
-└─────────────────┴─────────────┴─────────────┴─────────────┘
+**Single Write Request:**
+- 1x write to Journal Leader
+- 2x writes to Journal Followers (Raft replication)
+- 3x writes to Storage Node replicas per shard
+- **Total: 6x amplification for 3-replica setup**
 
-Mitigation Strategies:
-• Batch writes to amortize amplification cost
-• Asynchronous replication to storage nodes (eventual consistency)
-• Compression in WAL entries (reduces network and storage overhead)
-• Write coalescing for high-frequency operations
-```
+**Compared to Direct Storage Writes:**
+- Monolith: 1x write to local WAL
+- Journal: 6x write amplification
+- **Trade-off: 6x write cost for global ordering**
+
+**Write Amplification by Configuration:**
+
+| Replica Config | Journal RF | Storage RF | Total Ampl. |
+|----------------|------------|------------|-------------|
+| Development | 1 | 1 | 2x |
+| Testing | 3 | 2 | 5x |
+| Production | 3 | 3 | 6x |
+| High Durability | 3 | 5 | 8x |
+
+**Mitigation Strategies:**
+- Batch writes to amortize amplification cost
+- Asynchronous replication to storage nodes (eventual consistency)
+- Compression in WAL entries (reduces network and storage overhead)
+- Write coalescing for high-frequency operations
 
 #### Storage Replay Lag Thresholds and Back-pressure
 
-Replay Lag Monitoring and Back-pressure Triggers:
+**Replay Lag Monitoring and Back-pressure Triggers:**
 
-```
-Storage Replay Lag Thresholds:
-┌─────────────────────────────────────────────────────────────┐
-│ Lag Type        │ Warning    │ Critical   │ Back-pressure   │
-├─────────────────┼────────────┼────────────┼─────────────────┤
-│ Time-based      │ 200ms      │ 500ms      │ 1000ms          │
-│ Volume-based    │ 5MB        │ 10MB       │ 25MB            │
-│ Entry-based     │ 1000 ops   │ 5000 ops   │ 10000 ops       │
-│ Memory-based    │ 100MB      │ 200MB      │ 500MB           │
-└─────────────────┴────────────┴────────────┴─────────────────┘
+**Storage Replay Lag Thresholds:**
 
-Back-pressure Response Actions:
-1. Warning Level (200ms/5MB):
-   ├── Increase monitoring frequency
-   ├── Log slow storage nodes
-   └── Optional: Pre-emptive scaling alert
+| Lag Type | Warning | Critical | Back-pressure |
+|----------|---------|----------|---------------|
+| Time-based | 200ms | 500ms | 1000ms |
+| Volume-based | 5MB | 10MB | 25MB |
+| Entry-based | 1000 ops | 5000 ops | 10000 ops |
+| Memory-based | 100MB | 200MB | 500MB |
 
-2. Critical Level (500ms/10MB):
-   ├── Flow-Control-Manager reduces write rate by 20%
-   ├── Enable write batching (larger batch sizes)
-   ├── Consider adding storage node replicas
-   └── Alert on-call engineer
+**Back-pressure Response Actions:**
 
-3. Back-pressure Level (1000ms/25MB):
-   ├── Gateway returns 429 Too Many Requests for Tier-2/3
-   ├── Flow-Control-Manager reduces write rate by 50%
-   ├── Emergency scaling of storage nodes
-   ├── Temporary suspension of background operations
-   └── Critical alert with escalation
+**1. Warning Level (200ms/5MB):**
+- Increase monitoring frequency
+- Log slow storage nodes
+- Optional: Pre-emptive scaling alert
 
-Recovery Behavior:
-• Lag below warning for 30s → Resume normal operation
-• Gradual rate increase: 10% every 15 seconds
-• Full recovery confirmation before removing back-pressure
-```
+**2. Critical Level (500ms/10MB):**
+- Flow-Control-Manager reduces write rate by 20%
+- Enable write batching (larger batch sizes)
+- Consider adding storage node replicas
+- Alert on-call engineer
+
+**3. Back-pressure Level (1000ms/25MB):**
+- Gateway returns 429 Too Many Requests for Tier-2/3
+- Flow-Control-Manager reduces write rate by 50%
+- Emergency scaling of storage nodes
+- Temporary suspension of background operations
+- Critical alert with escalation
+
+**Recovery Behavior:**
+- Lag below warning for 30s → Resume normal operation
+- Gradual rate increase: 10% every 15 seconds
+- Full recovery confirmation before removing back-pressure
 
 #### Multi-tenant Journal-1 Partitioning Algorithm
 
@@ -207,79 +199,72 @@ Tenant Assignment Strategy:
 
 #### New Tenant Allocation and Re-balancing Flow
 
-Tenant Allocation and Re-balancing Process:
+**Tenant Allocation and Re-balancing Process:**
 
-```
-New Tenant Allocation Flow:
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│ 1. New Tenant Request                                       │
-│    ├── API Gateway receives tenant creation                 │
-│    ├── Meta-Manager validates tenant metadata               │
-│    └── Determine initial resource requirements              │
-│                                                             │
-│ 2. Partition Selection                                      │
-│    ├── Query current partition loads from Meta-Manager      │
-│    ├── Apply tenant-to-partition algorithm                  │
-│    ├── Reserve capacity in selected partition               │
-│    └── Update tenant-partition mapping in etcd              │
-│                                                             │
-│ 3. Resource Provisioning                                    │
-│    ├── Create tenant-specific namespace/schema              │
-│    ├── Initialize storage nodes with tenant data            │
-│    ├── Configure routing rules in API Gateway               │
-│    └── Propagate configuration to all services              │
-│                                                             │
-│ 4. Validation and Activation                                │
-│    ├── Health check all provisioned resources               │
-│    ├── Run integration tests for tenant operations          │
-│    ├── Mark tenant as active in Meta-Manager                │
-│    └── Begin monitoring tenant-specific metrics             │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+**New Tenant Allocation Flow:**
 
-Rebalancing Trigger Conditions:
-┌───────────────────────────────────────────────────────────────┐
-│ Condition                    │ Threshold      │ Action        │
-├──────────────────────────────┼────────────────┼───────────────┤
-│ Partition CPU utilization    │ > 80% for 10m  │ Migrate tenant│
-│ Partition memory usage       │ > 85% for 5m   │ Add replica   │
-│ Write latency degradation    │ p99 > 25ms     │ Load balance  │
-│ Storage replay lag           │ > 400ms        │ Urgent rebal. │
-│ Tenant growth rate           │ 2x in 7 days   │ Dedicated part│
-│ Cross-partition query cost   │ > 30% of total │ Co-locate     │
-└───────────────────────────────────────────────────────────────┘
+**1. New Tenant Request**
+- API Gateway receives tenant creation
+- Meta-Manager validates tenant metadata
+- Determine initial resource requirements
 
-Rebalancing Process:
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 1: Planning                                           │
-│ ├── Identify overloaded partitions                          │
-│ ├── Select tenants for migration (least disruptive)         │
-│ ├── Choose target partitions with available capacity        │
-│ └── Calculate migration cost and downtime estimate          │
-│                                                             │
-│ Phase 2: Preparation                                        │
-│ ├── Create tenant resources in target partition             │
-│ ├── Begin dual-write to both source and target              │
-│ ├── Sync historical data using background process           │
-│ └── Validate data consistency between partitions            │
-│                                                             │
-│ Phase 3: Migration                                          │
-│ ├── Wait for source and target to be fully synchronized     │
-│ ├── Update routing rules to point to target partition       │
-│ ├── Stop writes to source partition for tenant              │
-│ ├── Verify all reads/writes go to target partition          │
-│ └── Clean up resources in source partition                  │
-│                                                             │
-│ Phase 4: Validation                                         │
-│ ├── Monitor tenant operations for stability                 │
-│ ├── Confirm performance improvement in source partition     │
-│ ├── Run tenant-specific health checks                       │
-│ └── Update partition load balancing metrics                 │
-└─────────────────────────────────────────────────────────────┘
-```
+**2. Partition Selection**
+- Query current partition loads from Meta-Manager
+- Apply tenant-to-partition algorithm
+- Reserve capacity in selected partition
+- Update tenant-partition mapping in etcd
 
-Migration Safety Mechanisms:
+**3. Resource Provisioning**
+- Create tenant-specific namespace/schema
+- Initialize storage nodes with tenant data
+- Configure routing rules in API Gateway
+- Propagate configuration to all services
+
+**4. Validation and Activation**
+- Health check all provisioned resources
+- Run integration tests for tenant operations
+- Mark tenant as active in Meta-Manager
+- Begin monitoring tenant-specific metrics
+
+**Rebalancing Trigger Conditions:**
+
+| Condition | Threshold | Action |
+|-----------|-----------|--------|
+| Partition CPU utilization | > 80% for 10m | Migrate tenant |
+| Partition memory usage | > 85% for 5m | Add replica |
+| Write latency degradation | p99 > 25ms | Load balance |
+| Storage replay lag | > 400ms | Urgent rebal. |
+| Tenant growth rate | 2x in 7 days | Dedicated part |
+| Cross-partition query cost | > 30% of total | Co-locate |
+
+**Rebalancing Process:**
+
+**Phase 1: Planning**
+- Identify overloaded partitions
+- Select tenants for migration (least disruptive)
+- Choose target partitions with available capacity
+- Calculate migration cost and downtime estimate
+
+**Phase 2: Preparation**
+- Create tenant resources in target partition
+- Begin dual-write to both source and target
+- Sync historical data using background process
+- Validate data consistency between partitions
+
+**Phase 3: Migration**
+- Wait for source and target to be fully synchronized
+- Update routing rules to point to target partition
+- Stop writes to source partition for tenant
+- Verify all reads/writes go to target partition
+- Clean up resources in source partition
+
+**Phase 4: Validation**
+- Monitor tenant operations for stability
+- Confirm performance improvement in source partition
+- Run tenant-specific health checks
+- Update partition load balancing metrics
+
+**Migration Safety Mechanisms:**
 - Rollback capability within 1-hour window
 - Zero-downtime migration with dual-write validation
 - Tenant isolation to prevent cross-tenant impact
@@ -291,16 +276,19 @@ Migration Safety Mechanisms:
 For Vecraft DB's use case as a vector database serving ML/AI applications, the **Journal Database approach** provides superior benefits:
 
 #### Request and Operation Tracking Excellence
-```
+
 Operation Tracking Comparison:
 
+```
 Raft Approach:
 Client → [Shard-1: Op1] [Shard-2: Op2] [Shard-3: Op3]
          ↓ (scattered)  ↓ (scattered)  ↓ (scattered)  
          [Local WAL]    [Local WAL]    [Local WAL]
       
 Reconstruction: Complex, requires clock synchronization
+```
 
+```
 Journal Approach:  
 Client → Journal DB → [Seq#1001: Op1→Shard-1]
                       [Seq#1002: Op2→Shard-2] 
@@ -347,20 +335,18 @@ This hybrid approach provides:
 
 Journal-based vs. Per-shard Raft Trade-off Analysis:
 
-```
-Decision Impact Matrix:
-┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐
-│ Aspect          │ Journal-based   │ Per-shard Raft  │ Impact Score    │
-├─────────────────┼─────────────────┼─────────────────┼─────────────────┤
-│ Write Latency   │ 6x amplification│ 3x amplification│ -3 (Higher)     │
-│ Global Ordering │ Native support  │ Clock sync req. │ +5 (Much Better)│
-│ Request Tracking│ Perfect lineage │ Complex recon.  │ +5 (Much Better)│
-│ Cross-shard Ops │ ACID guarantees │ 2PC complexity  │ +3 (Better)     │
-│ Scaling         │ Partition-based │ Linear per shard│ +2 (Better)     │
-│ Operational Cmpl│ Centralized mgmt│ Per-shard config│ +4 (Much Better)│
-│ Read Performance│ Configurable    │ Local reads     │ -1 (Slightly)   │
-│ Storage Cost    │ Higher (6x repl)│ Lower (3x repl) │ -2 (Higher)     │
-└─────────────────┴─────────────────┴─────────────────┴─────────────────┘
+**Decision Impact Matrix:**
+
+| Aspect | Journal-based | Per-shard Raft | Impact Score |
+|--------|---------------|-----------------|--------------|
+| Write Latency | 6x amplification | 3x amplification | -3 (Higher) |
+| Global Ordering | Native support | Clock sync req. | +5 (Much Better) |
+| Request Tracking | Perfect lineage | Complex recon. | +5 (Much Better) |
+| Cross-shard Ops | ACID guarantees | 2PC complexity | +3 (Better) |
+| Scaling | Partition-based | Linear per shard | +2 (Better) |
+| Operational Cmpl | Centralized mgmt | Per-shard config | +4 (Much Better) |
+| Read Performance | Configurable | Local reads | -1 (Slightly) |
+| Storage Cost | Higher (6x repl) | Lower (3x repl) | -2 (Higher) |
 
 Overall Score: +13 (Journal-based preferred)
 
@@ -370,7 +356,6 @@ Quantified Benefits for ML/AI Workloads:
 • Cross-shard Analytics: 50ms vs 200ms average latency
 • Debugging Time: 90% reduction in fault diagnosis time
 • Request Tracking: 99.99% vs 95% coverage
-```
 
 Cost-Benefit Analysis:
 
