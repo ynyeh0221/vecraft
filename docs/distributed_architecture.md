@@ -1002,11 +1002,11 @@ Timeline:
 - T3: Journal assigns HLC timestamp and global sequence number
 - T4: WAL delta distributed to all relevant storage nodes
 - T5: Storage nodes acknowledge delta application
-- T6: Success response propagated back to client
+- T6: Success response propagated back to a client
 
 HLC ensures global ordering: HLC = (physical_time, logical_counter)
 
-### 4.2 Vector Search Path with Fan-out
+### 4.2 Vector Search Path with Fan out
 
 Multi-Shard Vector Search Flow:
 
@@ -1235,7 +1235,7 @@ Consistency-Aware Read Flow:
 Decision Logic:
 - Eventual: Skip sync, read directly from storage
 - Bounded Staleness: Sync only if staleness > threshold
-- Read-Your-Writes: Sync if client recently wrote
+- Read-Your-Writes: Sync if a client recently wrote
 - Strong: Always sync to latest before read
 
 #### Pull-Before-Read Performance Evaluation Plan
@@ -1298,7 +1298,7 @@ Test Configuration Matrix:
 
 Expected Results Analysis:
 - Eventual consistency: Constant latency regardless of lag
-- Bounded staleness: Linear increase with lag up to threshold  
+- Bounded staleness: Linear increase with lag up to a threshold  
 - Strong consistency: Direct correlation with storage lag
 • Sync overhead: ~10ms base + 0.6x lag penalty for network RTT
 - Diminishing returns: >1000ms lag makes strong consistency impractical
@@ -1440,14 +1440,84 @@ Performance Optimization Layers:
 
 | Phase | Duration | Key Deliverables | Success Criteria |
 |-------|----------|------------------|------------------|
+| Phase 0.5: Dual-Write Validation | Week 1.5 | • Dual-write comparison framework<br>• Offset consistency validation<br>• Result consistency checks<br>• Latency difference analysis | • 99.9% offset consistency<br>• 99.95% result consistency<br>• <20% latency degradation<br>• Zero data corruption detected |
 | Phase 1: Foundation | Weeks 1-2 | • Extract gRPC interfaces<br>• PoC Journal service<br>• HLC implementation<br>• Service skeleton code | • gRPC stubs compile<br>• Journal partition tests pass<br>• HLC synchronization works |
 | Phase 2: Journal Layer | Weeks 2-3 | • Journal-Service implementation<br>• WAL delta distribution<br>• Storage node replay logic<br>• Unit test coverage | • Write operations flow through journal<br>• Storage nodes replay correctly<br>• HLC ordering maintained |
 | Phase 3: Query Layer | Week 4 | • Query-Processor separation<br>• Vector search fan-out<br>• Result aggregation logic<br>• Performance benchmarks | • Vector similarity searches work<br>• Multi-shard queries functional<br>• Performance targets met |
 | Phase 4: Gateway Enhancement | Week 5 | • Smart routing implementation<br>• Journal partition awareness<br>• Request tracking integration<br>• Load balancing | • End-to-end request flow<br>• Routing efficiency verified<br>• Request tracing functional |
 | Phase 5: Control Plane | Week 6 | • Meta-Manager with etcd<br>• HLC coordination service<br>• Cluster management tools<br>• CLI tooling | • Cluster bootstrap functional<br>• HLC sync across services<br>• Metadata consistency verified |
 | Phase 6: Integration | Week 7 | • End-to-end testing<br>• Chaos engineering<br>• Performance tuning<br>• Request tracking validation | • Fault tolerance verified<br>• Performance targets met<br>• Complete operation tracking |
-| Phase 7: Deployment | Week 8 | • Canary deployment (5% traffic)<br>• Monitoring & alerting<br>• Rollback procedures<br>• Documentation | • Production stability<br>• Monitoring coverage complete<br>• Audit compliance verified |
+| Phase 7: Gradual Traffic Migration | Week 8 | • Canary deployment (1%, 5%, 20%)<br>• Monitoring & alerting<br>• Rollback procedures<br>• Documentation | • Production stability<br>• Monitoring coverage complete<br>• Audit compliance verified |
 | Phase 8: Full Migration | Week 9 | • Full traffic migration<br>• Monolith decommission<br>• Operational runbooks<br>• Training completion | • 100% traffic migrated<br>• Legacy system retired<br>• Team operational readiness |
+
+#### Phase 0.5: Dual-Write Validation Framework
+
+##### Dual-written Comparison Architecture
+
+The dual-write validation system works by splitting each incoming write request to both the existing monolith and the new journal service simultaneously. A comparison engine then validates three key aspects:
+
+##### Request Flow
+1. Client Request arrives at the enhanced API Gateway
+2. Write Splitter duplicates the request to both systems:
+   - Monolith Local WAL (existing system)
+   - Journal Service (new distributed system)
+3. Response Collection gathers results from both systems, including:
+   - Operation results and status codes
+   - Generated offset/sequence numbers
+   - Response timing information
+4. Comparison Engine analyzes the responses for consistency
+5. Metrics Dashboard displays validation results and alerts on discrepancies
+
+##### Validation Metrics Collection
+
+##### 1. Offset Consistency Validation
+- Monolith WAL sequences: Track sequential numbers like M_offset = 1001, 1002, 1003
+- Journal global sequences: Track corresponding J_offset = 2001, 2002, 2003
+- Operation mapping: Maintain mapping table (M_offset → J_offset) for correlation
+- Consistency verification: Ensure ordering preservation across both systems
+
+##### 2. Result Consistency Validation
+- Vector search results: Compare top-K similarity scores and document IDs
+- Metadata queries: Verify exact field-by-field matching
+- Aggregation results: Statistical comparison of computed values
+- Error responses: Match error codes, messages, and HTTP status codes
+
+##### 3. Latency Difference Analysis
+- Write latency: Measure journal vs monolith response times
+- Read latency: Compare query performance between systems
+- End-to-end latency: Client-perspective total request time
+- Percentile analysis: Track P50, P95, P99 latency distributions
+
+##### 4. Data Integrity Checks
+- Vector data: Exact floating-point value comparison
+- Index structure: HNSW graph topology and connectivity validation
+- Metadata: Schema compliance and field validation
+- Cross-references: Foreign key relationships and data consistency
+
+##### Success Criteria and Thresholds
+
+##### Phase 0.5 Validation Requirements
+
+##### Offset Consistency: ≥99.9%
+- Missing operations: <0.1%
+- Out-of-order operations: <0.05%
+- Duplicate operations: 0%
+
+##### Result Consistency: ≥99.95%
+- Vector search results: <0.05% discrepancy in top-K results
+- Metadata queries: 100% exact match requirement
+- Error responses: 100% identical error codes and messages
+
+##### Performance Requirements
+- Write latency degradation: <20% increase over baseline
+- Read latency degradation: <10% increase over baseline
+- Throughput impact: <15% reduction in operations per second
+- Memory overhead: <30% additional memory usage
+
+##### Data Integrity: 100%
+- Zero data corruption detected
+- Zero data loss events
+- Zero schema violations
 
 ### 7.2 Risk Mitigation Strategies
 
@@ -1457,6 +1527,166 @@ Performance Optimization Layers:
 | Performance | Journal becoming bottleneck | • Partition-based scaling<br>• Write batch optimization<br>• Async replication tuning |
 | Operational | Complex global ordering | • Comprehensive monitoring<br>• HLC visualization tools<br>• Operation replay tools |
 | Availability | Journal partition failures | • Multi-replica journals<br>• Automatic failover<br>• Partition isolation |
+| Migration | Dual-write consistency issues | • Rigorous validation framework<br>• Automated rollback triggers<br>• Progressive traffic migration |
+
+#### Detailed Rollback Procedures
+
+##### Fast Rollback for SLA Degradation
+
+##### Rollback Trigger Matrix
+
+| Traffic Level | SLA Threshold | Rollback Trigger | Action Type |
+|---------------|---------------|------------------|-------------|
+| 1% traffic | P99 > 100ms | 5 min sustained | Immediate |
+| 5% traffic | P99 > 80ms | 2 min sustained | Immediate |
+| 20% traffic | P99 > 60ms | 1 min sustained | Emergency |
+| 50% traffic | P95 > 50ms | 30 sec sustained | Emergency |
+| 100% traffic | P95 > 40ms | 10 sec sustained | Emergency |
+
+##### Fast Rollback Procedure (≥5% Traffic)
+
+##### Step 1: Immediate Traffic Diversion (0-30 seconds)
+- API Gateway: Switch all traffic routing back to monolith endpoints
+- Load Balancer: Update upstream weights to 100% monolith, 0% distributed
+- Circuit Breaker: Open all journal service circuits to prevent new requests
+- DNS Failover: Emergency DNS updates to legacy endpoints if required
+
+##### Step 2: Journal Service Isolation (30-60 seconds)
+- Write Blocking: Stop accepting new write requests to all journal partitions
+- In-flight Completion: Allow currently processing operations to complete (max 30s timeout)
+- State Preservation: Preserve all journal states and logs for post-mortem analysis
+- Resource Scaling: Scale down journal services to conserve cluster resources
+
+##### Step 3: Storage Node Cleanup (60-120 seconds)
+- Replay Termination: Stop journal replay processes on all storage nodes
+- State Preservation: Preserve storage node state and indexes for debugging
+- Transaction Cleanup: Clean up any incomplete or hanging transactions
+- Resource Management: Scale down storage nodes if not needed for rollback
+
+##### Step 4: Validation and Monitoring (120+ seconds)
+- Performance Verification: Confirm monolith performance returns to baseline
+- Data Loss Prevention: Verify zero data loss occurred during rollback process
+- Issue Monitoring: Continue monitoring for any residual performance issues
+- Incident Documentation: Document rollback triggers, timeline, and impact
+
+##### Journal Data Handling Strategy
+
+##### Option 1: Preserve Journal Data (Recommended)
+- Data Preservation: Keep all journal data intact for thorough analysis
+- No Backfill: Avoid writing journal data back to monolith WAL to prevent corruption
+- Acceptable Gap: Accept a small data gap during a rollback period for safety
+- Future Recovery: Plan to re-migrate from a preserved journal when issues are resolved
+- Risk Level: Minimal risk, preserves complete data integrity
+
+##### Option 2: Selective Backfill (High Risk)
+- Operation Review: Manually identify and review critical operations from journal
+- Validation Required: Extensive validation before any backfill to monolith WAL
+- Limited Scope: Backfill only verified, critical operations
+- Testing Mandate: Comprehensive testing required before resuming operations
+- Risk Level: High risk of data corruption, requires expert oversight
+
+##### Option 3: Clean Slate Rollback (Simple)
+- Gap Acceptance: Accept a complete data gap from migration start to rollback
+- Clean Resume: Resume all operations from the current monolith state
+- Archive Strategy: Archive journal data for compliance and future analysis
+- Simplicity Advantage: Cleanest and safest approach with clear boundaries
+- Risk Level: Low risk, provides clear data boundary and simple recovery
+
+#### Index Rebuilding Optimization Strategy
+
+##### Offline Warm-up + Parallel Replay Architecture
+
+##### Phase 1: Offline Warm-up Preparation
+
+##### Background Process (Non-blocking operations)
+- Snapshot Creation: Take consistent snapshot of current monolith indexes
+- Format Conversion: Convert a monolith HNSW format to distributed system format
+- Directory Structure: Pre-build storage node directory structure and file layout
+- Consistency Validation: Validate index completeness and data consistency
+- Time Estimation: Calculate expected replay time for remaining WAL entries
+
+##### Phase 2: Parallel Replay Strategy
+
+##### Multi-threaded Journal Replay Architecture
+- Partition Distribution: Assign each journal partition to dedicated replay thread
+- Storage Node Mapping: Each thread handles specific storage node(s)
+- Parallel Processing: All threads process their assigned partitions simultaneously
+
+##### Per-Thread Operations
+- Sequential Reading: Read WAL entries in chronological order within partition
+- Vector Operations: Apply vector insertions, updates, deletions to HNSW index
+- Index Updates: Update inverted indexes and metadata structures
+- Progress Checkpoints: Maintain regular progress checkpoints for recovery
+- Status Reporting: Report completion percentage and any errors encountered
+
+##### Phase 3: Incremental Catch-up
+
+##### Real-time Synchronization Process
+- New Operation Monitoring: Track new operations arriving during warm-up phase
+- Incremental Application: Apply new changes as they arrive in real-time
+- Gap Measurement: Maintain measurement of operation gap (target: <100 operations)
+- Readiness Signaling: Signal when a gap closes sufficiently for query serving
+- Consistency Guarantee: Enable query serving only when consistency is guaranteed
+
+##### Warm-up Performance Optimization
+
+##### 1. Memory Pre-allocation Strategies
+- Memory Calculation: Pre-calculate total memory requirements for full index
+- Pool Allocation: Pre-allocate memory pools to prevent fragmentation during build
+- Memory Mapping: Use memory-mapped files for indexes larger than available RAM
+- Huge Pages: Enable huge pages support for improved memory access performance
+
+##### 2. Parallel Index Construction
+- Dataset Chunking: Split large vector datasets into manageable chunks
+- Subgraph Building: Build HNSW subgraphs for each chunk in parallel
+- Graph Merging: Use optimized algorithms to merge subgraphs efficiently
+- Quality Validation: Validate final graph connectivity and search quality metrics
+
+##### 3. Progressive Loading Strategy
+- Frequency-based Loading: Load most frequently accessed vectors first
+- Core Structure: Build essential index structure for immediate query capability
+- Background Population: Continue populating remaining vectors in background
+- Incremental Statistics: Update index statistics and metadata incrementally
+
+##### 4. Validation and Quality Assurance
+- Completeness Check: Verify all vectors from source are present in new index
+- Performance Testing: Test query performance against established benchmarks
+- Consistency Comparison: Compare search results with monolith for accuracy
+- Quality Metrics: Measure and validate index quality (recall, precision scores)
+
+##### Expected Performance Improvements
+- Warm-up Time: 70% reduction compared to sequential rebuilding
+- Memory Efficiency: 40% improvement through pre-allocation strategies
+- Query Readiness: 80% faster time-to-ready through progressive loading
+- Consistency Validation: Real-time validation instead of post-completion checking
+
+##### Migration Safety Checkpoints
+
+##### Before Each Phase
+- Data Consistency: 100% pass rate required on all validation tests
+- Performance Benchmark: Results must be within 10% of the established baseline
+- Rollback Testing: Rollback procedures validated and documented
+- Monitoring Coverage: All critical metrics instrumented and alerting configured
+- Team Readiness: On-call rotation established with detailed playbooks
+
+##### During Traffic Migration
+- Real-time SLA Monitoring: Automated rollback triggers based on SLA violations
+- Error Rate Tracking: <0.1% error rate increase threshold for continuation
+- Latency Monitoring: P99 latency must remain within SLA requirements
+- Data Consistency: Continuous validation of data consistency between systems
+- Resource Utilization: Monitor and prevent resource exhaustion scenarios
+
+##### After Each Milestone
+- Post-migration Validation: Comprehensive end-to-end testing of all functionality
+- Performance Analysis: Identify optimization opportunities and bottlenecks
+- Incident Response: Document and address any issues encountered during migration
+- Rollback Capability: Maintain the verified ability to rollback at each stage
+- Stakeholder Communication: Regular status updates to all stakeholders and teams
+
+This enhanced migration strategy provides comprehensive validation, rapid rollback capabilities,
+and optimized index rebuilding
+to ensure a safe transition from monolith
+to distribute architecture while minimizing downtime and maintaining complete data integrity throughout the process.
 
 ## 8. Monitoring and Observability
 
