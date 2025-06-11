@@ -12,6 +12,21 @@ VecraftDB is an embeddable, MVCC‑powered vector database that brings fully tra
 
 
 
+## Table of Contents
+- [Key Features](#key-features)
+- [Quickstart](#quickstart)
+  - [Minimal Python example](#minimal-python-example)
+  - [Using the REST API](#using-the-rest-api)
+- [Architecture Overview](#architecture-overview)
+- [Concepts](#concepts)
+  - [DataPacket](#datapacket)
+  - [QueryPacket](#querypacket)
+  - [CollectionSchema](#collectionschema)
+- [Configuration](#configuration)
+- [Observability](#observability)
+- [Running Tests](#running-tests)
+- [License](#license)
+
 ## Key Features
 
 | Category          | Highlights                                                                       |
