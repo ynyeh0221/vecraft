@@ -1,3 +1,5 @@
+"""Data classes representing packets in the index layer."""
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
@@ -12,7 +14,14 @@ Vector = np.ndarray
 
 @dataclass
 class VectorPacket:
-    """Vector with associated ID, document content, and metadata."""
+    """Container storing a vector and its identifier.
+
+    Attributes:
+        record_id: Unique ID for the vector.
+        vector: Numpy array containing the vector data.
+        checksum_algorithm: Algorithm used to compute ``checksum``.
+        checksum: Hex encoded checksum computed in ``__post_init__``.
+    """
     record_id: str
     vector: Vector
     checksum_algorithm: str = 'sha256'
@@ -20,7 +29,7 @@ class VectorPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
-        # compute checksum from serialized fields
+        """Compute and store the checksum after initialization."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
@@ -65,7 +74,14 @@ class VectorPacket:
 
 @dataclass
 class DocumentPacket:
-    """A wrapper for record ID and its associated document content."""
+    """Container for an indexed document.
+
+    Attributes:
+        record_id: Unique ID for the document.
+        document: Text contents for the record.
+        checksum_algorithm: Algorithm used to compute ``checksum``.
+        checksum: Hex encoded checksum computed in ``__post_init__``.
+    """
     record_id: str
     document: str
     checksum_algorithm: str = 'sha256'
@@ -73,7 +89,7 @@ class DocumentPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
-        # compute checksum from serialized fields
+        """Compute and store the checksum after initialization."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
@@ -109,7 +125,14 @@ class DocumentPacket:
 
 @dataclass
 class MetadataPacket:
-    """A wrapper for record ID and its associated metadata."""
+    """Container for record metadata.
+
+    Attributes:
+        record_id: Unique ID for the record.
+        metadata: Arbitrary key/value metadata for the record.
+        checksum_algorithm: Algorithm used to compute ``checksum``.
+        checksum: Hex encoded checksum computed in ``__post_init__``.
+    """
     record_id: str
     metadata: Dict[str, Any]
     checksum_algorithm: str = 'sha256'
@@ -117,7 +140,7 @@ class MetadataPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
-        # compute checksum from serialized fields
+        """Compute and store the checksum after initialization."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
@@ -157,9 +180,14 @@ class MetadataPacket:
 
 @dataclass
 class LocationPacket:
-    """
-    A data structure to track the physical location of a record in storage,
-    with checksum validation capabilities.
+    """Record location information for a stored object.
+
+    Attributes:
+        record_id: ID of the record this location refers to.
+        offset: Byte offset where the record begins.
+        size: Size in bytes of the stored record.
+        checksum_algorithm: Algorithm used to compute ``checksum``.
+        checksum: Hex encoded checksum computed in ``__post_init__``.
     """
     record_id: str  # ID of the record this location refers to
     offset: int  # Starting byte position in storage
@@ -170,7 +198,7 @@ class LocationPacket:
     checksum: str = field(init=False)
 
     def __post_init__(self):
-        # Compute checksum from serialized fields
+        """Compute and store the checksum after initialization."""
         func = get_checksum_func(self.checksum_algorithm)
         raw = self._serialize_for_checksum()
         self.checksum = func(raw)
