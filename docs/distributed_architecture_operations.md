@@ -222,19 +222,19 @@ The dual-write validation system works by splitting each incoming write request 
 
 ##### Fast Rollback Procedure (≥5% Traffic)
 
-##### Step 1: Immediate Traffic Diversion (0-30 seconds)
+##### Step 1: Immediate Traffic Diversion (0–30 seconds)
 - API Gateway: Switch all traffic routing back to monolith endpoints
 - Load Balancer: Update upstream weights to 100% monolith, 0% distributed
 - Circuit Breaker: Open all journal service circuits to prevent new requests
 - DNS Failover: Emergency DNS updates to legacy endpoints if required
 
-##### Step 2: Journal Service Isolation (30-60 seconds)
+##### Step 2: Journal Service Isolation (30–60 seconds)
 - Write Blocking: Stop accepting new write requests to all journal partitions
 - In-flight Completion: Allow currently processing operations to complete (max 30s timeout)
 - State Preservation: Preserve all journal states and logs for post-mortem analysis
 - Resource Scaling: Scale down journal services to conserve cluster resources
 
-##### Step 3: Storage Node Cleanup (60-120 seconds)
+##### Step 3: Storage Node Cleanup (60–120 seconds)
 - Replay Termination: Stop journal replay processes on all storage nodes
 - State Preservation: Preserve storage node state and indexes for debugging
 - Transaction Cleanup: Clean up any incomplete or hanging transactions
@@ -252,22 +252,22 @@ The dual-write validation system works by splitting each incoming write request 
 - Data Preservation: Keep all journal data intact for thorough analysis
 - No Backfill: Avoid writing journal data back to monolith WAL to prevent corruption
 - Acceptable Gap: Accept a small data gap during a rollback period for safety
-- Future Recovery: Plan to re-migrate from a preserved journal when issues are resolved
-- Risk Level: Minimal risk, preserves complete data integrity
+- Future Recovery: Plan to migrate from a preserved journal when issues are resolved
+- Risk Level: Minimal risk preserves complete data integrity
 
 ##### Option 2: Selective Backfill (High Risk)
-- Operation Review: Manually identify and review critical operations from journal
+- Operation Review: Manually identify and review critical operations from a journal
 - Validation Required: Extensive validation before any backfill to monolith WAL
-- Limited Scope: Backfill only verified, critical operations
+- Limited Scope: Backfill only verified critical operations
 - Testing Mandate: Comprehensive testing required before resuming operations
-- Risk Level: High risk of data corruption, requires expert oversight
+- Risk Level: High risk of data corruption requires expert oversight
 
 ##### Option 3: Clean Slate Rollback (Simple)
 - Gap Acceptance: Accept a complete data gap from migration start to rollback
 - Clean Resume: Resume all operations from the current monolith state
 - Archive Strategy: Archive journal data for compliance and future analysis
 - Simplicity Advantage: Cleanest and safest approach with clear boundaries
-- Risk Level: Low risk, provides clear data boundary and simple recovery
+- Risk Level: Low risk provides clear data boundary and simple recovery
 
 #### Index Rebuilding Optimization Strategy
 
@@ -284,7 +284,7 @@ The dual-write validation system works by splitting each incoming write request 
 
 ##### Phase 2: Parallel Replay Strategy
 
-##### Multi-threaded Journal Replay Architecture
+##### Multithreaded Journal Replay Architecture
 - Partition Distribution: Assign each journal partition to dedicated replay thread
 - Storage Node Mapping: Each thread handles specific storage node(s)
 - Parallel Processing: All threads process their assigned partitions simultaneously
@@ -301,7 +301,7 @@ The dual-write validation system works by splitting each incoming write request 
 ##### Real-time Synchronization Process
 - New Operation Monitoring: Track new operations arriving during warm-up phase
 - Incremental Application: Apply new changes as they arrive in real-time
-- Gap Measurement: Maintain measurement of operation gap (target: <100 operations)
+- Gap Measurement: Maintain measurement of an operation gap (target: <100 operations)
 - Readiness Signaling: Signal when a gap closes sufficiently for query serving
 - Consistency Guarantee: Enable query serving only when consistency is guaranteed
 
@@ -449,6 +449,107 @@ Security Layers:
 ```
 
 ### 9.2 Certificate Authority and Identity Management
+
+#### Internal Certificate Authority (CA) Infrastructure
+
+##### CA Hierarchy Design
+- **Root CA:** Offline root certificate authority with hardware security module (HSM) protection
+- **Intermediate CAs:** Online intermediate CAs for different service tiers and environments
+- **Service CAs:** Dedicated CAs for journal services, storage nodes, and query processors
+- **Client CAs:** Separate CA chain for client authentication and API access
+
+##### Certificate Lifecycle Management
+
+##### Automated Certificate Provisioning
+- **Service Discovery Integration:** Automatic certificate generation based on service registration
+- **Template-Based Generation:** Standardized certificate templates for different service types
+- **Key Generation:** Secure key generation using hardware random number generators
+- **Certificate Signing:** Automated signing workflow with policy enforcement
+- **Distribution Mechanism:** Secure certificate distribution to target services
+
+##### Certificate Monitoring and Renewal
+- **Expiry Tracking:** Centralized tracking of all certificate expiration dates
+- **Automated Renewal:** Automatic renewal 30 days before expiration
+- **Renewal Validation:** Comprehensive validation of renewed certificates
+- **Emergency Procedures:** Fast-track certificate replacement for security incidents
+- **Compliance Reporting:** Regular reports on certificate compliance and health
+
+#### Identity and Access Management (IAM)
+
+##### Service Identity Framework
+- **SPIFFE Integration:** Standard service identity framework for microservices
+- **SPIRE Deployment:** SPIRE agent deployment on all nodes for identity attestation
+- **Identity Verification:** Continuous verification of service identities
+- **Trust Domain Management:** Separate trust domains for different environments
+- **Cross-Domain Communication:** Secure communication across trust domain boundaries
+
+##### Role-Based Access Control (RBAC)
+
+##### Service-Level Permissions
+- **Journal Service Roles:** Read-only, write-only, and admin roles for journal access
+- **Storage Node Roles:** Data access, index management, and replication roles
+- **Query Processor Roles:** Search execution, cache management, and metrics roles
+- **Administrative Roles:** Cluster management, configuration, and monitoring roles
+
+##### API-Level Permissions
+- **Endpoint-Specific Access:** Fine-grained permissions for different API endpoints
+- **Tenant Isolation:** Strict isolation between tenant data and operations
+- **Operation-Based Permissions:** Read, write, delete, and admin permissions per resource
+- **Time-Based Access:** Temporary access grants with automatic expiration
+
+##### Authentication Mechanisms
+
+##### Multi-Factor Authentication (MFA)
+- **Primary Authentication:** Username/password or API key authentication
+- **Secondary Factors:** TOTP, hardware tokens, or biometric authentication
+- **Risk-Based Authentication:** Additional factors required for high-risk operations
+- **Fallback Mechanisms:** Secure fallback authentication methods for system access
+
+##### API Authentication
+- **JWT Tokens:** JSON Web Tokens with service-specific claims and scopes
+- **API Keys:** Long-lived API keys for service-to-service communication
+- **OAuth 2.0:** Standard OAuth flows for third-party integrations
+- **mTLS Authentication:** Certificate-based authentication for internal services
+
+#### Security Monitoring and Incident Response
+
+##### Threat Detection
+- **Anomaly Detection:** ML-based detection of unusual access patterns
+- **Intrusion Detection:** Network and host-based intrusion detection systems
+- **Behavioral Analysis:** Analysis of user and service behavior patterns
+- **Threat Intelligence:** Integration with external threat intelligence feeds
+
+##### Security Event Logging
+- **Comprehensive Audit Logs:** Complete logging of all security-relevant events
+- **Log Integrity:** Cryptographic protection of audit log integrity
+- **Real-Time Monitoring:** Real-time analysis of security events and alerts
+- **Log Retention:** Long-term retention of security logs for compliance and forensics
+
+##### Incident Response Procedures
+- **Automated Response:** Automated containment of detected security threats
+- **Escalation Procedures:** Clear escalation paths for different threat severity levels
+- **Forensic Capabilities:** Tools and procedures for security incident investigation
+- **Recovery Procedures:** Standardized procedures for recovery from security incidents
+
+#### Compliance and Regulatory Requirements
+
+##### Industry Standards Compliance
+- **SOC 2 Type II:** System and Organization Controls compliance for service organizations
+- **ISO 27001:** Information Security Management System certification
+- **FedRAMP:** Federal Risk and Authorization Management Program compliance
+- **PCI DSS:** Payment Card Industry Data Security Standard compliance (if applicable)
+
+##### Data Protection Regulations
+- **GDPR Compliance:** General Data Protection Regulation compliance for EU data
+- **CCPA Compliance:** California Consumer Privacy Act compliance
+- **HIPAA Compliance:** Health Insurance Portability and Accountability Act (for healthcare data)
+- **Industry-Specific:** Additional compliance requirements based on industry verticals
+
+##### Audit and Reporting
+- **Regular Audits:** Scheduled security audits by internal and external auditors
+- **Compliance Reporting:** Automated generation of compliance reports
+- **Vulnerability Assessments:** Regular vulnerability scans and penetration testing
+- **Security Metrics:** Comprehensive security metrics and KPI reporting
 
 ## 10. QoS (Quality of Service) Architecture
 
