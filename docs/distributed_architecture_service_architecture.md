@@ -109,10 +109,10 @@ HLC Synchronization Impact:
 
 #### Flow-Control-Manager Integration
 
-Monitoring Metrics and Feedback Mechanisms:
+##### Monitoring Metrics and Feedback Mechanisms
 
-```
 Flow-Control-Manager Monitoring Dashboard:
+```
 ┌─────────────────────────────────────────────────────────────┐
 │ PRIMARY MONITORING METRICS:                                 │
 │                                                             │
@@ -140,9 +140,10 @@ Flow-Control-Manager Monitoring Dashboard:
 │    ├── Disk I/O saturation levels                           │
 │    └── Connection pool health                               │
 └─────────────────────────────────────────────────────────────┘
+```
 
-FEEDBACK MECHANISMS:
-
+Feedback Mechanisms:
+```
 1. API Gateway Rate Limiting (HTTP 429/503):
 ┌─────────────────────────────────────────────────────────────┐
 │ Trigger Conditions:                                         │
@@ -190,29 +191,29 @@ FEEDBACK MECHANISMS:
 │ ├── Request timeout: Increased from 5s to 15s               │
 │ └── Circuit breaker: 5 failures trigger 60s cooldown        │
 └─────────────────────────────────────────────────────────────┘
+```
 
 Flow-Control-Manager Decision Engine:
-┌─────────────────────────────────────────────────────────────┐
-│ FUNCTION apply_back_pressure(metrics: SystemMetrics):       │
-│                                                             │
-│   lag_score = calculate_lag_pressure(metrics.replay_lag)    │
-│   queue_score = calculate_queue_pressure(metrics.queue)     │
-│   network_score = calculate_network_pressure(metrics.rtt)   │
-│                                                             │
-│   total_pressure = weighted_average(lag_score, queue_score, │
-│                                     network_score)          │
-│                                                             │
-│   IF total_pressure > CRITICAL_THRESHOLD:                   │
-│     trigger_emergency_throttling()                          │
-│   ELIF total_pressure > WARNING_THRESHOLD:                  │
-│     apply_gradual_back_pressure()                           │
-│   ELSE:                                                     │
-│     restore_normal_operation()                              │
-│                                                             │
-│   // Log decisions for monitoring and tuning                │
-│   emit_metrics(pressure_score=total_pressure,               │
-│               actions_taken=current_throttling_level)       │
-└─────────────────────────────────────────────────────────────┘
+```
+FUNCTION apply_back_pressure(metrics: SystemMetrics):
+
+  lag_score = calculate_lag_pressure(metrics.replay_lag)
+  queue_score = calculate_queue_pressure(metrics.queue)
+  network_score = calculate_network_pressure(metrics.rtt)
+
+  total_pressure = weighted_average(lag_score, queue_score,
+                                    network_score)
+
+  IF total_pressure > CRITICAL_THRESHOLD:
+    trigger_emergency_throttling()
+  ELIF total_pressure > WARNING_THRESHOLD:
+    apply_gradual_back_pressure()
+  ELSE:
+    restore_normal_operation()
+
+  // Log decisions for monitoring and tuning
+  emit_metrics(pressure_score=total_pressure,
+              actions_taken=current_throttling_level)
 ```
 
 #### Query-Processor Index Version Control Mechanism
