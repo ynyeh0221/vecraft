@@ -145,20 +145,22 @@ After comprehensive analysis of distributed database architectures, we evaluated
 
 #### Multi-tenant Journal-1 Partitioning Algorithm
 
-Tenant-to-Partition Mapping Strategy:
+##### Tenant-to-Partition Mapping Strategy
 
-```
-Journal-1 Partitioning for Multi-tenant Scale:
+###### Journal-1 Partitioning for Multi-tenant Scale
 
 Current Single-tenant Approach:
+```
 ┌─────────────────────────────────────────┐
 │ Journal-1: Single partition             │
 │ ├── All high-frequency operations       │
 │ ├── Vector similarity queries           │
 │ └── Bulk data imports                   │
 └─────────────────────────────────────────┘
+```
 
 Proposed Multi-tenant Partitioning:
+```
 ┌─────────────────────────────────────────┐
 │ Journal-1-Partition-A (Tenants: 1-100)  │
 │ Journal-1-Partition-B (Tenants: 101-200)│
@@ -166,24 +168,24 @@ Proposed Multi-tenant Partitioning:
 │ ...                                     │
 │ Journal-1-Partition-N (Tenants: N*100+) │
 └─────────────────────────────────────────┘
+```
 
 Partitioning Algorithm:
-┌─────────────────────────────────────────────────────────────┐
-│ FUNCTION determine_journal_partition(tenant_id, operation): │
-│                                                             │
-│   // Hash-based partitioning for even distribution          │
-│   base_partition = hash(tenant_id) % total_partitions       │
-│                                                             │
-│   // Load balancing adjustment                              │
-│   IF partition_load[base_partition] > threshold:            │
-│     RETURN least_loaded_partition()                         │
-│                                                             │
-│   // Tenant affinity for read-your-writes consistency       │
-│   IF operation.requires_read_your_writes:                   │
-│     RETURN tenant_partition_cache[tenant_id]                │
-│                                                             │
-│   RETURN base_partition                                     │
-└─────────────────────────────────────────────────────────────┘
+```
+FUNCTION determine_journal_partition(tenant_id, operation):
+
+  // Hash-based partitioning for even distribution
+  base_partition = hash(tenant_id) % total_partitions
+
+  // Load balancing adjustment
+  IF partition_load[base_partition] > threshold:
+    RETURN least_loaded_partition()
+
+  // Tenant affinity for read-your-writes consistency
+  IF operation.requires_read_your_writes:
+    RETURN tenant_partition_cache[tenant_id]
+
+  RETURN base_partition
 ```
 
 Partition Scaling Triggers:
@@ -199,9 +201,7 @@ Tenant Assignment Strategy:
 
 #### New Tenant Allocation and Re-balancing Flow
 
-**Tenant Allocation and Re-balancing Process:**
-
-**New Tenant Allocation Flow:**
+##### New Tenant Allocation Flow:
 
 **1. New Tenant Request**
 - API Gateway receives tenant creation
@@ -226,7 +226,7 @@ Tenant Assignment Strategy:
 - Mark tenant as active in Meta-Manager
 - Begin monitoring tenant-specific metrics
 
-**Rebalancing Trigger Conditions:**
+#####  Rebalancing Trigger Conditions:
 
 | Condition | Threshold | Action |
 |-----------|-----------|--------|
@@ -237,7 +237,7 @@ Tenant Assignment Strategy:
 | Tenant growth rate | 2x in 7 days | Dedicated part |
 | Cross-partition query cost | > 30% of total | Co-locate |
 
-**Rebalancing Process:**
+##### Rebalancing Process:
 
 **Phase 1: Planning**
 - Identify overloaded partitions
@@ -277,25 +277,23 @@ For Vecraft DB's use case as a vector database serving ML/AI applications, the *
 
 #### Request and Operation Tracking Excellence
 
-Operation Tracking Comparison:
+##### Operation Tracking Comparison
 
+###### Raft Approach
 ```
-Raft Approach:
 Client → [Shard-1: Op1] [Shard-2: Op2] [Shard-3: Op3]
          ↓ (scattered)  ↓ (scattered)  ↓ (scattered)  
          [Local WAL]    [Local WAL]    [Local WAL]
-      
-Reconstruction: Complex, requires clock synchronization
 ```
+Reconstruction: Complex, requires clock synchronization.
 
-```
-Journal Approach:  
+###### Journal Approach
+```  
 Client → Journal DB → [Seq#1001: Op1→Shard-1]
                       [Seq#1002: Op2→Shard-2] 
                       [Seq#1003: Op3→Shard-3]
-                     
-Reconstruction: Direct, perfect temporal ordering
 ```
+Reconstruction: Direct, perfect temporal ordering.
 
 #### Key Advantages for ML/AI Workloads:
 
