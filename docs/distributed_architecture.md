@@ -526,60 +526,50 @@ Note: Journal services are partitioned for scalability while maintaining global 
 
 #### Meta-Manager Write Path Latency Impact Analysis
 
-Meta-Manager Role in Write Operations:
+**Meta-Manager Role in Write Operations:**
 
-```
-Write Path Scenarios and Meta-Manager Involvement:
+**Write Path Scenarios and Meta-Manager Involvement:**
 
-Scenario 1: Standard Vector Insert (No Meta-Manager involvement)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Journal → Storage Nodes              │
-│ Latency: ~15ms (p99)                                        │
-│ Meta-Manager: Not involved in critical path                 │
-└─────────────────────────────────────────────────────────────┘
+**Scenario 1: Standard Vector Insert (No Meta-Manager involvement)**
+- **Path:** Client → API-Gateway → Journal → Storage Nodes
+- **Latency:** ~15ms (p99)
+- **Meta-Manager:** Not involved in critical path
 
-Scenario 2: Collection Schema Change (Meta-Manager critical path)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Meta-Manager → Journal-3 → Propagate │
-│ Latency: ~45ms (p99)                                        │
-│ Meta-Manager: Schema validation, version increment          │
-│ Impact: +30ms for DDL operations only                       │
-└─────────────────────────────────────────────────────────────┘
+**Scenario 2: Collection Schema Change (Meta-Manager critical path)**
+- **Path:** Client → API-Gateway → Meta-Manager → Journal-3 → Propagate
+- **Latency:** ~45ms (p99)
+- **Meta-Manager:** Schema validation, version increment
+- **Impact:** +30ms for DDL operations only
 
-Scenario 3: Cross-Shard Transaction (Meta-Manager coordination)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Meta-Manager → 2PC Coordinator →     │
-│ Multiple Journals → Storage Nodes                           │
-│ Latency: ~65ms (p99)                                        │
-│ Meta-Manager: Transaction coordination, global lock mgmt    │
-│ Impact: +50ms for cross-shard operations                    │
-└─────────────────────────────────────────────────────────────┘
+**Scenario 3: Cross-Shard Transaction (Meta-Manager coordination)**
+- **Path:** Client → API-Gateway → Meta-Manager → 2PC Coordinator → Multiple Journals → Storage Nodes
+- **Latency:** ~65ms (p99)
+- **Meta-Manager:** Transaction coordination, global lock mgmt
+- **Impact:** +50ms for cross-shard operations
 
-Meta-Manager Latency Optimization Strategies:
-• Schema caching: Cache frequently accessed schemas locally
-• Async DDL propagation: Non-blocking schema updates where possible
-• Transaction batching: Group related cross-shard operations
-• Hot standby: Maintain warm standby Meta-Manager for fast failover
-• Local validation: Pre-validate operations at API-Gateway level
+**Meta-Manager Latency Optimization Strategies:**
+- Schema caching: Cache frequently accessed schemas locally
+- Async DDL propagation: Non-blocking schema updates where possible
+- Transaction batching: Group related cross-shard operations
+- Hot standby: Maintain warm standby Meta-Manager for fast failover
+- Local validation: Pre-validate operations at API-Gateway level
 
-Meta-Manager Performance Characteristics:
-┌─────────────────────────────────────────────────────────────┐
-│ Operation Type          │ Latency Impact │ Frequency        │
-├─────────────────────────┼────────────────┼──────────────────┤
-│ Vector operations       │ 0ms            │ 95% of requests  │
-│ Index operations        │ +5ms           │ 3% of requests   │
-│ Schema changes          │ +30ms          │ 1% of requests   │
-│ Cross-shard queries     │ +10ms          │ 5% of requests   │
-│ Cross-shard transactions│ +50ms          │ 1% of requests   │
-│ Administrative ops      │ +100ms         │ <1% of requests  │
-└─────────────────────────────────────────────────────────────┘
+**Meta-Manager Performance Characteristics:**
 
-HLC Synchronization Impact:
-• HLC sync every 100ms across all services
-• Meta-Manager acts as HLC coordinator
-• Synchronization adds ~2ms to write operations
-• Clock drift detection prevents consistency violations
-```
+| Operation Type | Latency Impact | Frequency |
+|----------------|----------------|-----------|
+| Vector operations | 0ms | 95% of requests |
+| Index operations | +5ms | 3% of requests |
+| Schema changes | +30ms | 1% of requests |
+| Cross-shard queries | +10ms | 5% of requests |
+| Cross-shard transactions | +50ms | 1% of requests |
+| Administrative ops | +100ms | <1% of requests |
+
+**HLC Synchronization Impact:**
+- HLC sync every 100ms across all services
+- Meta-Manager acts as HLC coordinator
+- Synchronization adds ~2ms to write operations
+- Clock drift detection prevents consistency violations
 
 #### Flow-Control-Manager Integration
 
@@ -691,10 +681,10 @@ Flow-Control-Manager Decision Engine:
 
 #### Query-Processor Index Version Control Mechanism
 
-Journal Offset-Based Index Versioning:
+##### Journal Offset-Based Index Versioning:
 
-```
 Index Version Control Architecture:
+```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
 │ Journal Service (Source of Truth)                           │
@@ -721,9 +711,10 @@ Index Version Control Architecture:
 │ └── Sync logic: pull-before-read for strong consistency     │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
+```
 
 Version Control Protocol:
-
+```
 1. Write Operation Flow with Versioning:
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 1: Journal assigns offset                              │
@@ -767,8 +758,10 @@ Version Control Protocol:
 │ ├── Update cache with fresh index data                      │
 │ └── Execute query with guaranteed fresh data                │
 └─────────────────────────────────────────────────────────────┘
+```
 
 Version Control API Design:
+```
 ┌─────────────────────────────────────────────────────────────┐
 │ // gRPC service definition                                  │
 │ service QueryProcessor {                                    │
@@ -799,8 +792,10 @@ Version Control API Design:
 │   STRONG = 3;                                               │
 │ }                                                           │
 └─────────────────────────────────────────────────────────────┘
+```
 
 Cache Management Strategy:
+```
 ┌─────────────────────────────────────────────────────────────┐
 │ Multi-Level Cache with Version Tracking:                    │
 │                                                             │
