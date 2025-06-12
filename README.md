@@ -101,7 +101,7 @@ See the [OpenAPI docs](http://localhost:8000/docs) for the full endpoint list.
 
 For more details on VecraftDB's architecture see the
 [single-host architecture](./docs/single_host_architecture.md) and
-[distributed architecture](./docs/distributed_architecture.md) guides.
+[distributed architecture](./docs/distributed_architecture_overview.md) guides.
 
 
 
@@ -130,7 +130,7 @@ For more details on VecraftDB's architecture see the
 * **HNSW** powers ANN search; Ids are mapped transparently via `IdMapper`.
 
 For an in depth journey, check the [single-host architecture doc](./docs/single_host_architecture.md)
-and [distributed architecture doc](./docs/distributed_architecture.md).
+and [distributed architecture doc](./docs/distributed_architecture_overview.md).
 
 
 ## Concepts
