@@ -54,11 +54,10 @@
 
 #### Meta-Manager Write Path Latency Impact Analysis
 
-Meta-Manager Role in Write Operations:
+##### Meta-Manager Role in Write Operations
 
-```
 Write Path Scenarios and Meta-Manager Involvement:
-
+```
 Scenario 1: Standard Vector Insert (No Meta-Manager involvement)
 ┌─────────────────────────────────────────────────────────────┐
 │ Client → API-Gateway → Journal → Storage Nodes              │
@@ -82,32 +81,31 @@ Scenario 3: Cross-Shard Transaction (Meta-Manager coordination)
 │ Meta-Manager: Transaction coordination, global lock mgmt    │
 │ Impact: +50ms for cross-shard operations                    │
 └─────────────────────────────────────────────────────────────┘
+```
 
 Meta-Manager Latency Optimization Strategies:
-• Schema caching: Cache frequently accessed schemas locally
-• Async DDL propagation: Non-blocking schema updates where possible
-• Transaction batching: Group related cross-shard operations
-• Hot standby: Maintain warm standby Meta-Manager for fast failover
-• Local validation: Pre-validate operations at API-Gateway level
+- Schema caching: Cache frequently accessed schemas locally
+- Async DDL propagation: Non-blocking schema updates where possible
+- Transaction batching: Group related cross-shard operations
+- Hot standby: Maintain warm standby Meta-Manager for fast failover
+- Local validation: Pre-validate operations at API-Gateway level
 
 Meta-Manager Performance Characteristics:
-┌─────────────────────────────────────────────────────────────┐
-│ Operation Type          │ Latency Impact │ Frequency        │
-├─────────────────────────┼────────────────┼──────────────────┤
-│ Vector operations       │ 0ms            │ 95% of requests  │
-│ Index operations        │ +5ms           │ 3% of requests   │
-│ Schema changes          │ +30ms          │ 1% of requests   │
-│ Cross-shard queries     │ +10ms          │ 5% of requests   │
-│ Cross-shard transactions│ +50ms          │ 1% of requests   │
-│ Administrative ops      │ +100ms         │ <1% of requests  │
-└─────────────────────────────────────────────────────────────┘
+
+| Operation Type | Latency Impact | Frequency |
+|---|---|---|
+| Vector operations | 0ms | 95% of requests |
+| Index operations | +5ms | 3% of requests |
+| Schema changes | +30ms | 1% of requests |
+| Cross-shard queries | +10ms | 5% of requests |
+| Cross-shard transactions | +50ms | 1% of requests |
+| Administrative ops | +100ms | <1% of requests |
 
 HLC Synchronization Impact:
-• HLC sync every 100ms across all services
-• Meta-Manager acts as HLC coordinator
-• Synchronization adds ~2ms to write operations
-• Clock drift detection prevents consistency violations
-```
+- HLC sync every 100ms across all services
+- Meta-Manager acts as HLC coordinator
+- Synchronization adds ~2ms to write operations
+- Clock drift detection prevents consistency violations
 
 #### Flow-Control-Manager Integration
 
@@ -219,10 +217,10 @@ Flow-Control-Manager Decision Engine:
 
 #### Query-Processor Index Version Control Mechanism
 
-Journal Offset-Based Index Versioning:
+##### Journal Offset-Based Index Versioning
 
+###### Index Version Control Architecture
 ```
-Index Version Control Architecture:
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
 │ Journal Service (Source of Truth)                           │
@@ -249,114 +247,111 @@ Index Version Control Architecture:
 │ └── Sync logic: pull-before-read for strong consistency     │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
-
-Version Control Protocol:
-
-1. Write Operation Flow with Versioning:
-┌─────────────────────────────────────────────────────────────┐
-│ Step 1: Journal assigns offset                              │
-│ ├── Operation: INSERT vector [0.1, 0.2, 0.3]                │
-│ ├── Assigned offset: 1151                                   │
-│ └── Broadcast to storage nodes with offset                  │
-│                                                             │
-│ Step 2: Storage node applies operation                      │
-│ ├── Update HNSW index with new vector                       │
-│ ├── Update inverted index with metadata                     │
-│ ├── Set index_version = 1151                                │
-│ └── Acknowledge completion to journal                       │
-│                                                             │
-│ Step 3: Query-processor cache invalidation                  │
-│ ├── Receive offset notification: 1151                       │
-│ ├── Mark cached indexes as potentially stale                │
-│ ├── Option 1: Immediate cache invalidation                  │
-│ ├── Option 2: Lazy invalidation on next query               │
-│ └── Update local offset tracking                            │
-└─────────────────────────────────────────────────────────────┘
-
-2. Read Operation with Version Validation:
-┌─────────────────────────────────────────────────────────────┐
-│ Query Request with Consistency Level:                       │
-│ ├── Client specifies: consistency_level = "bounded"         │
-│ ├── Max staleness: 200ms or 10 operations                   │
-│ └── Query: vector similarity search                         │
-│                                                             │
-│ Query-Processor Decision Logic:                             │
-│ ├── Check cached index version: 1145                        │
-│ ├── Query journal for latest offset: 1151                   │
-│ ├── Calculate staleness: 6 operations behind                │
-│ ├── Compare with tolerance: 6 > 10? No, proceed with cache  │
-│ └── Execute query using cached HNSW index                   │
-│                                                             │
-│ Alternative: Strong Consistency Required:                   │
-│ ├── Cache version: 1145, Latest: 1151 (stale)               │
-│ ├── Trigger pull-before-read sync                           │
-│ ├── Request latest index from storage node                  │
-│ ├── Wait for storage node to sync to offset 1151            │
-│ ├── Update cache with fresh index data                      │
-│ └── Execute query with guaranteed fresh data                │
-└─────────────────────────────────────────────────────────────┘
-
-Version Control API Design:
-┌─────────────────────────────────────────────────────────────┐
-│ // gRPC service definition                                  │
-│ service QueryProcessor {                                    │
-│   rpc VectorSearch(VectorSearchRequest)                     │
-│       returns (VectorSearchResponse);                       │
-│ }                                                           │
-│                                                             │
-│ message VectorSearchRequest {                               │
-│   repeated float vector = 1;                                │
-│   int32 k = 2;                                              │
-│   ConsistencyLevel consistency_level = 3;                   │
-│   int64 max_staleness_ms = 4;                               │
-│   int64 min_required_offset = 5; // Client-driven sync      │
-│ }                                                           │
-│                                                             │
-│ message VectorSearchResponse {                              │
-│   repeated ScoredVector results = 1;                        │
-│   int64 index_version_used = 2;                             │
-│   int64 staleness_ms = 3;                                   │
-│   bool cache_hit = 4;                                       │
-│   ConsistencyLevel actual_consistency = 5;                  │
-│ }                                                           │
-│                                                             │
-│ enum ConsistencyLevel {                                     │
-│   EVENTUAL = 0;                                             │
-│   BOUNDED_STALENESS = 1;                                    │
-│   READ_YOUR_WRITES = 2;                                     │
-│   STRONG = 3;                                               │
-│ }                                                           │
-└─────────────────────────────────────────────────────────────┘
-
-Cache Management Strategy:
-┌─────────────────────────────────────────────────────────────┐
-│ Multi-Level Cache with Version Tracking:                    │
-│                                                             │
-│ Level 1: Hot Index Cache (In-Memory)                        │
-│ ├── Size: 1GB HNSW + 500MB Inverted                         │
-│ ├── TTL: 30 seconds or 100 operations staleness             │
-│ ├── Eviction: LRU with version-aware priority               │
-│ └── Hit rate target: >90% for frequent queries              │
-│                                                             │
-│ Level 2: Warm Index Cache (SSD)                             │
-│ ├── Size: 10GB compressed indexes                           │
-│ ├── TTL: 5 minutes or 1000 operations staleness             │
-│ ├── Background refresh: async pull from storage             │
-│ └── Hit rate target: >75% for cold queries                  │
-│                                                             │
-│ Level 3: Storage Node Query (Network)                       │
-│ ├── Fallback for cache misses or strong consistency         │
-│ ├── Guaranteed fresh data with latest offset                │
-│ ├── Caching: Store result in Level 1/2 for future use       │
-│ └── Monitoring: Track cache miss patterns                   │
-│                                                             │
-│ Version Synchronization:                                    │
-│ ├── Offset notifications from journal (push)                │
-│ ├── Periodic offset polling every 5 seconds (pull)          │
-│ ├── Version mismatch detection and auto-correction          │
-│ └── Metrics: cache hit rates, sync latency, version lag     │
-└─────────────────────────────────────────────────────────────┘
 ```
+
+###### Version Control Protocol
+
+1. Write Operation Flow with Versioning
+   - Step 1: Journal assigns offset
+     - **Operation:** INSERT vector [0.1, 0.2, 0.3]
+     - **Assigned offset:** 1151
+     - **Broadcast:** to storage nodes with offset`
+
+   - Step 2: Storage node applies operation
+     - **Update HNSW index** with new vector
+     - **Update inverted index** with metadata
+     - **Set index_version** = 1151
+     - **Acknowledge completion** to journal
+
+   - Step 3: Query-processor cache invalidation
+     - **Receive offset notification:** 1151
+     - **Mark cached indexes** as potentially stale
+     - **Option 1:** Immediate cache invalidation
+     - **Option 2:** Lazy invalidation on next query
+     - **Update local offset tracking**
+
+2. Read Operation with Version Validation
+
+   - Query Request with Consistency Level
+     - **Client specifies:** consistency_level = "bounded"
+     - **Max staleness:** 200 ms or 10 operations
+     - **Query:** vector similarity search
+
+   - Query-Processor Decision Logic
+     - **Check cached index version:** 1145
+     - **Query journal for latest offset:** 1151
+     - **Calculate staleness:** 6 operations behind
+     - **Compare with tolerance:** 6 > 10? No, proceed with cache
+     - **Execute query** using cached HNSW index
+
+   - Alternative: Strong Consistency Required
+     - **Cache version:** 1145, Latest: 1151 (stale)
+     - **Trigger pull-before-read sync**
+     - **Request latest index** from storage node
+     - **Wait for storage node** to sync to offset 1151
+     - **Update cache** with fresh index data
+     - **Execute query** with guaranteed fresh data
+
+###### Version Control API Design
+
+```
+// gRPC service definition
+service QueryProcessor {
+  rpc VectorSearch(VectorSearchRequest)
+      returns (VectorSearchResponse);
+}
+
+message VectorSearchRequest {
+  repeated float vector = 1;
+  int32 k = 2;
+  ConsistencyLevel consistency_level = 3;
+  int64 max_staleness_ms = 4;
+  int64 min_required_offset = 5; // Client-driven sync
+}
+
+message VectorSearchResponse {
+  repeated ScoredVector results = 1;
+  int64 index_version_used = 2;
+  int64 staleness_ms = 3;
+  bool cache_hit = 4;
+  ConsistencyLevel actual_consistency = 5;
+}
+
+enum ConsistencyLevel {
+  EVENTUAL = 0;
+  BOUNDED_STALENESS = 1;
+  READ_YOUR_WRITES = 2;
+  STRONG = 3;
+}
+```
+
+###### Cache Management Strategy
+
+Multi-Level Cache with Version Tracking
+
+Level 1: Hot Index Cache (In-Memory)
+- **Size:** 1GB HNSW + 500MB Inverted
+- **TTL:** 30 seconds or 100 operations staleness
+- **Eviction:** LRU with version-aware priority
+- **Hit rate target:** >90% for frequent queries
+
+Level 2: Warm Index Cache (SSD)
+- **Size:** 10GB compressed indexes
+- **TTL:** 5 minutes or 1000 operations staleness
+- **Background refresh:** async pull from storage
+- **Hit rate target:** >75% for cold queries
+
+Level 3: Storage Node Query (Network)
+- **Fallback:** for cache misses or strong consistency
+- **Guaranteed:** fresh data with the latest offset
+- **Caching:** Store result in Level 1/2 for future use
+- **Monitoring:** Track cache miss patterns
+
+Version Synchronization
+- **Offset notifications:** from a journal (push)
+- **Periodic offset polling:** every 5 seconds (pull)
+- **Version mismatch:** detection and autocorrection
+- **Metrics:** cache hit rates, sync latency, version lag
 
 This enhanced architecture ensures that Query-Processor maintains efficient caching while providing configurable consistency guarantees through journal-offset-based version control,
 enabling both high performance and strong consistency when required.
