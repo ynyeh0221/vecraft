@@ -448,6 +448,101 @@ Security Layers:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+#### Zero-Downtime Certificate Rotation Mechanism
+
+##### Seamless Certificate Transition Strategy
+
+Certificate Rotation Timeline:
+```
+T-24h: New certificate generation and validation
+T-1h:  Begin dual certificate acceptance period
+T-15m: Start gradual client migration
+T-5m:  Complete transition to new certificates
+T+24h: Remove old certificates and cleanup
+```
+
+Connection Continuity Guarantees:
+- **Overlap Period:** 24-hour overlap where both old and new certificates are accepted
+- **Connection Pooling:** Maintain existing connections during transition
+- **Graceful Degradation:** Allow in-flight requests to complete with old certificates
+- **Automatic Retry:** Client SDK automatically retries with new certificates on failure
+- **Health Check Adaptation:** Modified health checks validate both certificate chains
+- **Circuit Breaker Integration:** Prevent cascade failures during certificate updates
+
+Service-Specific Rotation Process:
+- **API Gateway First:** External-facing services rotate certificates first
+- **Internal Services:** Journal and storage services rotate after edge services
+- **Staged Rollout:** Progressive rollout with validation at each stage
+- **Automatic Rollback:** Immediate rollback to old certificates if connectivity issues detected
+- **Real-Time Monitoring:** Continuous monitoring of connection success rates during rotation
+
+#### ML Vector Data Encryption Strategy
+
+##### Encryption Architecture Decision Matrix
+
+**Pre-Write Encryption (Client-Side):**
+
+**Use Cases:**
+- High Security Requirements (Financial, Healthcare, Government)
+- Regulatory Compliance (GDPR, HIPAA, SOX)
+- Zero-Trust Architecture
+- Multi-Tenant Isolation
+
+**Implementation:**
+- Client encrypts vectors before transmission (AES-256-GCM)
+- Database stores encrypted data without plaintext access
+- Search requires homomorphic encryption or secure computation
+- Client-managed key lifecycle and rotation
+- Higher computational overhead but maximum security
+
+**Storage-Layer Encryption (Database-Side):**
+
+**Use Cases:**
+- Transparent Operation (No client changes required)
+- Full Search Capability (Complete vector similarity search)
+- Performance Optimization (Minimal query impact)
+- Operational Simplicity (Centralized key management)
+
+**Implementation:**
+- Automatic encryption at storage layer (AES-256-XTS)
+- Plaintext processing in memory for search operations
+- Encrypted WAL entries and index persistence
+- KMS-managed keys with automatic rotation
+- Balanced security with operational efficiency
+
+##### Vector-Specific Security Measures
+
+**Sensitive Vector Data Protection:**
+- **Differential Privacy:** Add calibrated noise to embeddings to prevent inference attacks
+- **Vector Anonymization:** Remove identifying characteristics from high-dimensional vectors
+- **Embedding Obfuscation:** Apply cryptographic transformations to mask vector patterns
+- **Query Privacy:** Obfuscate search queries to prevent user profiling
+- **Result Filtering:** Filter similarity search results to remove potentially sensitive matches
+
+**Tiered Encryption Strategy:**
+
+**Tier 1: Public Data**
+- Storage-layer encryption (AES-256)
+- Full search capability
+- Centralized key management
+
+**Tier 2: Internal Data**
+- Application-layer encryption with shared keys
+- Tenant-specific encryption keys
+- Controlled search with access logging
+
+**Tier 3: Confidential Data**
+- End-to-end encryption with client keys
+- Limited search capabilities
+- Client-controlled key management
+
+**ML Workload-Specific Protections:**
+- **Training Data Protection:** Encrypt ML training datasets with model-specific keys
+- **Model Inference Security:** Secure vector embeddings used for real-time inference
+- **Embedding Pipeline Security:** Protect vector generation and transformation pipelines
+- **Cross-Model Isolation:** Prevent vector leakage between different ML models
+- **Audit Trail:** Complete audit logging of vector access patterns and model usage
+
 ### 9.2 Certificate Authority and Identity Management
 
 #### Internal Certificate Authority (CA) Infrastructure
