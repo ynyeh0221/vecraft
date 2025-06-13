@@ -57,40 +57,38 @@
 ##### Meta-Manager Role in Write Operations
 
 Write Path Scenarios and Meta-Manager Involvement:
-```
-Scenario 1: Standard Vector Insert (No Meta-Manager involvement)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Journal → Storage Nodes              │
-│ Latency: ~15ms (p99)                                        │
-│ Meta-Manager: Not involved in critical path                 │
-└─────────────────────────────────────────────────────────────┘
 
-Scenario 2: Collection Schema Change (Meta-Manager critical path)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Meta-Manager → Journal-3 → Propagate │
-│ Latency: ~45ms (p99)                                        │
-│ Meta-Manager: Schema validation, version increment          │
-│ Impact: +30ms for DDL operations only                       │
-└─────────────────────────────────────────────────────────────┘
+**Scenario 1: Standard Vector Insert (No Meta-Manager involvement)**
 
-Scenario 3: Cross-Shard Transaction (Meta-Manager coordination)
-┌─────────────────────────────────────────────────────────────┐
-│ Client → API-Gateway → Meta-Manager → 2PC Coordinator →     │
-│ Multiple Journals → Storage Nodes                           │
-│ Latency: ~65ms (p99)                                        │
-│ Meta-Manager: Transaction coordination, global lock mgmt    │
-│ Impact: +50ms for cross-shard operations                    │
-└─────────────────────────────────────────────────────────────┘
-```
+**Flow:** Client → API-Gateway → Journal → Storage Nodes
 
-Meta-Manager Latency Optimization Strategies:
+- **Latency:** ~15ms (p99)
+- **Meta-Manager:** Not involved in critical path
+
+**Scenario 2: Collection Schema Change (Meta-Manager critical path)**
+
+**Flow:** Client → API-Gateway → Meta-Manager → Journal-3 → Propagate
+
+- **Latency:** ~45ms (p99)
+- **Meta-Manager:** Schema validation, version increment
+- **Impact:** +30ms for DDL operations only
+
+**Scenario 3: Cross-Shard Transaction (Meta-Manager coordination)**
+
+**Flow:** Client → API-Gateway → Meta-Manager → 2PC Coordinator → Multiple Journals → Storage Nodes
+
+- **Latency:** ~65ms (p99)
+- **Meta-Manager:** Transaction coordination, global lock mgmt
+- **Impact:** +50ms for cross-shard operations
+
+**Meta-Manager Latency Optimization Strategies:**
 - Schema caching: Cache frequently accessed schemas locally
 - Async DDL propagation: Non-blocking schema updates where possible
 - Transaction batching: Group related cross-shard operations
 - Hot standby: Maintain warm standby Meta-Manager for fast failover
 - Local validation: Pre-validate operations at API-Gateway level
 
-Meta-Manager Performance Characteristics:
+**Meta-Manager Performance Characteristics:**
 
 | Operation Type | Latency Impact | Frequency |
 |---|---|---|
@@ -101,7 +99,7 @@ Meta-Manager Performance Characteristics:
 | Cross-shard transactions | +50ms | 1% of requests |
 | Administrative ops | +100ms | <1% of requests |
 
-HLC Synchronization Impact:
+**HLC Synchronization Impact:**
 - HLC sync every 100ms across all services
 - Meta-Manager acts as HLC coordinator
 - Synchronization adds ~2ms to write operations
@@ -112,37 +110,34 @@ HLC Synchronization Impact:
 ##### Monitoring Metrics and Feedback Mechanisms
 
 Flow-Control-Manager Monitoring Dashboard:
-```
-┌─────────────────────────────────────────────────────────────┐
-│ PRIMARY MONITORING METRICS:                                 │
-│                                                             │
-│ 1. Storage Replay Lag                                       │
-│    ├── Time-based: Current lag in milliseconds              │
-│    ├── Volume-based: Pending WAL entries in MB              │
-│    ├── Entry-based: Number of unprocessed operations        │
-│    └── Per-shard breakdown with trend analysis              │
-│                                                             │
-│ 2. Journal Queue Depth                                      │
-│    ├── Pending writes per journal partition                 │
-│    ├── Queue growth rate (entries/second)                   │
-│    ├── Memory usage for queued operations                   │
-│    └── Partition-specific queue health status               │
-│                                                             │
-│ 3. Network RTT (Round Trip Time)                            │
-│    ├── API-Gateway to Journal services                      │
-│    ├── Journal to Storage nodes                             │
-│    ├── Cross-AZ latency measurements                        │
-│    └── Network bandwidth utilization                        │
-│                                                             │
-│ 4. Secondary Metrics:                                       │
-│    ├── CPU utilization per service                          │
-│    ├── Memory pressure indicators                           │
-│    ├── Disk I/O saturation levels                           │
-│    └── Connection pool health                               │
-└─────────────────────────────────────────────────────────────┘
-```
 
-Feedback Mechanisms:
+PRIMARY MONITORING METRICS:
+
+**1. Storage Replay Lag**
+- **Time-based:** Current lag in milliseconds
+- **Volume-based:** Pending WAL entries in MB
+- **Entry-based:** Number of unprocessed operations
+- **Per-shard breakdown** with trend analysis
+
+**2. Journal Queue Depth**
+- **Pending writes** per journal partition
+- **Queue growth rate** (entries/second)
+- **Memory usage** for queued operations
+- **Partition-specific** queue health status
+
+**3. Network RTT (Round Trip Time)**
+- **API-Gateway to Journal** services
+- **Journal to Storage** nodes
+- **Cross-AZ latency** measurements
+- **Network bandwidth** utilization
+
+**4. Secondary Metrics:**
+- **CPU utilization** per service
+- **Memory pressure** indicators
+- **Disk I/O saturation** levels
+- **Connection pool** health
+
+FEEDBACK MECHANISM:
 ```
 1. API Gateway Rate Limiting (HTTP 429/503):
 ┌─────────────────────────────────────────────────────────────┐
